@@ -1608,7 +1608,7 @@ On subsequent calls in the same session, the `=== IDENTITY ===` block is suppres
 | File | Description |
 |------|-------------|
 | `m` | Original PostgreSQL-specific CLI |
-| `m-universal` | Multi-backend CLI with auto-detection |
+| `m` | Multi-backend CLI with auto-detection |
 | `backends/postgres.py` | PostgreSQL adapter (FTS + pgvector + RRF) |
 | `backends/sqlite.py` | SQLite adapter (FTS5 + optional sqlite-vec) |
 | `backends/mysql.py` | MySQL/MariaDB adapter (FULLTEXT search) |
