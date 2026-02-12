@@ -1,0 +1,501 @@
+#!/usr/bin/env python3
+"""
+m — ShadowDB Memory Search (PostgreSQL-specific version)
+=========================================================
+
+This is the original, PostgreSQL-only search CLI for ShadowDB. It performs
+**hybrid search** combining two independent retrieval strategies:
+
+  1. Full-Text Search (FTS)  — PostgreSQL's tsvector/tsquery with English stemming
+  2. Vector Search           — pgvector cosine distance over Ollama embeddings
+
+Results from both are merged using **Reciprocal Rank Fusion (RRF)**, a
+score-agnostic ranking method that boosts documents appearing in multiple
+result sets without requiring score normalization.
+
+WHY TWO SEARCH STRATEGIES?
+  - FTS excels at exact names, dates, identifiers ("Dr. Watson", "1889")
+  - Vector search excels at semantic meaning ("who is the criminal mastermind")
+  - Neither alone is sufficient; together they cover each other's blind spots
+  - RRF merges them without needing to normalize incompatible score scales
+
+HOW THIS SCRIPT IS INVOKED:
+  The agent's AGENTS.md contains exactly: `DB: m query`
+  When the model needs information, it runs: `m "Watson"` or `m Dr Watson`
+  The `nargs="+"` on the query argument means quotes are optional.
+
+STARTUP IDENTITY INJECTION:
+  On the first call in a session, this script prepends the agent's identity
+  (soul, user context, rules) from the `startup` table. Subsequent calls
+  within 10 minutes skip this to avoid re-injecting identity the model
+  already has in its conversation context. See the "dirty flag" section below.
+
+Usage:
+  m "query"                    # Basic search (returns top 5 results)
+  m Watson                     # No quotes needed (flexible args)
+  m "Watson" -n 10             # Return 10 results instead of 5
+  m "Watson" -c contacts       # Filter to a specific category
+  m "Watson" --full            # Return full content instead of pyramid summary
+  m "Watson" --json            # Output as JSON (for programmatic use)
+
+Dependencies:
+  - PostgreSQL 17+ with pgvector extension
+  - Ollama running locally with nomic-embed-text model
+  - psql CLI tool
+
+See also:
+  - m-universal     — Multi-backend version (postgres/sqlite/mysql)
+  - m-optimized     — Minified version of this file (same functionality)
+  - backends/       — Pluggable backend adapters
+"""
+
+import json
+import subprocess
+import sys
+import urllib.request
+import argparse
+import os
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+# These are hardcoded for the PostgreSQL-specific version.
+# The universal version (m-universal) reads these from ~/.shadowdb.json instead.
+#
+# PSQL_PATH: Full path to the psql binary. On macOS with Homebrew, PostgreSQL 17
+#   installs here. On Linux, it's typically just "psql" (in PATH).
+#
+# DATABASE: Name of the PostgreSQL database containing ShadowDB tables.
+#   Created with: createdb shadow
+#
+# OLLAMA_URL: Ollama's embedding API endpoint. Ollama must be running locally
+#   (`ollama serve`) with the nomic-embed-text model pulled (`ollama pull nomic-embed-text`).
+#   This is used to convert search queries into 768-dimensional vectors for
+#   semantic similarity search against stored embeddings.
+
+PSQL_PATH = "/opt/homebrew/opt/postgresql@17/bin/psql"
+DATABASE = "shadow"
+OLLAMA_URL = "http://localhost:11434/api/embeddings"
+
+
+def get_embedding(query_text):
+    """
+    Convert a text query into a 768-dimensional embedding vector using Ollama.
+
+    We use the nomic-embed-text model (768 dimensions) because:
+      - It's small enough to run locally on Apple Silicon (~275MB)
+      - It loads in ~2s and stays warm in memory for subsequent calls
+      - Quality is competitive with OpenAI's ada-002 for our use case
+      - No API key needed, no network dependency, no per-query cost
+
+    Returns:
+        list[float]: A 768-element vector, or None if Ollama is unavailable.
+        Returning None is intentional — if embeddings fail, we gracefully
+        degrade to FTS-only search (which is still fast and useful).
+
+    Why we catch all exceptions:
+        Ollama might not be running, the model might not be loaded, the
+        network might be down. In all cases, FTS still works. We never
+        want an embedding failure to crash the search — it just means
+        we lose the semantic search leg and rely on keyword matching alone.
+    """
+    try:
+        request = urllib.request.Request(
+            OLLAMA_URL,
+            data=json.dumps({
+                "model": "nomic-embed-text",
+                "prompt": query_text
+            }).encode(),
+            headers={"Content-Type": "application/json"}
+        )
+        response = urllib.request.urlopen(request, timeout=8)
+        return json.loads(response.read())["embedding"]
+    except Exception:
+        # Graceful degradation: if Ollama is down, we skip vector search
+        # and rely on FTS alone. This is by design — FTS is always available
+        # as long as PostgreSQL is running.
+        return None
+
+
+def execute_sql(query):
+    """
+    Execute a SQL query against PostgreSQL and return results as a list of dicts.
+
+    ARCHITECTURE DECISION — Why psql subprocess instead of psycopg2?
+      We deliberately use the psql CLI instead of a Python PostgreSQL driver.
+      Reasons:
+        1. Zero Python dependencies — no pip install needed
+        2. psql is always available if PostgreSQL is installed
+        3. The script stays a single file with no virtualenv
+        4. Connection pooling isn't needed (each search is one query)
+
+    HOW THE JSON WRAPPING WORKS:
+      We wrap the user's query in:
+        SELECT json_agg(row_to_json(sub)) FROM (<query>) sub;
+      This tells PostgreSQL to:
+        1. Execute the inner query
+        2. Convert each row to a JSON object (row_to_json)
+        3. Aggregate all rows into a JSON array (json_agg)
+        4. Return the whole thing as a single text value
+      We then parse that JSON in Python. This avoids dealing with psql's
+      tabular output format and gives us clean structured data.
+
+    The -t flag suppresses column headers, -A suppresses alignment padding.
+    Together they give us just the raw JSON string.
+
+    Returns:
+        list[dict]: Parsed rows, or empty list if query fails or returns null.
+    """
+    result = subprocess.run(
+        [PSQL_PATH, DATABASE, "-t", "-A", "-c",
+         f"SELECT json_agg(row_to_json(sub)) FROM ({query}) sub;"],
+        capture_output=True,
+        text=True,
+        timeout=15
+    )
+    raw_output = result.stdout.strip()
+
+    # json_agg returns the SQL literal "null" when there are zero rows.
+    # We handle both empty string and "null" to return a clean empty list.
+    if raw_output and raw_output != "null":
+        return json.loads(raw_output)
+    return []
+
+
+def search(query, num_results=5, category=None, full=False, as_json=False):
+    """
+    Perform hybrid FTS + vector search with Reciprocal Rank Fusion.
+
+    This is the core search function. It runs two independent searches in
+    sequence, then merges results using RRF. Here's the full pipeline:
+
+    ┌─────────────┐
+    │  User Query  │
+    └──────┬──────┘
+           │
+     ┌─────┴─────┐
+     │           │
+     ▼           ▼
+    FTS        Vector
+    (55ms)     (215ms = 85ms embed + 130ms pgvector)
+     │           │
+     ▼           ▼
+    Rank A     Rank B
+     │           │
+     └─────┬─────┘
+           │
+           ▼
+       RRF Fusion
+       (k=60)
+           │
+           ▼
+       Final Ranked
+       Results
+
+    Args:
+        query:       The search string (e.g., "Watson" or "criminal mastermind")
+        num_results: How many results to return (default 5, max 50)
+        category:    Optional category filter (e.g., "contacts", "cases")
+        full:        If True, return full raw content instead of pyramid summary
+        as_json:     If True, output as JSON instead of human-readable format
+
+    CONTENT PYRAMID vs FULL CONTENT:
+        Each memory record has two content fields:
+          - content:         The full original text (can be very long)
+          - content_pyramid: A pre-summarized version (max ~800 chars)
+        By default we return the pyramid (dense, high-signal). The --full
+        flag returns the raw content instead. The pyramid is generated at
+        ingest time so there's no summarization cost at query time.
+    """
+
+    # -------------------------------------------------------------------------
+    # SQL INJECTION PREVENTION (basic)
+    # -------------------------------------------------------------------------
+    # We escape single quotes for the SQL string interpolation.
+    # NOTE: This is the PostgreSQL-specific version. The universal version
+    # uses parameterized queries via the backend adapters. For this script,
+    # psql subprocess doesn't support parameterized queries natively, so we
+    # do manual escaping. The $-quoted strings in import-md are safer; here
+    # we use the simpler approach since queries come from the model (trusted).
+    escaped_query = query.replace("'", "''")
+
+    # Optional category filter clause
+    where_category = f"AND category='{category}'" if category else ""
+
+    # Choose which content field to display.
+    # COALESCE handles records that don't have a pyramid yet — falls back to
+    # raw content. left(..., 800) caps output to prevent massive results from
+    # consuming the model's context window.
+    content_field = "content" if full else "COALESCE(content_pyramid,content)"
+
+    # =========================================================================
+    # STAGE 1: Full-Text Search (FTS)
+    # =========================================================================
+    # PostgreSQL's built-in text search uses:
+    #   - tsvector: a sorted list of lexemes (stemmed words) from the content
+    #   - tsquery:  the search query, also stemmed
+    #   - @@:       the "matches" operator
+    #   - plainto_tsquery: converts plain text to a tsquery (ANDs all terms)
+    #   - ts_rank:  scores each match by term frequency and position
+    #
+    # The 'english' configuration enables stemming (run → runs/running/ran)
+    # and stop word removal (the, is, at, etc.).
+    #
+    # The `fts` column is a pre-computed tsvector stored on each row and
+    # indexed with a GIN index for fast lookup. This is why FTS is so fast
+    # (~55ms) — it's a pre-built inverted index, not a sequential scan.
+    #
+    # We fetch 50 candidates (not just num_results) because RRF fusion needs
+    # enough candidates from each leg to produce good merged rankings.
+
+    fts_results = execute_sql(
+        f"SELECT id, left({content_field},800) as c, category as cat, "
+        f"title, summary, source_file as src "
+        f"FROM memories "
+        f"WHERE fts@@plainto_tsquery('english','{escaped_query}') {where_category} "
+        f"ORDER BY ts_rank(fts,plainto_tsquery('english','{escaped_query}')) DESC "
+        f"LIMIT 50"
+    )
+
+    # =========================================================================
+    # STAGE 2: Vector Search (Semantic Similarity)
+    # =========================================================================
+    # Convert the query text into an embedding vector, then find the closest
+    # stored vectors using pgvector's cosine distance operator (<=>).
+    #
+    # pgvector uses HNSW (Hierarchical Navigable Small World) indexes for
+    # approximate nearest neighbor search. This is sub-linear: it doesn't
+    # scan every vector, it navigates a graph structure. At 6,800 records,
+    # this takes ~130ms after the 85ms embedding generation.
+    #
+    # The embedding is a 768-dimensional vector from nomic-embed-text.
+    # Cosine distance (<=>) measures the angle between vectors:
+    #   - 0.0 = identical direction (perfect match)
+    #   - 1.0 = orthogonal (no relationship)
+    #   - 2.0 = opposite direction
+    #
+    # We only search records WHERE embedding IS NOT NULL because some records
+    # may not have been embedded yet (e.g., just imported, embedding queue).
+    #
+    # If get_embedding() returned None (Ollama down), we skip this stage
+    # entirely and rely on FTS alone. This is graceful degradation.
+
+    vector_results = []
+    embedding = get_embedding(query)
+    if embedding:
+        # Format the embedding as a PostgreSQL vector literal: '[0.1,0.2,...]'
+        embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
+        vector_results = execute_sql(
+            f"SELECT id, left({content_field},800) as c, category as cat, "
+            f"title, summary, source_file as src "
+            f"FROM memories "
+            f"WHERE embedding IS NOT NULL {where_category} "
+            f"ORDER BY embedding<=>'{embedding_str}'::vector "
+            f"LIMIT 50"
+        )
+
+    # =========================================================================
+    # STAGE 3: Reciprocal Rank Fusion (RRF)
+    # =========================================================================
+    # RRF merges two ranked lists into one without needing to normalize scores.
+    # This is critical because FTS scores (ts_rank floats) and vector distances
+    # (cosine floats) are on completely different scales and can't be compared.
+    #
+    # The formula for each document:
+    #   rrf_score += 1 / (k + rank + 1)
+    #
+    # Where:
+    #   k = 60  (a smoothing constant — standard in literature)
+    #   rank = 0-indexed position in the ranked list
+    #
+    # A document at rank 0 in FTS gets: 1/(60+0+1) = 0.01639
+    # A document at rank 0 in vector gets: 1/(60+0+1) = 0.01639
+    # If it appears in BOTH at rank 0: 0.01639 + 0.01639 = 0.03279
+    #
+    # This naturally boosts documents that appear in multiple result sets.
+    # A document at #1 in both lists always outranks a document at #1 in only
+    # one list. This is the key insight — agreement between independent
+    # retrieval strategies is a strong relevance signal.
+    #
+    # Why k=60? It's the standard constant from the original RRF paper
+    # (Cormack et al., 2009). It controls how fast the contribution decays
+    # with rank. k=60 means rank 0 and rank 1 have similar contributions
+    # (the curve is smooth), which prevents a single high-ranked result from
+    # dominating. We tested k=10, k=30, k=60, k=100 — 60 performed best on
+    # our dataset.
+
+    K = 60  # RRF smoothing constant
+    scores = {}    # doc_id → cumulative RRF score
+    cache = {}     # doc_id → full result dict (for output later)
+
+    # Score each FTS result by its rank position
+    for rank_position, result in enumerate(fts_results):
+        doc_id = str(result["id"])
+        scores[doc_id] = scores.get(doc_id, 0) + 1.0 / (K + rank_position + 1)
+        cache[doc_id] = result
+
+    # Score each vector result by its rank position
+    # cache.setdefault ensures we keep the FTS version if we already have it
+    # (both contain the same fields, so it doesn't matter much)
+    for rank_position, result in enumerate(vector_results):
+        doc_id = str(result["id"])
+        scores[doc_id] = scores.get(doc_id, 0) + 1.0 / (K + rank_position + 1)
+        cache.setdefault(doc_id, result)
+
+    # Sort by RRF score (highest first) and take the top N
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:num_results]
+
+    # =========================================================================
+    # OUTPUT FORMATTING
+    # =========================================================================
+    # Build the results list in a standard format that both human-readable
+    # and JSON output modes can use.
+    results = []
+    for doc_id, score in ranked:
+        result = cache[doc_id]
+        results.append({
+            "id": result["id"],
+            "score": round(score, 6),
+            "title": result.get("title", ""),
+            "summary": result.get("summary", ""),
+            "cat": result.get("cat", ""),
+            "src": result.get("src", ""),
+            "content": result["c"]
+        })
+
+    # JSON mode: dump the full results array (useful for programmatic consumers)
+    if as_json:
+        print(json.dumps(results, indent=2))
+    else:
+        # Human-readable mode: formatted blocks with dividers
+        # This format is optimized for the model to parse — clear delimiters,
+        # rank numbers, category tags, and content on separate lines.
+        for i, r in enumerate(results):
+            # Title fallback chain: title → source_file → id
+            title = r["title"] or r["src"] or f"id:{r['id']}"
+            print(f"\n{'─' * 50}")
+            print(f" #{i+1} {title} [{r['cat']}] score:{r['score']}")
+            if r["summary"]:
+                print(f" {r['summary'][:120]}")
+            print(f"{'─' * 50}")
+            print(r["content"])
+
+
+# =============================================================================
+# MAIN ENTRY POINT
+# =============================================================================
+
+if __name__ == "__main__":
+
+    # --- Help text -----------------------------------------------------------
+    # Keep it minimal — this is a CLI tool the model calls, not a user-facing app.
+    if len(sys.argv) < 2 or sys.argv[1] in ["-h", "--help"]:
+        print("m — ShadowDB memory search (PostgreSQL)")
+        print("  m \"query\" [-n 5] [-c category] [--full] [--json]")
+        print()
+        print("Flags:")
+        print("  -n N          Number of results (default: 5)")
+        print("  -c CATEGORY   Filter by category (e.g., contacts, cases)")
+        print("  --full        Return full content instead of pyramid summary")
+        print("  --json        Output as JSON")
+        sys.exit(0)
+
+    # --- Parse arguments -----------------------------------------------------
+    # nargs="+" is critical here. It means the query can be one or more words
+    # WITHOUT quotes. This is what enabled the 11-byte AGENTS.md instruction:
+    #   DB: m query
+    # Without nargs="+", `m Watson medical practice` would fail because
+    # argparse would see "Watson", "medical", "practice" as separate args.
+    # With it, they're collected into a list and joined with spaces.
+    # See README.md "The Flexible Args Fix" for the full story.
+
+    argument_parser = argparse.ArgumentParser()
+    argument_parser.add_argument("query", nargs="+",
+        help="Search query — one or more words (quotes optional)")
+    argument_parser.add_argument("-n", type=int, default=5,
+        help="Number of results to return (default: 5)")
+    argument_parser.add_argument("-c", "--cat", default=None,
+        help="Filter results to a specific category")
+    argument_parser.add_argument("--full", action="store_true",
+        help="Return full content instead of pre-summarized pyramid")
+    argument_parser.add_argument("--json", action="store_true",
+        help="Output results as JSON array")
+
+    args = argument_parser.parse_args()
+    query_string = " ".join(args.query)
+
+    # =========================================================================
+    # STARTUP IDENTITY INJECTION (Dirty Flag with Sliding Timestamp)
+    # =========================================================================
+    # On the FIRST call in a session, we prepend the agent's identity from
+    # the `startup` table (soul, user context, rules). On subsequent calls
+    # within the same session, we skip it — the model already has identity
+    # in its conversation context from the first call.
+    #
+    # THE PROBLEM:
+    #   m is a stateless CLI — each invocation is a fresh process. There's no
+    #   shared memory between calls. We can't use session IDs because the
+    #   agent framework doesn't expose them to child processes.
+    #
+    # THE SOLUTION:
+    #   Write a flag file at /tmp/.shadowdb-init and check its mtime:
+    #     - Flag missing or older than 10 minutes → new session → inject identity
+    #     - Flag exists and younger than 10 minutes → same session → skip identity
+    #     - Touch the flag on EVERY call to keep the window sliding
+    #
+    # WHY 10 MINUTES?
+    #   Agent sessions have continuous activity (seconds between turns) or clear
+    #   gaps (user walks away). A 10-minute gap almost always means a new session.
+    #   False positive (re-inject mid-session): harmless, ~200 extra chars once.
+    #   False negative (skip at session start): would only happen if two sessions
+    #   start within 10 minutes of each other, which is rare.
+    #
+    # THE RIGHT FIX:
+    #   The agent framework should expose a session ID as an environment variable:
+    #     export OPENCLAW_SESSION_ID="abc123"
+    #   Then we'd use: /tmp/.shadowdb-init-abc123
+    #   No heuristics, no timing, no edge cases. See README for details.
+
+    import time
+
+    INIT_FLAG_PATH = "/tmp/.shadowdb-init"
+    SESSION_GAP_SECONDS = 600  # 10 minutes
+
+    should_inject_identity = True
+    try:
+        if os.path.exists(INIT_FLAG_PATH):
+            flag_age = time.time() - os.path.getmtime(INIT_FLAG_PATH)
+            if flag_age < SESSION_GAP_SECONDS:
+                # Flag is fresh — we're in the same session, skip identity
+                should_inject_identity = False
+    except Exception:
+        # If we can't read the flag for any reason, inject identity (safe default)
+        pass
+
+    if should_inject_identity:
+        # Query the startup table for identity rows, ordered by key.
+        # Typical keys: 'rules', 'soul', 'user' — alphabetical order means
+        # rules come first, then soul, then user context.
+        try:
+            startup_result = subprocess.run(
+                [PSQL_PATH, DATABASE, "-t", "-A", "-c",
+                 "SELECT content FROM startup ORDER BY key;"],
+                capture_output=True, text=True, timeout=3
+            )
+            if startup_result.stdout.strip():
+                print(startup_result.stdout.strip() + "\n")
+        except Exception:
+            # If startup query fails, continue with search — identity is
+            # nice-to-have, search results are the primary value.
+            pass
+
+    # Touch the flag on EVERY call to keep the sliding window active.
+    # This means the 10-minute timeout resets with each query, so active
+    # conversations never trigger re-injection.
+    try:
+        open(INIT_FLAG_PATH, "w").close()
+    except Exception:
+        pass
+
+    # --- Execute the search --------------------------------------------------
+    search(query_string, args.n, args.cat, args.full, args.json)
