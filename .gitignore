@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 /tmp/
+.idea/
+__pycache__/
+.idea/
+__pycache__/
