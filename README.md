@@ -1684,6 +1684,7 @@ The startup identity text appears on the first `m` call in a session. On subsequ
 <details>
 <summary><b>Future Work</b></summary>
 
+- [ ] **Context-aware rule re-assertion**: Critical rules (exit gate, comms gate) should survive compaction structurally, not behaviorally. Design: add `reassert BOOLEAN DEFAULT FALSE` to startup table. Rows marked `reassert=true` bypass the dirty-flag suppression and inject on *every* `m` call — not just the first. Cost: ~200–300 bytes/call for 2–3 critical rules. The alternative (detecting post-compaction state) requires framework cooperation (`OPENCLAW_COMPACTION_COUNT` env var) that doesn't exist yet. Origin insight: behavioral rules buried in ops playbooks fail under context pressure; structural gates don't.
 - [ ] **`--budget` flag**: Cap output by character count. Trim startup pyramid from bottom, then reduce result count.
 - [ ] **`priority` column**: Integer priority in startup table for explicit pyramid ordering.
 - [ ] **Schema files**: Complete SQL schemas for PostgreSQL and SQLite with indexes and sample data.
