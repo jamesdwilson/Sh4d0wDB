@@ -171,8 +171,7 @@ def get_reinforced():
     if not c.get("reinforce"):return ""
     b=get_backend_name()
     if b in("postgres","pg"):
-        p,d=_pg_args(c)
-        r=subprocess.run([p,d,"-t","-A","-c","SELECT content FROM startup WHERE reinforce=true ORDER BY priority, key;"],capture_output=True,text=True,timeout=3)
+        r=subprocess.run(_pg_cmd(c,"-t","-A","-c","SELECT content FROM startup WHERE reinforce=true ORDER BY priority, key;"),capture_output=True,text=True,timeout=3,env=_pg_env(c))
         return r.stdout.strip()
     elif b=="sqlite":
         r=subprocess.run(["sqlite3",_sq_path(c),"SELECT content FROM startup WHERE reinforce=1 ORDER BY priority, key;"],capture_output=True,text=True,timeout=3)
