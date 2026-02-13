@@ -384,7 +384,7 @@ ShadowDB ships with three backend adapters. The core concept — database-backed
 
 ### PostgreSQL (Full Power)
 
-The gold standard. Hybrid search combining full-text search (tsvector/tsquery) with semantic vector search (pgvector + embeddings), fused with Reciprocal Rank Fusion.
+Suggested for the best search experience. Hybrid search combining full-text search with semantic vector search (pgvector + embeddings), fused with Reciprocal Rank Fusion.
 
 | Feature | Support |
 |---------|---------|
@@ -396,7 +396,7 @@ The gold standard. Hybrid search combining full-text search (tsvector/tsquery) w
 | Startup table | ✅ SQL table |
 | Dependencies | PostgreSQL 17, pgvector, Ollama |
 
-**Best for:** Production deployments, large knowledge bases (1K+ records), multi-agent setups.
+**Works best for:** Large knowledge bases (1K+ records), multi-agent setups, or if you already run PostgreSQL.
 
 ```json
 {

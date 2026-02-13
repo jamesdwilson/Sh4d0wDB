@@ -53,7 +53,7 @@
 #                           (default: ~/.openclaw/workspace)
 #
 #     --backend <type>      Database to use: postgres or sqlite
-#                           (default: postgres — recommended)
+#                           (default: postgres)
 #
 #     --dry-run             Preview everything without making changes
 #

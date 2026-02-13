@@ -6,6 +6,7 @@ m — ShadowDB Memory Search & Operations CLI
 This is the LITERATE version — every function, every line is documented.
 The production version (`m`) is identical in behavior but minified for speed.
 
+
 WHAT THIS SCRIPT DOES:
 
     Your AI agent's entire configuration is 11 bytes:
@@ -41,26 +42,32 @@ BACKEND RESOLUTION:
         3. ~/.shadowdb.json config     (persistent preference)
         4. Auto-detect                 (try postgres, then sqlite)
 
+    Works best with PostgreSQL (hybrid keyword + semantic search).
+    SQLite and MySQL work great too — just keyword search by default.
 
-SEARCH PIPELINE (PostgreSQL):
+
+SEARCH PIPELINE:
 
     query
       ↓
     ┌─────────────────────────────────────────────────┐
-    │  FTS (tsvector/tsquery)    Vector (pgvector)    │
-    │  GIN index, stemming       HNSW index, cosine   │
-    │  top 50 keyword matches    top 50 semantic hits  │
+    │  Keyword search         Semantic search          │
+    │  (FTS / FULLTEXT)       (vector embeddings)      │
+    │  top 50 matches         top 50 matches           │
     └─────────────────────────────────────────────────┘
       ↓                            ↓
     Reciprocal Rank Fusion (k=60)
       ↓
     top N results (default 5)
 
+    Semantic search requires an embedding model (Ollama suggested).
+    If unavailable, keyword search still runs — graceful degradation.
 
-WHY psql SUBPROCESS (NOT psycopg2):
 
-    Zero pip dependencies. No virtualenv. No setup.py. Just Python stdlib.
-    The ~5ms overhead per subprocess is negligible at our query rate.
+ZERO DEPENDENCIES:
+
+    This script uses only Python stdlib + your database's CLI tool.
+    No pip install, no virtualenv, no setup.py. Just Python and a database.
 
 
 CONFIG FILE (~/.shadowdb.json):
@@ -105,9 +112,6 @@ def load_config():
     Returns an empty dict if the file doesn't exist. This is intentional —
     missing config means "use defaults and auto-detect." A new user who
     just ran quickstart.sh should be able to type `m "test"` immediately.
-
-    Returns:
-        dict: Parsed config, or {} if no config file.
     """
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH) as f:
@@ -124,101 +128,65 @@ def load_config():
 #     1. --backend flag          (highest priority — explicit user choice)
 #     2. SHADOWDB_BACKEND env    (useful for per-agent config)
 #     3. ~/.shadowdb.json        (persistent preference)
-#     4. Auto-detect             (try postgres first, then sqlite)
+#     4. Auto-detect             (try available databases in order)
 
 
-def resolve_backend(override=None):
+def get_backend_name():
     """
-    Determine which database backend to use and return an instantiated adapter.
+    Determine which backend to use (returns a string like "postgres" or "sqlite").
 
-    Args:
-        override: Backend name from --backend flag (e.g., "postgres").
-                  None means "figure it out automatically."
-
-    Returns:
-        A backend object with .startup() and .search() methods.
+    Checks: env var → config file → auto-detect.
     """
     config = load_config()
 
-    # Step 1: CLI override
-    name = override
+    # Env var or config
+    name = os.environ.get("SHADOWDB_BACKEND") or config.get("backend")
 
-    # Step 2: Environment variable
+    # Auto-detect: try postgres first, then check for sqlite file
     if not name:
-        name = os.environ.get("SHADOWDB_BACKEND")
+        name = _auto_detect(config)
 
-    # Step 3: Config file
-    if not name:
-        name = config.get("backend")
-
-    # Step 4: Auto-detect
-    if not name:
-        name = auto_detect_backend(config)
-
-    return create_backend(name, config)
+    return (name or "sqlite").lower().strip()
 
 
-def auto_detect_backend(config):
+def _auto_detect(config):
     """
-    Try to connect to PostgreSQL. If that fails, fall back to SQLite.
+    Auto-detect which database is available.
 
-    PostgreSQL is tried first because it's the most capable backend
-    (hybrid FTS + vector search + RRF fusion). SQLite is the fallback
-    because it requires zero infrastructure.
-
-    Args:
-        config: The loaded config dict (for psql path and database name).
-
-    Returns:
-        str: "postgres" or "sqlite"
+    Tries PostgreSQL first (if psql is on PATH and can connect),
+    then checks for an existing SQLite file, then defaults to SQLite.
     """
+    # Try PostgreSQL
     psql_path = config.get("postgres", {}).get("psql_path", "psql")
     database = config.get("postgres", {}).get("database", "shadow")
-
     try:
         result = subprocess.run(
             [psql_path, database, "-t", "-A", "-c", "SELECT 1;"],
-            capture_output=True,
-            text=True,
-            timeout=3,
+            capture_output=True, text=True, timeout=3,
         )
         if result.returncode == 0:
             return "postgres"
     except Exception:
         pass
 
-    # Check if SQLite database file exists
-    sqlite_path = config.get("sqlite", {}).get("db_path", "shadow.db")
-    if os.path.exists(sqlite_path):
+    # Check for SQLite file
+    sqlite_path = config.get("sqlite", {}).get("db_path", "~/.shadowdb/shadow.db")
+    if os.path.exists(os.path.expanduser(sqlite_path)):
         return "sqlite"
 
     return "sqlite"
 
 
-def create_backend(name, config):
+def resolve_backend(override=None):
     """
-    Instantiate the right backend adapter.
+    Instantiate the right backend adapter for search.
 
-    Each backend is imported lazily so we don't fail on missing dependencies
-    for backends the user isn't using. (e.g., mysql-connector-python)
-
-    The backend interface is two methods:
-
-        .startup() → str
-            Returns identity text (soul, user context, rules).
-
-        .search(query, n, category, full) → list[dict]
-            Returns ranked results. Each dict has:
-            {id, score, title, summary, cat, src, content}
-
-    Args:
-        name:   "postgres", "pg", "sqlite", "mysql", or "mariadb"
-        config: Full config dict from ~/.shadowdb.json
-
-    Returns:
-        An instantiated backend object.
+    Each backend implements two methods:
+        .startup() → str           (identity text)
+        .search(query, ...) → list (ranked results)
     """
-    name = (name or "sqlite").lower().strip()
+    config = load_config()
+    name = override or get_backend_name()
 
     if name in ("postgres", "pg"):
         from backends.postgres import PostgresBackend
@@ -259,73 +227,198 @@ def create_backend(name, config):
 
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║                        DIRECT SQL HELPERS                                  ║
+# ║                     DATABASE HELPERS (BACKEND-AWARE)                       ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 #
-#   Subcommands (save, loops, state, people, handoff, d) talk directly to
-#   PostgreSQL via psql. They bypass the backend adapter because they do
-#   simple CRUD, not search.
+#   Subcommands (save, loops, state, people, handoff, d) need to run SQL
+#   directly. These helpers route to whichever database CLI is configured:
+#
+#     PostgreSQL  →  psql
+#     SQLite      →  sqlite3
+#     MySQL       →  mysql
 #
 #   Two helpers:
+#     db_cmd()    — Raw output (for parsing single values)
+#     db_pretty() — Formatted table output (for display)
+
+
+def db_cmd(sql):
+    """
+    Run a SQL query and return raw output as a string.
+
+    Routes to the configured backend's CLI tool automatically.
+    Returns clean, parseable output — one value per line, no headers.
+    """
+    config = load_config()
+    backend = get_backend_name()
+
+    if backend in ("postgres", "pg"):
+        psql = config.get("postgres", {}).get("psql_path",
+            "/opt/homebrew/opt/postgresql@17/bin/psql")
+        db = config.get("postgres", {}).get("database", "shadow")
+        result = subprocess.run(
+            [psql, db, "-t", "-A", "-c", sql],
+            capture_output=True, text=True, timeout=10,
+        )
+        return result.stdout.strip()
+
+    elif backend == "sqlite":
+        db_path = os.path.expanduser(
+            config.get("sqlite", {}).get("db_path", "~/.shadowdb/shadow.db"))
+        result = subprocess.run(
+            ["sqlite3", db_path, sql],
+            capture_output=True, text=True, timeout=10,
+        )
+        return result.stdout.strip()
+
+    elif backend in ("mysql", "mariadb"):
+        mc = config.get("mysql", {})
+        result = subprocess.run(
+            ["mysql", "-u", mc.get("user", "root"),
+             f"-p{mc.get('password', '')}",
+             "-h", mc.get("host", "localhost"),
+             mc.get("database", "shadow"),
+             "-N", "-B", "-e", sql],
+            capture_output=True, text=True, timeout=10,
+        )
+        return result.stdout.strip()
+
+    return ""
+
+
+def db_pretty(sql):
+    """
+    Run a SQL query and return formatted table output (with headers).
+
+    Same routing as db_cmd(), but keeps headers and alignment for
+    human-readable display.
+    """
+    config = load_config()
+    backend = get_backend_name()
+
+    if backend in ("postgres", "pg"):
+        psql = config.get("postgres", {}).get("psql_path",
+            "/opt/homebrew/opt/postgresql@17/bin/psql")
+        db = config.get("postgres", {}).get("database", "shadow")
+        result = subprocess.run(
+            [psql, db, "-c", sql],
+            capture_output=True, text=True, timeout=10,
+        )
+        return result.stdout.strip()
+
+    elif backend == "sqlite":
+        db_path = os.path.expanduser(
+            config.get("sqlite", {}).get("db_path", "~/.shadowdb/shadow.db"))
+        result = subprocess.run(
+            ["sqlite3", "-header", "-column", db_path, sql],
+            capture_output=True, text=True, timeout=10,
+        )
+        return result.stdout.strip()
+
+    elif backend in ("mysql", "mariadb"):
+        mc = config.get("mysql", {})
+        result = subprocess.run(
+            ["mysql", "-u", mc.get("user", "root"),
+             f"-p{mc.get('password', '')}",
+             "-h", mc.get("host", "localhost"),
+             mc.get("database", "shadow"),
+             "-e", sql],
+            capture_output=True, text=True, timeout=10,
+        )
+        return result.stdout.strip()
+
+    return ""
+
+
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                        SQL DIALECT HELPERS                                 ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
 #
-#     psql_cmd()    — Returns raw text (for parsing values)
-#     psql_pretty() — Returns formatted table output (for display)
+#   Different databases have slightly different SQL syntax for common ops.
+#   These helpers emit the right SQL for whichever backend is active.
+#
+#   This keeps the subcommand code clean — it reads like plain SQL,
+#   and the dialect differences are handled in one place.
 
 
-def psql_cmd(sql, database="shadow"):
+def sql_now():
+    """Current timestamp: now() for postgres/mysql, datetime('now') for sqlite."""
+    if get_backend_name() == "sqlite":
+        return "datetime('now')"
+    return "now()"
+
+
+def sql_ilike(column, pattern):
+    """Case-insensitive LIKE: ILIKE for postgres, LIKE COLLATE NOCASE for sqlite."""
+    if get_backend_name() == "sqlite":
+        return f"{column} LIKE '{pattern}' COLLATE NOCASE"
+    return f"{column} ILIKE '{pattern}'"
+
+
+def sql_left(column, length):
+    """Left substring: left() for postgres/mysql, substr() for sqlite."""
+    if get_backend_name() == "sqlite":
+        return f"substr({column}, 1, {length})"
+    return f"left({column}, {length})"
+
+
+def sql_array(tags):
     """
-    Run a SQL query via psql and return the raw output as a string.
+    Array literal for tags.
 
-    Uses -t (tuples only, no headers) and -A (unaligned, no padding).
-    This gives clean, parseable output — one value per line.
-
-    Args:
-        sql:      SQL query string.
-        database: PostgreSQL database name (default: "shadow").
-
-    Returns:
-        str: Raw query output, stripped of whitespace.
+    PostgreSQL uses ARRAY['a','b']. SQLite and MySQL store tags as a
+    comma-separated string (no native array type).
     """
-    config = load_config()
-    psql_path = config.get("postgres", {}).get("psql_path",
-        "/opt/homebrew/opt/postgresql@17/bin/psql")
-    db = config.get("postgres", {}).get("database", database)
+    backend = get_backend_name()
+    if backend in ("postgres", "pg"):
+        if tags:
+            return "ARRAY[" + ",".join(f"'{t.strip()}'" for t in tags) + "]"
+        return "ARRAY[]::text[]"
+    # SQLite / MySQL: comma-separated string
+    return "'" + ",".join(t.strip() for t in tags) + "'"
 
-    result = subprocess.run(
-        [psql_path, db, "-t", "-A", "-c", sql],
-        capture_output=True,
-        text=True,
-        timeout=10,
+
+def sql_timestamp(column):
+    """Format a timestamp column for display."""
+    if get_backend_name() == "sqlite":
+        return column
+    return f"{column}::timestamp(0)"
+
+
+def sql_interval(column, interval):
+    """
+    Filter rows newer than an interval.
+
+    PostgreSQL: column > now() - interval '24 hours'
+    SQLite:     column > datetime('now', '-24 hours')
+    """
+    if get_backend_name() == "sqlite":
+        return f"{column} > datetime('now', '-{interval}')"
+    return f"{column} > now() - interval '{interval}'"
+
+
+def sql_coalesce_date(column):
+    """Coalesce a date column to '—' if null."""
+    if get_backend_name() == "sqlite":
+        return f"COALESCE({column}, '—')"
+    return f"COALESCE({column}::text, '—')"
+
+
+def sql_upsert(table, key_col, key_val, val_col, val):
+    """
+    Insert-or-update (upsert) a key-value pair.
+
+    Both PostgreSQL and SQLite support ON CONFLICT ... DO UPDATE.
+    The syntax is the same; only the timestamp function differs.
+    """
+    escaped = val.replace("'", "''")
+    now = sql_now()
+    return (
+        f"INSERT INTO {table} ({key_col}, {val_col}, updated_at) "
+        f"VALUES ('{key_val}', '{escaped}', {now}) "
+        f"ON CONFLICT ({key_col}) DO UPDATE "
+        f"SET {val_col} = '{escaped}', updated_at = {now};"
     )
-    return result.stdout.strip()
-
-
-def psql_pretty(sql, database="shadow"):
-    """
-    Run a SQL query via psql and return formatted table output.
-
-    Unlike psql_cmd(), this keeps headers and alignment — producing
-    the familiar psql table format that's easy to read.
-
-    Args:
-        sql:      SQL query string.
-        database: PostgreSQL database name (default: "shadow").
-
-    Returns:
-        str: Formatted table output.
-    """
-    config = load_config()
-    psql_path = config.get("postgres", {}).get("psql_path",
-        "/opt/homebrew/opt/postgresql@17/bin/psql")
-    db = config.get("postgres", {}).get("database", database)
-
-    result = subprocess.run(
-        [psql_path, db, "-c", sql],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
-    return result.stdout.strip()
 
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -337,33 +430,19 @@ def format_results(results, as_json=False):
     """
     Format search results for output.
 
-    Two modes:
-
-        JSON mode (--json):
-            Clean array of result objects. Used when other tools consume
-            the output, or when the model wants structured data.
-
-        Human mode (default):
-            Formatted blocks with dividers, rank numbers, and category tags.
-            Optimized for the model to parse quickly.
-
-    Args:
-        results:  List of result dicts from backend.search().
-        as_json:  If True, output JSON; if False, human-readable.
+    JSON mode (--json):  Clean array for programmatic consumption.
+    Human mode (default): Dividers, rank numbers, category tags.
     """
     if as_json:
         print(json.dumps(results, indent=2))
         return
 
     for i, result in enumerate(results):
-
-        # Title fallback: prefer title → source filename → ID
         title = result["title"] or result["src"] or f"id:{result['id']}"
 
         print(f"\n{'─' * 50}")
         print(f" #{i + 1} {title} [{result['cat']}] score:{result['score']}")
 
-        # Summary line — truncated to 120 chars (just enough for context)
         if result["summary"]:
             print(f" {result['summary'][:120]}")
 
@@ -375,11 +454,11 @@ def format_results(results, as_json=False):
 # ║                                                                            ║
 # ║                            SUBCOMMANDS                                     ║
 # ║                                                                            ║
-# ║   These are shortcuts for common database operations. They bypass the      ║
-# ║   search pipeline entirely — no embeddings, no FTS, just direct SQL.       ║
+# ║   Shortcuts for common database operations. These bypass the search        ║
+# ║   pipeline — no embeddings, no ranking, just direct SQL.                   ║
 # ║                                                                            ║
-# ║   Subcommands never print startup text (identity block). Only search       ║
-# ║   queries get the identity injection.                                      ║
+# ║   All subcommands work with any configured backend (postgres, sqlite,      ║
+# ║   mysql). SQL dialect differences are handled by the helpers above.        ║
 # ║                                                                            ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
@@ -392,16 +471,6 @@ def cmd_save(args):
         m save "title" "content"
         m save "title" "content" -c category
         m save "title" "content" -c category -t tag1,tag2,tag3
-
-    Args:
-        args: Remaining CLI arguments after "save".
-              [0] = title (required)
-              [1] = content (required)
-              -c   = category (default: "general")
-              -t   = comma-separated tags
-
-    Example:
-        m save "Meeting Notes" "Discussed Q3 roadmap" -c project -t meeting,roadmap
     """
     if len(args) < 2:
         print('Usage: m save "title" "content" [-c category] [-t tag1,tag2]')
@@ -424,23 +493,37 @@ def cmd_save(args):
         else:
             i += 1
 
-    # Escape single quotes for SQL (prevents injection from content)
     escaped_title = title.replace("'", "''")
     escaped_content = content.replace("'", "''")
+    tags_sql = sql_array(tags)
+    now = sql_now()
 
-    # Build PostgreSQL array literal: ARRAY['tag1','tag2']
-    if tags:
-        tags_sql = "ARRAY[" + ",".join(f"'{t.strip()}'" for t in tags) + "]"
+    backend = get_backend_name()
+    if backend in ("postgres", "pg"):
+        # RETURNING id gives us the new row's ID in the output
+        result = db_cmd(
+            f"INSERT INTO memories (title, content, category, tags, created_at) "
+            f"VALUES ('{escaped_title}', '{escaped_content}', '{category}', "
+            f"{tags_sql}, {now}) RETURNING id;"
+        )
+        record_id = result.split("\n")[0].strip()  # first line only (skip command tag)
+
+    elif backend == "sqlite":
+        db_cmd(
+            f"INSERT INTO memories (title, content, category, tags, created_at) "
+            f"VALUES ('{escaped_title}', '{escaped_content}', '{category}', "
+            f"{tags_sql}, {now});"
+        )
+        record_id = db_cmd("SELECT last_insert_rowid();")
+
     else:
-        tags_sql = "ARRAY[]::text[]"
+        db_cmd(
+            f"INSERT INTO memories (title, content, category, tags, created_at) "
+            f"VALUES ('{escaped_title}', '{escaped_content}', '{category}', "
+            f"{tags_sql}, {now});"
+        )
+        record_id = "?"
 
-    sql = (
-        f"INSERT INTO memories (title, content, category, tags, created_at) "
-        f"VALUES ('{escaped_title}', '{escaped_content}', '{category}', "
-        f"{tags_sql}, now()) RETURNING id;"
-    )
-
-    record_id = psql_cmd(sql)
     print(f'Saved: id={record_id} title="{title}" category={category}')
 
 
@@ -448,26 +531,20 @@ def cmd_loops(args):
     """
     Show open loops, nags, and deadlines.
 
-    Queries the open_loops table for items with status='open',
-    sorted by urgency (nags first, then by due date).
-
     Usage:
         m loops
-
-    Output columns:
-        id          — Loop ID
-        nag         — 🔴 if nagging, ⚪ if passive
-        due         — Due date (or — if none)
-        description — First 100 chars of the loop description
     """
-    print(psql_pretty(
-        "SELECT id, "
-        "  CASE WHEN nag THEN '🔴' ELSE '⚪' END AS nag, "
-        "  COALESCE(due_date::text, '—') AS due, "
-        "  left(description, 100) AS description "
-        "FROM open_loops "
-        "WHERE status = 'open' "
-        "ORDER BY nag DESC, due_date ASC NULLS LAST;"
+    left = sql_left("description", 100)
+    coalesce = sql_coalesce_date("due_date")
+
+    print(db_pretty(
+        f"SELECT id, "
+        f"  CASE WHEN nag THEN '🔴' ELSE '⚪' END AS nag, "
+        f"  {coalesce} AS due, "
+        f"  {left} AS description "
+        f"FROM open_loops "
+        f"WHERE status = 'open' "
+        f"ORDER BY nag DESC, due_date ASC NULLS LAST;"
     ))
 
 
@@ -475,77 +552,54 @@ def cmd_state(args):
     """
     Read or write session state.
 
-    The session_state table is a key-value store for passing context
-    between sessions. When a session ends, it writes its state here.
-    The next session reads it on startup.
-
     Usage:
-        m state                    — Show all state
-        m state current_focus      — Read one key
-        m state current_focus "Working on ShadowDB quickstart"  — Write
-
-    Args:
-        args: [] for read-all, [key] for read-one, [key, value] for write.
+        m state                              Show all state
+        m state current_focus                Read one key
+        m state current_focus "Working on X" Write a key
     """
+    left = sql_left("value", 120)
+    ts = sql_timestamp("updated_at")
+
     if len(args) == 0:
-        # Show all state
-        print(psql_pretty(
-            "SELECT key, left(value, 120) AS value, "
-            "  updated_at::timestamp(0) "
-            "FROM session_state "
-            "ORDER BY key;"
+        print(db_pretty(
+            f"SELECT key, {left} AS value, {ts} "
+            f"FROM session_state ORDER BY key;"
         ))
 
     elif len(args) == 1:
-        # Read one key
-        key = args[0]
-        result = psql_cmd(
-            f"SELECT value FROM session_state WHERE key = '{key}';"
+        result = db_cmd(
+            f"SELECT value FROM session_state WHERE key = '{args[0]}';"
         )
-        print(result if result else f"No key '{key}'")
+        print(result if result else f"No key '{args[0]}'")
 
     else:
-        # Write key=value (upsert)
-        key = args[0]
-        value = args[1].replace("'", "''")
-        psql_cmd(
-            f"INSERT INTO session_state (key, value, updated_at) "
-            f"VALUES ('{key}', '{value}', now()) "
-            f"ON CONFLICT (key) DO UPDATE "
-            f"SET value = '{value}', updated_at = now();"
-        )
-        print(f"Updated: {key}")
+        db_cmd(sql_upsert("session_state", "key", args[0], "value", args[1]))
+        print(f"Updated: {args[0]}")
 
 
 def cmd_people(args):
     """
-    Look up contacts in the people table.
+    Look up contacts.
 
     Usage:
-        m people              — List first 20 contacts
-        m people "Watson"     — Search by name, company, or notes
-
-    The search is case-insensitive (ILIKE) and matches partial strings.
-    "Wat" will find "Watson", "Watkins", etc.
-
-    Args:
-        args: [] for list, [name] for search.
+        m people              List first 20 contacts
+        m people "Watson"     Search by name, company, or notes
     """
     if not args:
-        print(psql_pretty(
+        print(db_pretty(
             "SELECT name, company, role, phone, email "
-            "FROM people "
-            "ORDER BY name "
-            "LIMIT 20;"
+            "FROM people ORDER BY name LIMIT 20;"
         ))
     else:
         query = args[0].replace("'", "''")
-        print(psql_pretty(
+        name_match = sql_ilike("name", f"%{query}%")
+        company_match = sql_ilike("company", f"%{query}%")
+        notes_match = sql_ilike("notes", f"%{query}%")
+
+        print(db_pretty(
             f"SELECT name, company, role, phone, email, notes "
             f"FROM people "
-            f"WHERE name ILIKE '%{query}%' "
-            f"   OR company ILIKE '%{query}%' "
-            f"   OR notes ILIKE '%{query}%';"
+            f"WHERE {name_match} OR {company_match} OR {notes_match};"
         ))
 
 
@@ -553,102 +607,64 @@ def cmd_handoff(args):
     """
     Write session handoff state in one call.
 
-    When a session is about to end (compaction, context limit, user leaves),
-    it should call `m handoff` to persist its context for the next session.
-
     Usage:
         m handoff "current focus"
         m handoff "current focus" "pending drafts"
         m handoff "current focus" "pending drafts" "recent decisions"
-
-    This writes up to 3 keys to session_state:
-        current_focus    — What the session was working on
-        pending_drafts   — Any unsent drafts awaiting approval
-        recent_decisions — Key decisions made this session
-
-    Args:
-        args: [focus], or [focus, drafts], or [focus, drafts, decisions]
     """
     if len(args) < 1:
         print('Usage: m handoff "focus" ["drafts"] ["decisions"]')
         sys.exit(1)
 
-    focus = args[0].replace("'", "''")
-    psql_cmd(
-        f"INSERT INTO session_state (key, value, updated_at) "
-        f"VALUES ('current_focus', '{focus}', now()) "
-        f"ON CONFLICT (key) DO UPDATE "
-        f"SET value = '{focus}', updated_at = now();"
-    )
+    db_cmd(sql_upsert("session_state", "key", "current_focus", "value", args[0]))
 
     if len(args) > 1:
-        drafts = args[1].replace("'", "''")
-        psql_cmd(
-            f"INSERT INTO session_state (key, value, updated_at) "
-            f"VALUES ('pending_drafts', '{drafts}', now()) "
-            f"ON CONFLICT (key) DO UPDATE "
-            f"SET value = '{drafts}', updated_at = now();"
-        )
+        db_cmd(sql_upsert("session_state", "key", "pending_drafts", "value", args[1]))
 
     if len(args) > 2:
-        decisions = args[2].replace("'", "''")
-        psql_cmd(
-            f"INSERT INTO session_state (key, value, updated_at) "
-            f"VALUES ('recent_decisions', '{decisions}', now()) "
-            f"ON CONFLICT (key) DO UPDATE "
-            f"SET value = '{decisions}', updated_at = now();"
-        )
+        db_cmd(sql_upsert("session_state", "key", "recent_decisions", "value", args[2]))
 
+    left = sql_left("value", 100)
     print("Session handoff written.")
-    print(psql_pretty(
-        "SELECT key, left(value, 100) AS value "
-        "FROM session_state "
-        "ORDER BY key;"
-    ))
+    print(db_pretty(f"SELECT key, {left} AS value FROM session_state ORDER BY key;"))
 
 
 def cmd_d(args):
     """
-    Daily dashboard — quick overview of everything.
-
-    Combines three views in one call:
-
-        1. SESSION STATE  — What's the current focus? Any pending drafts?
-        2. OPEN LOOPS     — Nags, deadlines, things that need attention
-        3. RECENT (24h)   — What was added to the knowledge base today
+    Daily dashboard — session state + open loops + recent records.
 
     Usage:
         m d
-
-    This is what HEARTBEAT.md points to: `m d`. Every heartbeat poll
-    runs this to check if anything needs attention.
     """
+    left_val = sql_left("value", 120)
+    left_desc = sql_left("description", 100)
+    left_title = sql_left("title", 60)
+    coalesce = sql_coalesce_date("due_date")
+    ts = sql_timestamp("created_at")
+    interval = sql_interval("created_at", "24 hours")
+
     print("═══ SESSION STATE ═══")
-    print(psql_pretty(
-        "SELECT key, left(value, 120) AS value "
-        "FROM session_state "
-        "ORDER BY key;"
+    print(db_pretty(
+        f"SELECT key, {left_val} AS value FROM session_state ORDER BY key;"
     ))
 
     print("\n═══ OPEN LOOPS ═══")
-    print(psql_pretty(
-        "SELECT id, "
-        "  CASE WHEN nag THEN '🔴' ELSE '⚪' END AS nag, "
-        "  COALESCE(due_date::text, '—') AS due, "
-        "  left(description, 100) AS description "
-        "FROM open_loops "
-        "WHERE status = 'open' "
-        "ORDER BY nag DESC, due_date ASC NULLS LAST;"
+    print(db_pretty(
+        f"SELECT id, "
+        f"  CASE WHEN nag THEN '🔴' ELSE '⚪' END AS nag, "
+        f"  {coalesce} AS due, "
+        f"  {left_desc} AS description "
+        f"FROM open_loops "
+        f"WHERE status = 'open' "
+        f"ORDER BY nag DESC, due_date ASC NULLS LAST;"
     ))
 
     print("\n═══ RECENT (24h) ═══")
-    print(psql_pretty(
-        "SELECT id, category, left(title, 60) AS title, "
-        "  created_at::timestamp(0) "
-        "FROM memories "
-        "WHERE created_at > now() - interval '24 hours' "
-        "ORDER BY created_at DESC "
-        "LIMIT 10;"
+    print(db_pretty(
+        f"SELECT id, category, {left_title} AS title, {ts} "
+        f"FROM memories "
+        f"WHERE {interval} "
+        f"ORDER BY created_at DESC LIMIT 10;"
     ))
 
 
@@ -656,12 +672,8 @@ def cmd_d(args):
 # ║                         SUBCOMMAND REGISTRY                                ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 #
-#   Maps subcommand names to handler functions.
-#
-#   When the user types `m save ...`, we look up "save" in this dict
-#   and call the handler directly — bypassing argument parsing and the
-#   search pipeline entirely. This keeps subcommands fast (no backend
-#   resolution, no embedding model load).
+#   When the user types `m save ...`, we look up "save" here and call the
+#   handler directly — bypassing search entirely. Fast, no embedding overhead.
 
 SUBCOMMANDS = {
     "save":    cmd_save,
@@ -674,9 +686,7 @@ SUBCOMMANDS = {
 
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║                                                                            ║
 # ║                              MAIN                                          ║
-# ║                                                                            ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
 
@@ -684,20 +694,10 @@ def main():
     """
     Entry point.
 
-    Flow:
         1. No args or --help  →  print usage
         2. First arg is a subcommand  →  dispatch to handler
         3. Otherwise  →  treat as search query
-
-    For search queries:
-        1. Parse arguments (query, -n, -c, --full, --json, --backend)
-        2. Resolve backend (4-step chain)
-        3. Print startup identity text (if first query in session)
-        4. Run hybrid search
-        5. Format and print results
     """
-
-    # ── Help ────────────────────────────────────────────────────────────────
 
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print("""m — ShadowDB memory search + operations
@@ -711,57 +711,24 @@ def main():
   DASH:     m d                         — daily dashboard""")
         sys.exit(0)
 
-    # ── Subcommand dispatch ─────────────────────────────────────────────────
-    #
-    #   If the first argument matches a subcommand, call it and exit.
-    #   Subcommands never trigger startup text or search.
-
+    # Subcommand dispatch — no search, no startup, no embeddings
     if sys.argv[1] in SUBCOMMANDS:
         SUBCOMMANDS[sys.argv[1]](sys.argv[2:])
         sys.exit(0)
 
-    # ── Search mode ─────────────────────────────────────────────────────────
-    #
-    #   Everything that isn't a subcommand is treated as a search query.
-    #   nargs="+" allows multi-word queries without quotes:
-    #       m Dr Watson medical practice
-    #   becomes the query: "Dr Watson medical practice"
-
+    # Search mode
     parser = argparse.ArgumentParser()
-
-    parser.add_argument("query", nargs="+",
-        help="Search query (quotes optional for multi-word)")
-
-    parser.add_argument("-n", type=int, default=5,
-        help="Number of results (default: 5)")
-
-    parser.add_argument("-c", "--cat", default=None,
-        help="Filter by category (e.g., contacts, cases)")
-
-    parser.add_argument("--full", action="store_true",
-        help="Return full content instead of summarized pyramid")
-
-    parser.add_argument("--json", action="store_true",
-        help="Output as JSON array")
-
-    parser.add_argument("--backend", default=None,
-        help="Force backend: postgres, sqlite, mysql")
+    parser.add_argument("query", nargs="+")
+    parser.add_argument("-n", type=int, default=5)
+    parser.add_argument("-c", "--cat", default=None)
+    parser.add_argument("--full", action="store_true")
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--backend", default=None)
 
     args = parser.parse_args()
     query = " ".join(args.query)
 
-    # ── Resolve backend ─────────────────────────────────────────────────────
-
     backend = resolve_backend(args.backend)
-
-    # ── Startup identity ────────────────────────────────────────────────────
-    #
-    #   The startup table contains the agent's identity — who it is, who
-    #   the user is, what rules to follow. This is printed before search
-    #   results so the model reads its identity first.
-    #
-    #   If startup() fails (e.g., table doesn't exist yet), we continue
-    #   silently. Search results are the primary value.
 
     try:
         startup_text = backend.startup()
@@ -769,8 +736,6 @@ def main():
             print(startup_text + "\n")
     except Exception:
         pass
-
-    # ── Search ──────────────────────────────────────────────────────────────
 
     results = backend.search(query, args.n, args.cat, args.full)
     format_results(results, args.json)

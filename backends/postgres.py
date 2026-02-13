@@ -26,17 +26,12 @@ and merges results using Reciprocal Rank Fusion (RRF):
        incompatible scales and can't be directly compared
      - Formula: rrf_score += 1/(k + rank + 1), where k=60
 
-WHY psql SUBPROCESS INSTEAD OF psycopg2?
-  We deliberately shell out to the psql CLI instead of using a Python driver:
-    1. Zero pip dependencies — no psycopg2, no psycopg, no asyncpg
-    2. psql is always available if PostgreSQL is installed
-    3. The script stays a single file with no virtualenv or setup
-    4. Connection pooling isn't needed (each search is one query)
-    5. The JSON wrapping trick (json_agg + row_to_json) gives us structured
-       data from psql's text output — no ORM, no cursor management
-
-  The tradeoff is ~5ms overhead per subprocess call. At our query volumes
-  (seconds between calls, not milliseconds), this is negligible.
+NOTE ON DEPENDENCIES:
+  This backend talks to PostgreSQL via the psql CLI (subprocess) rather than
+  a Python driver. This keeps the install at zero pip dependencies — just
+  Python stdlib and a running PostgreSQL instance. If you prefer psycopg2
+  or asyncpg, swapping in a driver is straightforward — the interface is
+  just .startup() and .search().
 
 SCHEMA REQUIREMENTS:
   This backend expects two tables:
