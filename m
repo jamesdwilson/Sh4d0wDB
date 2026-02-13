@@ -38,7 +38,7 @@ def resolve(override=None):
     c=lcfg();b=override or get_backend_name()
     if b in("postgres","pg"):
         from backends.postgres import PostgresBackend;pc=c.get("postgres",{})
-        return PostgresBackend(psql_path=pc.get("psql_path","psql"),database=_require(pc,"database","postgres"),embedding_url=pc.get("embedding_url",DEFAULT_EMBEDDING_URL),embedding_model=pc.get("embedding_model",DEFAULT_EMBEDDING_MODEL))
+        return PostgresBackend(psql_path=pc.get("psql_path","psql"),database=pc.get("database"),host=pc.get("host"),port=pc.get("port"),user=pc.get("user"),password=pc.get("password"),connection_string=pc.get("connection_string"),embedding_url=pc.get("embedding_url",DEFAULT_EMBEDDING_URL),embedding_model=pc.get("embedding_model",DEFAULT_EMBEDDING_MODEL))
     elif b=="sqlite":
         from backends.sqlite import SQLiteBackend;sc=c.get("sqlite",{})
         return SQLiteBackend(db_path=_require(sc,"db_path","sqlite"),embedding_url=sc.get("embedding_url",DEFAULT_EMBEDDING_URL),embedding_model=sc.get("embedding_model",DEFAULT_EMBEDDING_MODEL))
@@ -48,8 +48,24 @@ def resolve(override=None):
     else:print(f"Unknown backend: {b}",file=sys.stderr);sys.exit(1)
 
 # ── Database helpers (backend-aware) ──────────────────────────
-def _pg_args(c):
-    pc=c.get("postgres",{});return pc.get("psql_path","psql"),_require(pc,"database","postgres")
+def _pg_cmd(c,*extra):
+    """Build psql command list. Supports connection_string, host/port/user, or database-only."""
+    pc=c.get("postgres",{});psql=pc.get("psql_path","psql");cmd=[psql]
+    cs=pc.get("connection_string")
+    if cs:cmd.append(cs)
+    else:
+        h=pc.get("host");p=pc.get("port");u=pc.get("user")
+        if h:cmd.extend(["-h",h])
+        if p:cmd.extend(["-p",str(p)])
+        if u:cmd.extend(["-U",u])
+        cmd.append(_require(pc,"database","postgres"))
+    cmd.extend(extra);return cmd
+
+def _pg_env(c):
+    """Return env dict with PGPASSWORD if configured."""
+    pw=c.get("postgres",{}).get("password")
+    if pw:return{**os.environ,"PGPASSWORD":pw}
+    return None
 
 def _sq_path(c):
     return os.path.expanduser(_require(c.get("sqlite",{}),"db_path","sqlite"))
@@ -61,8 +77,7 @@ def db_cmd(sql):
     """Run SQL, return raw text. Routes to the configured backend."""
     c=lcfg();b=get_backend_name()
     if b in("postgres","pg"):
-        p,d=_pg_args(c)
-        r=subprocess.run([p,d,"-t","-A","-c",sql],capture_output=True,text=True,timeout=10)
+        r=subprocess.run(_pg_cmd(c,"-t","-A","-c",sql),capture_output=True,text=True,timeout=10,env=_pg_env(c))
         return r.stdout.strip()
     elif b=="sqlite":
         r=subprocess.run(["sqlite3",_sq_path(c),sql],capture_output=True,text=True,timeout=10)
@@ -78,8 +93,7 @@ def db_pretty(sql):
     """Run SQL, return formatted table output. Routes to the configured backend."""
     c=lcfg();b=get_backend_name()
     if b in("postgres","pg"):
-        p,d=_pg_args(c)
-        r=subprocess.run([p,d,"-c",sql],capture_output=True,text=True,timeout=10)
+        r=subprocess.run(_pg_cmd(c,"-c",sql),capture_output=True,text=True,timeout=10,env=_pg_env(c))
         return r.stdout.strip()
     elif b=="sqlite":
         r=subprocess.run(["sqlite3","-header","-column",_sq_path(c),sql],capture_output=True,text=True,timeout=10)

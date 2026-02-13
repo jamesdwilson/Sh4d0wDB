@@ -4,8 +4,14 @@
   "postgres": {
     "psql_path": "/opt/homebrew/opt/postgresql@17/bin/psql",
     "database": "shadowdb",
+    "host": null,
+    "port": null,
+    "user": null,
+    "password": null,
+    "connection_string": null,
     "embedding_url": "http://localhost:11434/api/embeddings",
-    "embedding_model": "nomic-embed-text"
+    "embedding_model": "nomic-embed-text",
+    "_comment": "For cloud PG, set connection_string OR host/port/user/password. Omit host for local Unix socket."
   },
   "sqlite": {
     "db_path": "~/.shadowdb/shadow.db",

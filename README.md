@@ -430,19 +430,33 @@ Suggested for the best search experience. Hybrid search combining full-text sear
 | Startup table | ✅ SQL table |
 | Dependencies | PostgreSQL 17, pgvector, Ollama |
 
-**Works best for:** Large knowledge bases (1K+ records), multi-agent setups, or if you already run PostgreSQL.
+**Works best for:** Large knowledge bases (1K+ records), multi-agent setups, cloud-hosted databases, or if you already run PostgreSQL.
 
+**Local PostgreSQL** (Unix socket, zero auth):
 ```json
 {
   "backend": "postgres",
   "postgres": {
-    "psql_path": "/opt/homebrew/opt/postgresql@17/bin/psql",
     "database": "shadow",
     "embedding_url": "http://localhost:11434/api/embeddings",
     "embedding_model": "nomic-embed-text"
   }
 }
 ```
+
+**Cloud PostgreSQL** (Neon, Supabase, RDS, etc.):
+```json
+{
+  "backend": "postgres",
+  "postgres": {
+    "connection_string": "postgresql://user:pass@db.neon.tech:5432/shadow?sslmode=require",
+    "embedding_url": "http://localhost:11434/api/embeddings",
+    "embedding_model": "nomic-embed-text"
+  }
+}
+```
+
+> **Tip:** You can also use individual fields (`host`, `port`, `user`, `password`, `database`) instead of `connection_string`. Connection string takes priority if both are set. `psql_path` is optional — defaults to `psql` from PATH.
 
 ### SQLite (Portable)
 
@@ -1288,7 +1302,7 @@ Add a `memory.backend` config option that routes the existing `memory_search` to
   "memory": {
     "backend": "postgres",
     "postgres": {
-      "connectionString": "postgresql://localhost/shadow",
+      "connectionString": "postgresql://user:pass@host:5432/shadow",
       "startupTable": "startup",
       "memoriesTable": "memories",
       "embeddingProvider": "ollama",
@@ -1535,10 +1549,11 @@ m "test query"
 
 ### PostgreSQL (Full Power — Best Search)
 
-Hybrid BM25 + vector search with RRF fusion. Recommended if you already run PostgreSQL or want the best search quality.
+Hybrid BM25 + vector search with RRF fusion. Works with local PostgreSQL or any hosted provider (Neon, Supabase, RDS, Timescale, etc.).
 
+**Option A — Local PostgreSQL:**
 ```bash
-# Prerequisites
+# Prerequisites (macOS — adapt for your OS)
 brew install postgresql@17 pgvector ollama
 brew services start postgresql@17
 ollama pull nomic-embed-text
@@ -1558,7 +1573,6 @@ cat > ~/.shadowdb.json << 'EOF'
 {
   "backend": "postgres",
   "postgres": {
-    "psql_path": "/opt/homebrew/opt/postgresql@17/bin/psql",
     "database": "shadow",
     "embedding_url": "http://localhost:11434/api/embeddings",
     "embedding_model": "nomic-embed-text"
@@ -1566,9 +1580,32 @@ cat > ~/.shadowdb.json << 'EOF'
 }
 EOF
 
-# Test
 m "test query"
 ```
+
+**Option B — Cloud PostgreSQL:**
+```bash
+# Your cloud provider gives you a connection string.
+# pgvector must be enabled (most providers support it).
+# Run schema.sql against the cloud DB:
+psql "postgresql://user:pass@db.neon.tech:5432/shadow?sslmode=require" -f schema.sql
+
+# Config
+cat > ~/.shadowdb.json << 'EOF'
+{
+  "backend": "postgres",
+  "postgres": {
+    "connection_string": "postgresql://user:pass@db.neon.tech:5432/shadow?sslmode=require",
+    "embedding_url": "http://localhost:11434/api/embeddings",
+    "embedding_model": "nomic-embed-text"
+  }
+}
+EOF
+
+m "test query"
+```
+
+> **Why cloud PG?** Your agent's memory travels with you. Run the agent on a laptop, a server, or a Raspberry Pi — all pointing at the same cloud database. Multi-device, always in sync, zero replication.
 
 ### MySQL / MariaDB
 
@@ -1720,7 +1757,7 @@ The startup identity text appears on the first `m` call in a session. On subsequ
 - [ ] **Multi-agent support**: Per-agent startup rows. `m --agent=research "query"` returns different identity.
 - [ ] **MySQL/MariaDB backend**: Complete and test (adapter started in `backends/mysql.py`).
 - [ ] **DuckDB backend**: Analytical queries over memory (trends, stats, aggregations).
-- [ ] **Remote database support**: Connection strings, pooling, TLS for hosted databases.
+- [x] **Remote database support**: Connection strings, host/port/user/password fields, PGPASSWORD env handling for hosted databases (Neon, Supabase, RDS, etc.).
 - [ ] **Embedding cache**: Avoid redundant Ollama calls for repeated/similar queries.
 - [ ] **Cross-model validation**: Test `DB: m query` across GPT-4, Gemini, Llama 3, Mistral, DeepSeek.
 - [ ] **Supabase backend**: Hosted PostgreSQL + pgvector for zero-infrastructure setup.

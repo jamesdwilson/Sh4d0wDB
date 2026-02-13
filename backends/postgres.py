@@ -61,6 +61,7 @@ SCHEMA REQUIREMENTS:
 """
 
 import json
+import os
 import subprocess
 import urllib.request
 
@@ -72,33 +73,66 @@ class PostgresBackend:
     This class is instantiated by m-universal's _create_backend() function
     with config values from ~/.shadowdb.json. It can also be used directly:
 
+        # Local PostgreSQL (Unix socket):
+        backend = PostgresBackend(database="myagent")
+
+        # Cloud PostgreSQL (Neon, Supabase, RDS, etc.):
         backend = PostgresBackend(
-            psql_path="/opt/homebrew/opt/postgresql@17/bin/psql",
+            connection_string="postgresql://user:pass@host.neon.tech:5432/myagent?sslmode=require"
+        )
+
+        # Or with individual fields:
+        backend = PostgresBackend(
+            host="db.supabase.co", port=5432,
+            user="postgres", password="secret",
             database="myagent"
         )
+
         print(backend.startup())
         results = backend.search("Watson")
     """
 
-    def __init__(self, psql_path="psql", database=None,
+    def __init__(self, psql_path="psql", database=None, host=None, port=None,
+                 user=None, password=None, connection_string=None,
                  embedding_url="http://localhost:11434/api/embeddings",
                  embedding_model="nomic-embed-text"):
         """
         Initialize the PostgreSQL backend.
 
+        Connection priority:
+            1. connection_string — full URI passed directly to psql
+               (e.g., "postgresql://user:pass@host:5432/db?sslmode=require")
+            2. Individual fields (host, port, user, password, database)
+               — assembled into psql flags: -h host -p port -U user
+            3. database only — connects via local Unix socket (pg_hba default)
+
         Args:
-            psql_path:       Path to the psql CLI binary (default: "psql" from PATH).
-                             macOS Homebrew example: /opt/homebrew/opt/postgresql@17/bin/psql
-                             Linux default:  /usr/bin/psql
-            database:        PostgreSQL database name (required — no default)
-            embedding_url:   Ollama embedding API endpoint (must be running locally)
-            embedding_model: Which Ollama model to use for embeddings.
-                             nomic-embed-text produces 768-dim vectors.
+            psql_path:         Path to the psql CLI binary (default: "psql" from PATH).
+                               macOS Homebrew: /opt/homebrew/opt/postgresql@17/bin/psql
+                               Linux default:  /usr/bin/psql
+            database:          PostgreSQL database name (required unless connection_string is set)
+            host:              PostgreSQL host (omit for local Unix socket)
+            port:              PostgreSQL port (default: 5432 if host is set)
+            user:              PostgreSQL user (omit for peer/ident auth)
+            password:          PostgreSQL password (set via PGPASSWORD env var for security)
+            connection_string: Full PostgreSQL URI — overrides all individual fields.
+                               Supports any libpq parameter in the query string.
+            embedding_url:     Ollama embedding API endpoint (can be local or remote)
+            embedding_model:   Which Ollama model to use for embeddings.
+                               nomic-embed-text produces 768-dim vectors.
         """
-        if not database:
-            raise ValueError("PostgresBackend requires 'database' — set postgres.database in ~/.shadowdb.json")
+        self.connection_string = connection_string
+        if not connection_string and not database:
+            raise ValueError(
+                "PostgresBackend requires 'database' or 'connection_string' — "
+                "set postgres.database or postgres.connection_string in ~/.shadowdb.json"
+            )
         self.psql = psql_path
         self.db = database
+        self.host = host
+        self.port = port
+        self.user = user
+        self.password = password
         self.embed_url = embedding_url
         self.embed_model = embedding_model
 
@@ -133,6 +167,47 @@ class PostgresBackend:
         except Exception:
             return None
 
+    def _psql_cmd(self, *extra_args):
+        """
+        Build the base psql command with proper connection arguments.
+
+        Connection priority:
+          1. connection_string → psql <uri> [extra_args]
+          2. Individual fields → psql -h host -p port -U user database [extra_args]
+          3. database only → psql database [extra_args]  (local Unix socket)
+
+        Password handling: if self.password is set, it's passed via PGPASSWORD
+        environment variable in _run_psql(). Never put passwords on the CLI.
+
+        Returns:
+            list[str]: Command list ready for subprocess.run()
+        """
+        cmd = [self.psql]
+        if self.connection_string:
+            cmd.append(self.connection_string)
+        else:
+            if self.host:
+                cmd.extend(["-h", self.host])
+            if self.port:
+                cmd.extend(["-p", str(self.port)])
+            if self.user:
+                cmd.extend(["-U", self.user])
+            cmd.append(self.db)
+        cmd.extend(extra_args)
+        return cmd
+
+    def _run_psql(self, cmd, timeout=15):
+        """
+        Execute a psql command with proper environment (PGPASSWORD if needed).
+
+        Returns:
+            subprocess.CompletedProcess
+        """
+        env = None
+        if self.password:
+            env = {**os.environ, "PGPASSWORD": self.password}
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+
     def _sql(self, query):
         """
         Execute a SQL query and return results as a list of dictionaries.
@@ -155,10 +230,8 @@ class PostgresBackend:
             list[dict]: Parsed result rows, or [] if no results or on error.
         """
         wrapped = f"SELECT json_agg(row_to_json(sub)) FROM ({query}) sub;"
-        result = subprocess.run(
-            [self.psql, self.db, "-t", "-A", "-c", wrapped],
-            capture_output=True, text=True, timeout=15
-        )
+        cmd = self._psql_cmd("-t", "-A", "-c", wrapped)
+        result = self._run_psql(cmd, timeout=15)
         raw = result.stdout.strip()
         # json_agg returns SQL null for zero rows — handle both empty and null
         return json.loads(raw) if raw and raw != "null" else []
@@ -177,11 +250,9 @@ class PostgresBackend:
         Returns:
             str: Concatenated identity text, or empty string if none found.
         """
-        result = subprocess.run(
-            [self.psql, self.db, "-t", "-A", "-c",
-             "SELECT content FROM startup ORDER BY priority, key;"],
-            capture_output=True, text=True, timeout=3
-        )
+        cmd = self._psql_cmd("-t", "-A", "-c",
+                             "SELECT content FROM startup ORDER BY priority, key;")
+        result = self._run_psql(cmd, timeout=3)
         return result.stdout.strip() if result.stdout.strip() else ""
 
     def search(self, query, n=5, category=None, full=False):

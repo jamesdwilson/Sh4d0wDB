@@ -771,12 +771,13 @@ else
     CONFIG_CONTENT='{
   "backend": "postgres",
   "postgres": {
-    "psql_path": "'$(command -v psql || echo "/opt/homebrew/opt/postgresql@17/bin/psql")'",
     "database": "'"$DB_NAME"'",
     "embedding_url": "http://localhost:11434/api/embeddings",
     "embedding_model": "nomic-embed-text"
   }
 }'
+    detail "For cloud PostgreSQL, add connection_string to ~/.shadowdb.json:"
+    detail '  "connection_string": "postgresql://user:pass@host:5432/db?sslmode=require"'
   else
     CONFIG_CONTENT='{
   "backend": "sqlite",
