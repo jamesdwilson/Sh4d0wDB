@@ -147,7 +147,7 @@ Every step asks for confirmation. Nothing happens without your say-so.
 > Default: auto-detects what's installed. See [full setup instructions](#setup) for all backends.
 
 > [!IMPORTANT]
-> **Got rules your agent must never forget?** Create `RULES_REINFORCE.md` in your workspace before running setup. These rules survive context compaction — they appear in **every** query result, not just the first.
+> **Got rules your agent must never forget?** Create `RULES_REINFORCE.md` in your workspace before running setup. These rules are re-injected alongside your agent's identity whenever context refreshes — surviving compaction, session gaps, and cold starts.
 >
 > ```markdown
 > # Exit Gate
@@ -163,11 +163,11 @@ Every step asks for confirmation. Nothing happens without your say-so.
 >
 > [Lost in the Middle (Liu et al., 2023)](https://arxiv.org/abs/2307.03172) showed that models attend best to the **beginning** and **end** of context, with accuracy dropping for information in the middle. System prompt rules sit at position 0 — technically the "beginning" — but after 50 turns of reading the same rules, the model has habituated to them. They're cognitive wallpaper.
 >
-> Reinforced rules arrive as **fresh tool output** at the **end** of context — the high-attention zone. The rule hasn't changed. The *position* changed. Same content, dramatically different attention weight.
+> Reinforced rules arrive as **fresh tool output** at the **end** of context — the high-attention zone. They ride the same session-aware dirty flag as startup identity (re-injected after a configurable gap, not on every single call), so they add zero overhead during active conversation. But when context refreshes — new session, post-compaction, cold start — they're right there with your agent's soul, not buried in a system prompt the model stopped reading 40 turns ago.
 >
-> This isn't "repeat the rules louder." It's "move the rules to where the model is actually looking."
+> This isn't "repeat the rules louder." It's "move the rules to where the model is actually looking, timed to when it needs them most."
 >
-> Cost: ~100–300 bytes per reinforced rule per `m` call. For 2–3 critical rules, that's negligible — and it's your choice which rules (if any) to reinforce.
+> Cost: ~100–300 bytes per reinforced rule, only on context refresh. During active conversation: zero.
 >
 > </details>
 
@@ -1709,7 +1709,7 @@ The startup identity text appears on the first `m` call in a session. On subsequ
 <details>
 <summary><b>Future Work</b></summary>
 
-- [ ] **Context-aware rule re-assertion**: Critical rules (exit gate, comms gate) should survive compaction structurally, not behaviorally. Design: add `reassert BOOLEAN DEFAULT FALSE` to startup table. Rows marked `reassert=true` bypass the dirty-flag suppression and inject on *every* `m` call — not just the first. Cost: ~200–300 bytes/call for 2–3 critical rules. The alternative (detecting post-compaction state) requires framework cooperation (`OPENCLAW_COMPACTION_COUNT` env var) that doesn't exist yet. Origin insight: behavioral rules buried in ops playbooks fail under context pressure; structural gates don't.
+- [ ] **Context-aware rule re-assertion**: Critical rules (exit gate, comms gate) should survive compaction structurally, not behaviorally. Design: add `reinforce BOOLEAN DEFAULT FALSE` to startup table. Rows marked `reinforce=true` are included in every startup re-injection (same dirty-flag cadence as identity — no extra SQL hits during active conversation). Config flag `"reinforce": true` in `~/.shadowdb.json` gates the feature at runtime — no flag = no overhead. `RULES_REINFORCE.md` convention populates these rows at setup. Origin insight: behavioral rules buried in ops playbooks fail under context pressure; structural gates don't.
 - [ ] **`--budget` flag**: Cap output by character count. Trim startup pyramid from bottom, then reduce result count.
 - [ ] **`priority` column**: Integer priority in startup table for explicit pyramid ordering.
 - [ ] **Schema files**: Complete SQL schemas for PostgreSQL and SQLite with indexes and sample data.
