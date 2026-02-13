@@ -1,5 +1,6 @@
 {
   "backend": "postgres",
+  "reinforce": true,
   "postgres": {
     "psql_path": "/opt/homebrew/opt/postgresql@17/bin/psql",
     "database": "shadowdb",

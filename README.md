@@ -666,22 +666,24 @@ Every backend implements a `startup` table/collection that frontloads agent iden
 CREATE TABLE startup (
   key TEXT PRIMARY KEY,
   content TEXT NOT NULL,
-  priority INTEGER DEFAULT 0
+  priority INTEGER DEFAULT 0,
+  reinforce BOOLEAN DEFAULT FALSE
 );
 
-INSERT INTO startup (key, content) VALUES
-  ('soul', 'You are Holmes-AI. Precise, analytical, evidence-driven.'),
-  ('user', 'Sherlock Holmes. Consulting detective. 221B Baker Street, London.'),
-  ('rules', 'Never share API keys. Verify before destructive ops.');
+INSERT INTO startup (key, content, priority, reinforce) VALUES
+  ('soul', 'You are Holmes-AI. Precise, analytical, evidence-driven.', 0, false),
+  ('user', 'Sherlock Holmes. Consulting detective. 221B Baker Street, London.', 1, false),
+  ('rules', 'Never share API keys. Verify before destructive ops.', 2, false),
+  ('gate_evidence', 'GATE: Never state conclusions without citing evidence.', 10, true);
 ```
 
 ### Any Backend
 ```json
 {
   "startup": [
-    {"key": "soul", "content": "You are Holmes-AI. Precise, analytical, evidence-driven."},
-    {"key": "user", "content": "Sherlock Holmes. Consulting detective. 221B Baker Street, London."},
-    {"key": "rules", "content": "Never share API keys. Verify before destructive ops."}
+    {"key": "soul", "content": "You are Holmes-AI. Precise, analytical, evidence-driven.", "reinforce": false},
+    {"key": "user", "content": "Sherlock Holmes. Consulting detective. 221B Baker Street, London.", "reinforce": false},
+    {"key": "gate_evidence", "content": "GATE: Never state conclusions without citing evidence.", "reinforce": true}
   ]
 }
 ```
@@ -1709,7 +1711,7 @@ The startup identity text appears on the first `m` call in a session. On subsequ
 <details>
 <summary><b>Future Work</b></summary>
 
-- [ ] **Context-aware rule re-assertion**: Critical rules (exit gate, comms gate) should survive compaction structurally, not behaviorally. Design: add `reinforce BOOLEAN DEFAULT FALSE` to startup table. Rows marked `reinforce=true` are included in every startup re-injection (same dirty-flag cadence as identity — no extra SQL hits during active conversation). Config flag `"reinforce": true` in `~/.shadowdb.json` gates the feature at runtime — no flag = no overhead. `RULES_REINFORCE.md` convention populates these rows at setup. Origin insight: behavioral rules buried in ops playbooks fail under context pressure; structural gates don't.
+- [x] **Context-aware rule re-assertion**: `reinforce BOOLEAN DEFAULT FALSE` on startup table. Rows marked `reinforce=true` are injected on every `m` query (bypass dirty-flag suppression). Config flag `"reinforce": true` in `~/.shadowdb.json` gates the DB query — no flag = no overhead. `RULES_REINFORCE.md` convention populates these rows via `setup.sh`. Dirty flag (10-min sliding window) controls full startup injection; reinforced rules always pass through.
 - [ ] **`--budget` flag**: Cap output by character count. Trim startup pyramid from bottom, then reduce result count.
 - [ ] **`priority` column**: Integer priority in startup table for explicit pyramid ordering.
 - [ ] **Schema files**: Complete SQL schemas for PostgreSQL and SQLite with indexes and sample data.

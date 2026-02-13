@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """m — ShadowDB memory search + operations. Multi-backend: postgres, sqlite, mysql."""
-import argparse,json,os,sys,subprocess
+import argparse,json,os,sys,subprocess,time
 
 CFG=os.path.expanduser("~/.shadowdb.json")
 DEFAULT_EMBEDDING_URL="http://localhost:11434/api/embeddings"
@@ -136,6 +136,40 @@ def sql_upsert(table, key_col, key_val, val_col, val):
         return f"INSERT INTO {table} ({key_col},{val_col},updated_at) VALUES ('{key_val}','{esc_val}',datetime('now')) ON CONFLICT ({key_col}) DO UPDATE SET {val_col}='{esc_val}', updated_at=datetime('now');"
     return f"INSERT INTO {table} ({key_col},{val_col},updated_at) VALUES ('{key_val}','{esc_val}',now()) ON CONFLICT ({key_col}) DO UPDATE SET {val_col}='{esc_val}', updated_at=now();"
 
+# ── Startup injection with dirty flag + reinforce ─────────────
+FLAG="/tmp/.shadowdb-init"
+SESSION_GAP=600  # 10 minutes
+
+def should_inject_startup():
+    """Check if full startup should be injected (new session or stale flag)."""
+    if not os.path.exists(FLAG):return True
+    age=time.time()-os.path.getmtime(FLAG)
+    return age>=SESSION_GAP
+
+def touch_flag():
+    """Touch the dirty flag — slides the session window forward."""
+    open(FLAG,"w").close()
+
+def get_reinforced():
+    """Get reinforced rules (always injected, regardless of dirty flag).
+    Only queries DB if reinforce=true in config — zero overhead otherwise."""
+    c=lcfg()
+    if not c.get("reinforce"):return ""
+    b=get_backend_name()
+    if b in("postgres","pg"):
+        p,d=_pg_args(c)
+        r=subprocess.run([p,d,"-t","-A","-c","SELECT content FROM startup WHERE reinforce=true ORDER BY priority, key;"],capture_output=True,text=True,timeout=3)
+        return r.stdout.strip()
+    elif b=="sqlite":
+        r=subprocess.run(["sqlite3",_sq_path(c),"SELECT content FROM startup WHERE reinforce=1 ORDER BY priority, key;"],capture_output=True,text=True,timeout=3)
+        return r.stdout.strip()
+    elif b in("mysql","mariadb"):
+        h,u,pw,d=_my_args(c);cmd=["mysql","-u",u,"-h",h,d,"-N","-B","-e","SELECT content FROM startup WHERE reinforce=1 ORDER BY priority, `key`;"]
+        if pw:cmd.insert(3,f"-p{pw}")
+        r=subprocess.run(cmd,capture_output=True,text=True,timeout=3)
+        return r.stdout.strip()
+    return ""
+
 def fmt(results,jout=False):
     if jout:print(json.dumps(results,indent=2));return
     for i,r in enumerate(results):
@@ -228,8 +262,15 @@ if __name__=="__main__":
     ap.add_argument("-c","--cat",default=None);ap.add_argument("--full",action="store_true");ap.add_argument("--json",action="store_true")
     ap.add_argument("--backend",default=None)
     a=ap.parse_args();q=" ".join(a.query);be=resolve(a.backend)
-    try:
-        s=be.startup()
-        if s:print(s+"\n")
-    except:pass
+    # Startup: full identity on new session, reinforced rules always
+    if should_inject_startup():
+        try:
+            s=be.startup()
+            if s:print(s+"\n")
+        except:pass
+    else:
+        # Not a new session — still inject reinforced rules
+        r=get_reinforced()
+        if r:print(r+"\n")
+    touch_flag()
     fmt(be.search(q,a.n,a.cat,a.full),a.json)

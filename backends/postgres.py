@@ -179,7 +179,7 @@ class PostgresBackend:
         """
         result = subprocess.run(
             [self.psql, self.db, "-t", "-A", "-c",
-             "SELECT content FROM startup ORDER BY key;"],
+             "SELECT content FROM startup ORDER BY priority, key;"],
             capture_output=True, text=True, timeout=3
         )
         return result.stdout.strip() if result.stdout.strip() else ""
