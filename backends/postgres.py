@@ -218,6 +218,11 @@ class PostgresBackend:
         # Optional category filter
         where_category = f"AND category='{category}'" if category else ""
 
+        # Exclude superseded and temporally expired records
+        # superseded_by: record was replaced by a newer version (e.g., corrected data)
+        # valid_to: record has a temporal expiry (e.g., event passed, state changed)
+        where_active = "AND superseded_by IS NULL AND (valid_to IS NULL OR valid_to > now())"
+
         # Content field: pyramid (default, concise) or full raw content
         content_field = "content" if full else "COALESCE(content_pyramid,content)"
 
@@ -228,7 +233,7 @@ class PostgresBackend:
         fts_results = self._sql(
             f"SELECT id, left({content_field},800) as c, category as cat, title, "
             f"summary, source_file as src "
-            f"FROM memories WHERE fts@@plainto_tsquery('english','{escaped_query}') {where_category} "
+            f"FROM memories WHERE fts@@plainto_tsquery('english','{escaped_query}') {where_active} {where_category} "
             f"ORDER BY ts_rank(fts,plainto_tsquery('english','{escaped_query}')) DESC LIMIT 50"
         )
 
@@ -242,7 +247,7 @@ class PostgresBackend:
             vector_results = self._sql(
                 f"SELECT id, left({content_field},800) as c, category as cat, title, "
                 f"summary, source_file as src "
-                f"FROM memories WHERE embedding IS NOT NULL {where_category} "
+                f"FROM memories WHERE embedding IS NOT NULL {where_active} {where_category} "
                 f"ORDER BY embedding<=>'{embedding_str}'::vector LIMIT 50"
             )
 
