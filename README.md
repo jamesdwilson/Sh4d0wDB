@@ -55,10 +55,20 @@
 | 📉 **Reasoning degradation** | −10–25% in noisy contexts[^4] | **None** | **Eliminated** |
 | 📁 **Configuration** | 8 files, thousands of bytes | **1 file, 11 bytes** | |
 
-[^1]: PostgreSQL with pgvector HNSW indexes and GIN FTS — tested at 100M+ vectors, architecturally sound to billions with partitioning. SQLite practical to ~100K; MySQL to millions with InnoDB.
-[^2]: Stock .md search uses single-strategy dense retrieval (cosine similarity over embeddings). ShadowDB PostgreSQL runs parallel BM25 full-text search (GIN-indexed tsvector with language-aware stemming) and approximate nearest neighbor vector search (HNSW-indexed pgvector), fused via Reciprocal Rank Fusion — a score-agnostic ranking method that boosts documents appearing in multiple result sets without requiring score normalization across heterogeneous retrieval strategies.
-[^3]: Signal ratio = bytes relevant to the current query ÷ total bytes of injected context. Stock MD injects 9,198 bytes of static files regardless of query — personality essays, memory indexes, bootstrap instructions — of which 0 bytes address the user's actual question. ShadowDB returns only search results matching the query. Every byte is signal.
-[^4]: [*Lost in the Middle: How Language Models Use Long Contexts*](https://arxiv.org/abs/2307.03172) (Liu et al., NeurIPS 2023): retrieval accuracy drops 10–25% when relevant information is surrounded by irrelevant context, even when the relevant passage exists verbatim in the input.
+[^1]: PostgreSQL, SQLite, or MySQL. Scales from hundreds to billions of records depending on backend.
+[^2]: Keyword search + semantic search, merged by rank. Finds things by exact name AND by meaning.
+[^3]: Every byte returned is relevant to your query. Stock MD injects 9,198 bytes of static files regardless of what you asked.
+[^4]: [*Lost in the Middle*](https://arxiv.org/abs/2307.03172) (Liu et al., NeurIPS 2023): accuracy drops 10–25% when relevant info is buried in irrelevant context.
+
+<details>
+<summary>📊 <b>Stats for DB nerds</b></summary>
+
+- **[^1] Scalability**: PostgreSQL with pgvector HNSW indexes and GIN FTS — tested at 100M+ vectors, architecturally sound to billions with partitioning. SQLite practical to ~100K; MySQL to millions with InnoDB.
+- **[^2] Hybrid search**: ShadowDB PostgreSQL runs parallel BM25 full-text search (GIN-indexed tsvector with language-aware stemming) and approximate nearest neighbor vector search (HNSW-indexed pgvector), fused via Reciprocal Rank Fusion — a score-agnostic ranking method that boosts documents appearing in multiple result sets without requiring score normalization across heterogeneous retrieval strategies.
+- **[^3] Signal ratio**: Signal ratio = bytes relevant to the current query ÷ total bytes of injected context. Stock MD injects 9,198 bytes of static files regardless of query — personality essays, memory indexes, bootstrap instructions — of which 0 bytes address the user's actual question. ShadowDB returns only search results matching the query. Every byte is signal.
+- **[^4] Reasoning degradation**: Full citation: [*Lost in the Middle: How Language Models Use Long Contexts*](https://arxiv.org/abs/2307.03172) (Liu et al., NeurIPS 2023): retrieval accuracy drops 10–25% when relevant information is surrounded by irrelevant context, even when the relevant passage exists verbatim in the input.
+
+</details>
 
 > ```
 > ## AGENTS.md
