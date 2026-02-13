@@ -67,7 +67,9 @@
 
 That's the entire agent configuration. **11 bytes.** The model reads it, calls `m`, and gets everything — identity, personality, knowledge, operational rules — from the database on demand. Zero static context. Zero per-turn waste.
 
-Your agent framework injects SOUL.md, IDENTITY.md, USER.md, MEMORY.md, BOOTSTRAP.md, and more into **every single API call**. Every turn. Every heartbeat. Every sub-agent spawn. That's thousands of tokens the model already read on the last turn, re-injected for no reason, evicting conversation history to make room.
+**Here's what that replaces.**
+
+Right now, your agent framework injects SOUL.md, IDENTITY.md, USER.md, MEMORY.md, BOOTSTRAP.md, and more into **every single API call**. Every turn. Every heartbeat. Every sub-agent spawn. That's thousands of tokens the model already read on the last turn, re-injected for no reason, evicting conversation history to make room.
 
 The cost goes deeper than tokens. **It's attention.**
 
