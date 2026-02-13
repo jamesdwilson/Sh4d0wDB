@@ -100,48 +100,31 @@ Works with **any database** — PostgreSQL, SQLite, MySQL/MariaDB. Built for [Op
 
 ## 🚀 Quick Start
 
-```bash
-# Option A: One command
-curl -sSL https://raw.githubusercontent.com/openclaw/shadowdb/main/quickstart.sh | bash
-
-# Option B: Step by step (see below)
-```
-
-### Step by Step
+One command. It backs up your files first, walks you through every step, and you can undo everything at any time.
 
 ```bash
-# 1. Clone
-git clone https://github.com/openclaw/shadowdb && cd shadowdb
-
-# 2. Create database + schema
-createdb shadow && psql shadow -f schema.sql
-
-# 3. Back up your originals
-mkdir -p ~/agent-backup && cp ~/.openclaw/workspace/*.md ~/agent-backup/
-
-# 4. Import your existing .md files into the database
-./import-md ~/.openclaw/workspace/
-#   SOUL.md, IDENTITY.md  → startup table (injected every session)
-#   USER.md               → memories (category: personal)
-#   MEMORY.md             → memories (parsed into individual records)
-#   BOOTSTRAP.md          → memories (category: ops)
-#   *.md                  → auto-categorized by filename/content
-#   All records get embeddings → searchable + cross-linked immediately
-
-# 5. Verify it works
-m "test query"
-# → identity block + ranked results in 55ms
-
-# 6. Point your agent at it
-echo 'DB: m query' > AGENTS.md
-# Done. 11 bytes. Your agent now has a database brain.
+git clone https://github.com/openclaw/shadowdb && cd shadowdb && ./quickstart.sh
 ```
+
+That's it. The script will:
+
+1. ✅ Check your system for prerequisites
+2. 📦 Back up all your `.md` files to `~/OpenClaw-Workspace-Backup-YYYY-MM-DD/`
+3. 🗄️ Create the database and apply the schema
+4. 📥 Import your `.md` files into the database
+5. 🧪 Run a test search to verify everything works
+6. 📋 Tell you the two lines to paste into your workspace
+
+Every step asks for confirmation. Nothing happens without your say-so.
 
 > [!TIP]
-> **What happens to your files?** `import-md` reads them — it doesn't delete them. Once you've verified search works, zero out the originals: `for f in SOUL.md USER.md MEMORY.md; do echo -n > "$f"; done`. The database is the source of truth now.
+> **Your files are never deleted or modified.** The script only reads them. Your originals are backed up before anything else happens. To undo everything at any point:
+> ```bash
+> cp ~/OpenClaw-Workspace-Backup-*/*.md ~/.openclaw/workspace/
+> ```
 
 > [!NOTE]
-> **SQLite?** `pip install shadowdb && shadowdb init --backend sqlite` — zero server, single file.
+> **Options:** `./quickstart.sh --backend sqlite` for SQLite (no server needed), `--dry-run` to preview without changes, `--yes` to skip prompts.
 > See [full setup instructions](#setup) for all backends.
 
 ---
@@ -581,8 +564,6 @@ graph LR
     E -->|"tool"| F["<code>m</code><br/>command name"]
     F -->|"purpose"| G["<code>query</code><br/>performs searches"]
 
-    style A fill:#2d1b69,stroke:#6366f1
-    style G fill:#1a2e1a,stroke:#34d399
 ```
 
 **Remove any element and the chain breaks.** Each token reinforces the next. This is a **complete semantic chain** from context → domain → delimiter → tool → purpose.
@@ -776,8 +757,6 @@ flowchart TD
     R2 --> RRF
     RRF --> OUT["<b>Final Ranked Results</b><br/>#1 Dr. John Watson - contacts <i>(in both)</i><br/>#2 Watson army surgeon history<br/>#3 Medical case notes"]
 
-    style RRF fill:#2d1b69,stroke:#6366f1
-    style OUT fill:#1a2e1a,stroke:#34d399
 ```
 
 ### 1. Full-Text Search (FTS)
@@ -1152,14 +1131,6 @@ graph TD
         D8 --> D1
     end
 
-    style S1 fill:#4a1a1a,stroke:#666
-    style S2 fill:#4a1a1a,stroke:#666
-    style S3 fill:#4a1a1a,stroke:#666
-    style S4 fill:#4a1a1a,stroke:#666
-    style S5 fill:#4a1a1a,stroke:#666
-    style D1 fill:#1a2e1a,stroke:#34d399
-    style D4 fill:#2d1b69,stroke:#6366f1
-    style D8 fill:#1a2e1a,stroke:#34d399
 ```
 
 The left side has five files that know nothing about each other. The right side has eight nodes where every connection is discoverable via semantic search. **Adding one node (Stapleton analysis) automatically connects to four existing nodes** without manually editing any files.
@@ -1194,8 +1165,6 @@ graph LR
     E --> F["Compound insight stored<br/>with embedding"]
     F --> C
 
-    style A fill:#2d1b69,stroke:#6366f1
-    style F fill:#1a2e1a,stroke:#34d399
 ```
 
 Each record makes every other record more findable. Each compound insight creates new connections for future queries. The knowledge base has a **positive feedback loop** — it gets smarter with every insertion. Stock markdown has the opposite: every new file makes the context window more crowded and the model less capable.
@@ -1659,7 +1628,7 @@ On subsequent calls in the same session, the `=== IDENTITY ===` block is suppres
 ### 🔄 How to Restore Your Original Files
 
 ```bash
-cp ~/agent-backup-*/*.md ~/.openclaw/workspace/
+cp ~/OpenClaw-Workspace-Backup-*/*.md ~/.openclaw/workspace/
 ```
 
 That's it — you're back to where you started. No harm done.

@@ -1,126 +1,134 @@
 #!/usr/bin/env bash
-# =============================================================================
-# ShadowDB Quick Start
-# =============================================================================
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                                                                            ║
+# ║                      ShadowDB — Quick Start Installer                      ║
+# ║                                                                            ║
+# ║   Replace 9,198 bytes of static markdown bloat with an 11-byte database    ║
+# ║   instruction. Your agent gets smarter with every record.                  ║
+# ║                                                                            ║
+# ║   ONE COMMAND:                                                             ║
+# ║     curl -sSL https://raw.githubusercontent.com/openclaw/shadowdb/main/quickstart.sh | bash
+# ║                                                                            ║
+# ║   Or if you already cloned the repo:                                       ║
+# ║     ./quickstart.sh                                                        ║
+# ║                                                                            ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
 #
-# Run this to go from zero to a working ShadowDB in about 60 seconds.
 #
-# WHAT THIS SCRIPT DOES (in order):
-#   1. Checks prerequisites (psql, python3, ollama)
-#   2. BACKS UP your existing .md files (so you can always go back)
-#   3. Creates the database and applies the schema
-#   4. Imports your .md files into the database
-#   5. Runs a test search to verify everything works
-#   6. Prints next steps
+#   WHAT THIS SCRIPT DOES (step by step, with your permission):
 #
-# WHAT THIS SCRIPT DOES NOT DO:
-#   - Delete or modify your original .md files
-#   - Overwrite AGENTS.md (you do that manually — we just tell you how)
-#   - Install PostgreSQL, Ollama, or Python (we check for them and tell you
-#     how to install if missing)
+#     1.  Checks that your system has the tools it needs
+#     2.  Backs up ALL your workspace .md files (you can always undo everything)
+#     3.  Creates the ShadowDB database
+#     4.  Imports your .md files into the database
+#     5.  Verifies everything works with a test search
+#     6.  Shows you the two lines to paste into your workspace
 #
-# SAFETY:
-#   The --dry-run flag shows exactly what would happen without making changes.
-#   We ALWAYS back up your files first. You can restore them with one command.
-#   If anything goes wrong, your originals are safe in ~/agent-backup-YYYYMMDD/.
 #
-# USAGE:
-#   ./quickstart.sh                          # Defaults: postgres, ~/.openclaw/workspace
-#   ./quickstart.sh --workspace ~/my-agent   # Custom workspace directory
-#   ./quickstart.sh --backend sqlite         # Use SQLite instead of PostgreSQL
-#   ./quickstart.sh --dry-run                # Preview without making changes
-#   ./quickstart.sh --help                   # Show full help
+#   WHAT THIS SCRIPT WILL NEVER DO:
 #
-# SEE ALSO:
-#   import-md       — The import script this calls (can be run standalone)
-#   m / m-universal — The search CLI you'll use after setup
-#   README.md       — Full documentation and architecture details
+#     ✗  Delete or modify your original .md files
+#     ✗  Change your AGENTS.md (you do that — we just tell you what to paste)
+#     ✗  Install software without telling you exactly what and why
+#     ✗  Continue if something fails — it stops and tells you what went wrong
+#
+#
+#   YOUR BACKUP IS SACRED:
+#
+#     Before touching anything, we copy your files to:
+#
+#       ~/OpenClaw-Workspace-Backup-2025-02-13/
+#
+#     If ANYTHING goes wrong — during setup, a week later, whenever — you
+#     can restore your originals with one command:
+#
+#       cp ~/OpenClaw-Workspace-Backup-*/*.md ~/.openclaw/workspace/
+#
+#     Done. You're back to exactly where you started. No harm, no foul.
+#
+#
+#   FLAGS:
+#
+#     --workspace <dir>     Where your .md files live
+#                           (default: ~/.openclaw/workspace)
+#
+#     --backend <type>      Database to use: postgres or sqlite
+#                           (default: postgres — recommended)
+#
+#     --dry-run             Preview everything without making changes
+#
+#     --yes                 Skip confirmation prompts (for automation)
+#
+#     --help                Show this help
+#
+#
+# ════════════════════════════════════════════════════════════════════════════════
 
-# Exit on error, undefined variables, or pipe failures.
 set -euo pipefail
 
-# =============================================================================
-# DEFAULT CONFIGURATION
-# =============================================================================
 
-# Where your agent's .md files live. This is the standard OpenClaw workspace.
-# Override with --workspace if your files are somewhere else.
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                              CONFIGURATION                                │
+# └────────────────────────────────────────────────────────────────────────────┘
+
 WORKSPACE="${HOME}/.openclaw/workspace"
-
-# Which database backend to use.
-# "postgres" is recommended (hybrid FTS + vector search).
-# "sqlite" is simpler (no server process needed).
 BACKEND="postgres"
-
-# Whether to actually make changes, or just show what would happen.
-DRY_RUN=false
-
-# Default PostgreSQL database name for ShadowDB.
 DB_NAME="shadow"
-
-# Directory where this script lives — used to find import-md, m, schema.sql, etc.
+DRY_RUN=false
+AUTO_YES=false
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_FILE="${SHADOWDB_CONFIG:-$HOME/.shadowdb.json}"
+TODAY=$(date +%Y-%m-%d)
+BACKUP_DIR="${HOME}/OpenClaw-Workspace-Backup-${TODAY}"
 
-# =============================================================================
-# TERMINAL COLORS AND OUTPUT HELPERS
-# =============================================================================
-# We use colored emoji-prefixed output to make the script friendly and scannable.
-# Each helper function prints a styled message:
-#   info()  — informational (blue ℹ️)
-#   ok()    — success (green ✅)
-#   warn()  — warning, non-fatal (yellow ⚠️)
-#   fail()  — fatal error, exits immediately (red ❌)
-#   step()  — section header (green with bars)
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                          COLORS & OUTPUT HELPERS                          │
+# └────────────────────────────────────────────────────────────────────────────┘
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color — resets to default terminal color
+BOLD='\033[1m'
+DIM='\033[2m'
+NC='\033[0m'
 
-info()  { echo -e "${BLUE}ℹ️  $1${NC}"; }
-ok()    { echo -e "${GREEN}✅ $1${NC}"; }
-warn()  { echo -e "${YELLOW}⚠️  $1${NC}"; }
-fail()  { echo -e "${RED}❌ $1${NC}"; exit 1; }
-step()  { echo -e "\n${GREEN}━━━ $1 ━━━${NC}"; }
+info()    { echo -e "  ${BLUE}ℹ${NC}  $1"; }
+ok()      { echo -e "  ${GREEN}✓${NC}  $1"; }
+warn()    { echo -e "  ${YELLOW}⚠${NC}  $1"; }
+fail()    { echo -e "\n  ${RED}✗  $1${NC}\n"; exit 1; }
+header()  { echo -e "\n${BOLD}  $1${NC}\n"; }
+detail()  { echo -e "     ${DIM}$1${NC}"; }
+blank()   { echo ""; }
 
-# =============================================================================
-# ARGUMENT PARSING
-# =============================================================================
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                           ARGUMENT PARSING                                │
+# └────────────────────────────────────────────────────────────────────────────┘
 
 usage() {
-  cat <<EOF
-ShadowDB Quick Start 🚀
+  cat <<'EOF'
 
-Replace agent .md file bloat with an 11-byte database instruction.
-This script automates the setup process described in the README.
+  ShadowDB Quick Start
+  ════════════════════
 
-Usage: $0 [options]
+  Usage:
 
-Options:
-  --workspace <dir>     Agent workspace directory containing your .md files
-                        (default: ~/.openclaw/workspace)
-  --backend <type>      Database backend: postgres or sqlite
-                        (default: postgres — recommended for hybrid search)
-  --dry-run             Show what would happen without making any changes.
-                        Safe to run — doesn't touch your files or database.
-  --help, -h            Show this help message
+    ./quickstart.sh                              # defaults (postgres, ~/.openclaw/workspace)
+    ./quickstart.sh --workspace ~/my-agent       # custom workspace
+    ./quickstart.sh --backend sqlite             # use SQLite instead
+    ./quickstart.sh --dry-run                    # preview without changes
+    ./quickstart.sh --yes                        # skip prompts (CI/automation)
 
-Examples:
-  $0                                    # Quick start with defaults
-  $0 --workspace ~/my-agent             # Custom workspace directory
-  $0 --backend sqlite                   # Use SQLite (no server needed)
-  $0 --dry-run                          # Preview — see what would happen
+  Flags:
 
-What happens:
-  1. ✅ Check prerequisites (psql, python3, ollama)
-  2. 📦 Back up your .md files to ~/agent-backup-YYYYMMDD/
-  3. 🗄️  Create database and apply schema
-  4. 📥 Import .md files into the database
-  5. 🧪 Test that search works
-  6. 🎉 Print next steps
+    --workspace <dir>   Where your .md files live (default: ~/.openclaw/workspace)
+    --backend <type>    Database backend: postgres or sqlite (default: postgres)
+    --dry-run           Show what would happen without making any changes
+    --yes               Auto-confirm all prompts
+    --help, -h          Show this help
 
-Your files are NEVER deleted or modified. You can always restore from backup.
 EOF
   exit 0
 }
@@ -128,160 +136,307 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --workspace) WORKSPACE="$2"; shift 2 ;;
-    --backend)   BACKEND="$2"; shift 2 ;;
-    --dry-run)   DRY_RUN=true; shift ;;
+    --backend)   BACKEND="$2";   shift 2 ;;
+    --dry-run)   DRY_RUN=true;   shift   ;;
+    --yes|-y)    AUTO_YES=true;  shift   ;;
     --help|-h)   usage ;;
-    *) echo "Unknown option: $1"; usage ;;
+    *) echo "  Unknown option: $1"; usage ;;
   esac
 done
 
-# Strip trailing slash for clean path joining
 WORKSPACE="${WORKSPACE%/}"
 
-# =============================================================================
-# WELCOME BANNER
-# =============================================================================
 
-echo ""
-echo "╔══════════════════════════════════════════════╗"
-echo "║        🧠 ShadowDB Quick Start 🧠           ║"
-echo "║  Replace .md bloat with 11 bytes of power    ║"
-echo "╚══════════════════════════════════════════════╝"
-echo ""
-info "Backend:   $BACKEND"
-info "Workspace: $WORKSPACE"
-$DRY_RUN && warn "DRY RUN MODE — no changes will be made"
-echo ""
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                          CONFIRMATION HELPER                              │
+# └────────────────────────────────────────────────────────────────────────────┘
+#
+#   Every major step asks for confirmation before proceeding.
+#   Pass --yes to skip these prompts (useful for CI or if you've done this before).
 
-# =============================================================================
-# STEP 1: CHECK PREREQUISITES
-# =============================================================================
-# We check for required tools before doing anything else.
-# If something's missing, we fail early with a helpful install command.
-# Ollama is optional — without it, you lose vector/semantic search but
-# FTS (keyword search) still works fine.
+confirm() {
+  local prompt="$1"
 
-step "Step 1/6: Checking prerequisites"
-
-# Helper: check if a command exists on PATH
-check_cmd() {
-  if command -v "$1" &>/dev/null; then
-    ok "$1 found: $(command -v "$1")"
+  if $AUTO_YES; then
     return 0
-  else
-    warn "$1 not found"
-    return 1
   fi
+
+  echo ""
+  echo -ne "  ${BOLD}${prompt}${NC} [Y/n] "
+  read -r answer
+
+  case "${answer:-y}" in
+    [Yy]*) return 0 ;;
+    *)     echo ""; info "Skipped."; return 1 ;;
+  esac
 }
+
+
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                                                                            ║
+# ║                            LET'S GET STARTED                               ║
+# ║                                                                            ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+clear 2>/dev/null || true
+
+echo ""
+echo "  ╔══════════════════════════════════════════════════════╗"
+echo "  ║                                                      ║"
+echo "  ║         🧠  ShadowDB Quick Start  🧠                ║"
+echo "  ║                                                      ║"
+echo "  ║   Replace .md file bloat with a database brain.      ║"
+echo "  ║   Your files are backed up. You can undo anytime.    ║"
+echo "  ║                                                      ║"
+echo "  ╚══════════════════════════════════════════════════════╝"
+echo ""
+
+info "Backend:    ${BOLD}${BACKEND}${NC}"
+info "Workspace:  ${BOLD}${WORKSPACE}${NC}"
+info "Backup to:  ${BOLD}${BACKUP_DIR}/${NC}"
+
+if $DRY_RUN; then
+  blank
+  warn "DRY RUN — nothing will be changed. This is a preview."
+fi
+
+blank
+
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                                                                            │
+# │   STEP 1 of 6:  CHECK PREREQUISITES                                       │
+# │                                                                            │
+# │   We need a few tools installed before we can set up ShadowDB.             │
+# │   If anything's missing, we'll tell you exactly how to install it.         │
+# │                                                                            │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+header "Step 1 of 6 — Checking prerequisites"
 
 MISSING=0
 
-# python3 is required for the `m` search scripts and backend adapters
-check_cmd python3 || MISSING=1
+# ── Python 3 ──────────────────────────────────────────────────────────────
+#
+#   Required. The `m` search CLI and all backend adapters are Python.
 
-# PostgreSQL tools are only required for the postgres backend
-if [[ "$BACKEND" == "postgres" ]]; then
-  check_cmd psql || MISSING=1       # SQL client for querying
-  check_cmd createdb || MISSING=1   # Database creation utility
+if command -v python3 &>/dev/null; then
+  ok "python3 found"
+  detail "$(python3 --version 2>&1)"
+else
+  warn "python3 not found"
+  detail "Install: brew install python3   (macOS)"
+  detail "         apt install python3     (Ubuntu/Debian)"
+  MISSING=1
 fi
 
-# Ollama is optional but recommended — provides embedding vectors for
-# semantic search. Without it, you only get keyword (FTS) search.
-check_cmd ollama || { warn "ollama not found — embeddings won't work (FTS still will)"; }
+blank
+
+# ── PostgreSQL (only if using postgres backend) ──────────────────────────
+#
+#   We need the `psql` client to create the database and run queries,
+#   and `createdb` to create the database itself.
+
+if [[ "$BACKEND" == "postgres" ]]; then
+
+  if command -v psql &>/dev/null; then
+    ok "psql found"
+    detail "$(psql --version 2>&1 | head -1)"
+  else
+    warn "psql not found"
+    detail "Install: brew install postgresql@17   (macOS)"
+    detail "         apt install postgresql        (Ubuntu/Debian)"
+    MISSING=1
+  fi
+
+  blank
+
+  if command -v createdb &>/dev/null; then
+    ok "createdb found"
+  else
+    warn "createdb not found (usually comes with psql)"
+    MISSING=1
+  fi
+
+  blank
+fi
+
+# ── Ollama (optional but recommended) ────────────────────────────────────
+#
+#   Ollama provides the embedding model (nomic-embed-text) for semantic
+#   vector search. Without it, you still get full-text keyword search —
+#   just not the semantic "what does this mean" search.
+#
+#   Totally fine to skip this and add it later.
+
+if command -v ollama &>/dev/null; then
+  ok "ollama found"
+  detail "Enables semantic search (recommended)"
+
+  if ollama list &>/dev/null 2>&1; then
+
+    if ollama list 2>/dev/null | grep -q "nomic-embed-text"; then
+      ok "nomic-embed-text model ready"
+    else
+      blank
+      info "The embedding model isn't downloaded yet."
+      info "It's ~275 MB — one-time download."
+      blank
+
+      if confirm "Download nomic-embed-text now?"; then
+        if ! $DRY_RUN; then
+          ollama pull nomic-embed-text
+          ok "nomic-embed-text downloaded"
+        else
+          ok "[DRY RUN] Would download nomic-embed-text"
+        fi
+      fi
+    fi
+
+  else
+    warn "Ollama is installed but not running"
+    detail "Start it:  ollama serve"
+    detail "Then re-run this script"
+  fi
+
+else
+  blank
+  info "Ollama not found — that's fine!"
+  detail "Without it, you get keyword search (still very fast)."
+  detail "Add semantic search later:  brew install ollama"
+fi
+
+blank
+
+# ── Stop if anything critical is missing ─────────────────────────────────
 
 if [[ $MISSING -eq 1 ]]; then
-  fail "Missing required tools. Install them and try again:
-    brew install postgresql@17 ollama   # macOS
-    apt install postgresql              # Ubuntu/Debian"
+  fail "Some required tools are missing. Install them (see above) and try again."
 fi
 
-# If Ollama is installed, check that it's running and has the embedding model.
-# The nomic-embed-text model (~275MB) needs to be pulled once.
-if command -v ollama &>/dev/null; then
-  if ollama list &>/dev/null 2>&1; then
-    ok "Ollama is running"
-    if ollama list 2>/dev/null | grep -q "nomic-embed-text"; then
-      ok "nomic-embed-text model available"
-    else
-      info "Pulling nomic-embed-text model (one-time download, ~275MB)..."
-      $DRY_RUN || ollama pull nomic-embed-text
-      ok "nomic-embed-text ready"
-    fi
-  else
-    warn "Ollama not running — start it with: ollama serve"
-  fi
-fi
+ok "All prerequisites met"
+blank
 
-# =============================================================================
-# STEP 2: BACK UP EXISTING .md FILES
-# =============================================================================
-# THIS IS THE MOST IMPORTANT STEP.
-# We copy all .md files to a timestamped backup directory BEFORE doing anything
-# else. If anything goes wrong — during import, during search testing, or even
-# weeks later — you can restore your originals with one command:
-#   cp ~/agent-backup-YYYYMMDD/*.md ~/.openclaw/workspace/
-#
-# The backup directory includes the date so multiple runs don't overwrite
-# each other. Running this script on Feb 12 and Feb 15 creates two separate
-# backup directories.
 
-step "Step 2/6: Backing up your .md files"
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                                                                            │
+# │   STEP 2 of 6:  BACK UP YOUR FILES                                        │
+# │                                                                            │
+# │   This is the most important step. We copy ALL your .md files to a         │
+# │   safe location before touching anything else. If anything goes wrong      │
+# │   at any point — now or months from now — you restore with one command.    │
+# │                                                                            │
+# │   Backup location:                                                         │
+# │     ~/OpenClaw-Workspace-Backup-2025-02-13/                                │
+# │                                                                            │
+# │   Restore command:                                                         │
+# │     cp ~/OpenClaw-Workspace-Backup-*/*.md ~/.openclaw/workspace/           │
+# │                                                                            │
+# └────────────────────────────────────────────────────────────────────────────┘
 
-BACKUP_DIR="${HOME}/agent-backup-$(date +%Y%m%d)"
+header "Step 2 of 6 — Backing up your files"
 
-if [[ -d "$WORKSPACE" ]]; then
-  # Count .md files (only top-level, not subdirectories)
-  MD_COUNT=$(find "$WORKSPACE" -maxdepth 1 -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
-  if [[ $MD_COUNT -gt 0 ]]; then
-    info "Found $MD_COUNT .md files in $WORKSPACE"
-    info "Backing up to $BACKUP_DIR/"
-    if ! $DRY_RUN; then
-      mkdir -p "$BACKUP_DIR"
-      cp "$WORKSPACE"/*.md "$BACKUP_DIR/"
-      ok "Backed up $MD_COUNT files to $BACKUP_DIR/"
-      echo ""
-      echo "    📦 Your originals are safe! To restore anytime:"
-      echo "       cp ${BACKUP_DIR}/*.md ${WORKSPACE}/"
-      echo ""
-    else
-      ok "[DRY RUN] Would back up $MD_COUNT files to $BACKUP_DIR/"
-    fi
-  else
-    info "No .md files found in $WORKSPACE — nothing to back up"
-  fi
+if [[ ! -d "$WORKSPACE" ]]; then
+  warn "Workspace directory not found: $WORKSPACE"
+  detail "We'll skip the backup and import. You can create it later."
+  blank
+  MD_COUNT=0
 else
-  warn "$WORKSPACE doesn't exist yet — will skip backup"
+  # Count .md files (top-level only — not subdirectories)
+  MD_COUNT=$(find "$WORKSPACE" -maxdepth 1 -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
+
+  if [[ $MD_COUNT -eq 0 ]]; then
+    info "No .md files found in $WORKSPACE"
+    detail "Nothing to back up — this might be a fresh workspace."
+    blank
+  else
+    info "Found ${BOLD}${MD_COUNT} .md files${NC} to back up:"
+    blank
+
+    # Show each file with its size so the user knows exactly what's being copied
+    find "$WORKSPACE" -maxdepth 1 -name "*.md" -type f | sort | while read -r f; do
+      size=$(wc -c < "$f" | tr -d ' ')
+      name=$(basename "$f")
+      printf "     %-30s  %s bytes\n" "$name" "$size"
+    done
+
+    blank
+    info "Backup destination:  ${BOLD}${BACKUP_DIR}/${NC}"
+    blank
+
+    if confirm "Back up these files now?"; then
+      if ! $DRY_RUN; then
+        mkdir -p "$BACKUP_DIR"
+        cp "$WORKSPACE"/*.md "$BACKUP_DIR/"
+        ok "Backed up ${MD_COUNT} files to ${BACKUP_DIR}/"
+      else
+        ok "[DRY RUN] Would back up ${MD_COUNT} files"
+      fi
+
+      blank
+      echo "  ┌──────────────────────────────────────────────────────────────┐"
+      echo "  │                                                              │"
+      echo "  │   📦  Your originals are safe!                               │"
+      echo "  │                                                              │"
+      echo "  │   To restore at any time, run:                               │"
+      echo "  │                                                              │"
+      echo "  │     cp ${BACKUP_DIR}/*.md \\"
+      echo "  │        ${WORKSPACE}/                              │"
+      echo "  │                                                              │"
+      echo "  └──────────────────────────────────────────────────────────────┘"
+      blank
+    fi
+  fi
 fi
 
-# =============================================================================
-# STEP 3: CREATE DATABASE + SCHEMA
-# =============================================================================
-# Set up the database tables that ShadowDB needs:
-#   startup  — Agent identity (soul, user, rules)
-#   memories — Searchable knowledge base (contacts, cases, knowledge, etc.)
-#
-# For PostgreSQL, we also enable the pgvector extension for vector search.
-# If pgvector isn't installed, vector search won't work but FTS still will.
 
-step "Step 3/6: Setting up database"
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                                                                            │
+# │   STEP 3 of 6:  CREATE THE DATABASE                                        │
+# │                                                                            │
+# │   We create a database called "shadow" and set up the tables ShadowDB      │
+# │   needs:                                                                   │
+# │                                                                            │
+# │     startup   — Your agent's identity (who it is, who you are, rules)      │
+# │     memories  — Searchable knowledge base (everything the agent knows)     │
+# │                                                                            │
+# │   If the database already exists, we skip this step (safe to re-run).      │
+# │                                                                            │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+header "Step 3 of 6 — Creating database"
 
 if [[ "$BACKEND" == "postgres" ]]; then
-  # Check if the database already exists (idempotent — safe to re-run)
+
+  # ── Check if database exists ───────────────────────────────────────────
+
   if psql -lqt 2>/dev/null | cut -d \| -f 1 | grep -qw "$DB_NAME"; then
-    ok "Database '$DB_NAME' already exists"
+    ok "Database '${DB_NAME}' already exists — skipping creation"
   else
-    info "Creating database '$DB_NAME'..."
-    if ! $DRY_RUN; then
-      createdb "$DB_NAME"
-      ok "Database '$DB_NAME' created"
-    else
-      ok "[DRY RUN] Would create database '$DB_NAME'"
+    info "Creating PostgreSQL database: ${BOLD}${DB_NAME}${NC}"
+    blank
+
+    if confirm "Create database '${DB_NAME}'?"; then
+      if ! $DRY_RUN; then
+        createdb "$DB_NAME"
+        ok "Database '${DB_NAME}' created"
+      else
+        ok "[DRY RUN] Would create database '${DB_NAME}'"
+      fi
     fi
   fi
 
-  # Apply the schema file if it exists in the repo
+  blank
+
+  # ── Apply schema ──────────────────────────────────────────────────────
+  #
+  #   The schema file creates the startup and memories tables, plus indexes
+  #   for fast search. It uses CREATE TABLE IF NOT EXISTS, so it's safe to
+  #   run multiple times.
+
   if [[ -f "$SCRIPT_DIR/schema.sql" ]]; then
-    info "Applying schema..."
+    info "Applying database schema..."
+
     if ! $DRY_RUN; then
       psql "$DB_NAME" -f "$SCRIPT_DIR/schema.sql" 2>/dev/null
       ok "Schema applied"
@@ -289,116 +444,267 @@ if [[ "$BACKEND" == "postgres" ]]; then
       ok "[DRY RUN] Would apply schema.sql"
     fi
   else
-    info "No schema.sql found — you may need to create tables manually"
-    info "See README.md for schema definitions"
+    info "No schema.sql found in $SCRIPT_DIR"
+    detail "You may need to create tables manually — see README.md"
   fi
 
-  # Enable pgvector for semantic vector search
-  # This is a CREATE EXTENSION IF NOT EXISTS — safe to run multiple times
+  blank
+
+  # ── Enable pgvector extension ─────────────────────────────────────────
+  #
+  #   pgvector adds vector/embedding columns to PostgreSQL. This enables
+  #   semantic search — finding records by meaning, not just keywords.
+  #   If pgvector isn't installed, we warn but continue. FTS still works.
+
   if ! $DRY_RUN; then
-    psql "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null && \
-      ok "pgvector extension enabled" || \
-      warn "Could not enable pgvector — vector search won't work (FTS still will)"
+    if psql "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null; then
+      ok "pgvector extension enabled (semantic search ready)"
+    else
+      warn "Could not enable pgvector"
+      detail "Semantic search won't work, but keyword search still will."
+      detail "Install: brew install pgvector   (macOS)"
+    fi
   fi
+
+  blank
 
 elif [[ "$BACKEND" == "sqlite" ]]; then
+
   DB_PATH="${HOME}/.shadowdb/shadow.db"
-  info "SQLite database at $DB_PATH"
-  if ! $DRY_RUN; then
-    mkdir -p "$(dirname "$DB_PATH")"
-    if [[ -f "$SCRIPT_DIR/schema-sqlite.sql" ]]; then
-      sqlite3 "$DB_PATH" < "$SCRIPT_DIR/schema-sqlite.sql"
-      ok "SQLite database initialized"
+  info "SQLite database: ${BOLD}${DB_PATH}${NC}"
+  blank
+
+  if confirm "Create SQLite database?"; then
+    if ! $DRY_RUN; then
+      mkdir -p "$(dirname "$DB_PATH")"
+
+      if [[ -f "$SCRIPT_DIR/schema-sqlite.sql" ]]; then
+        sqlite3 "$DB_PATH" < "$SCRIPT_DIR/schema-sqlite.sql"
+        ok "SQLite database created with schema"
+      else
+        info "No schema-sqlite.sql found — you may need to create tables manually"
+      fi
     else
-      info "No schema-sqlite.sql found — you may need to create tables manually"
+      ok "[DRY RUN] Would create SQLite database at $DB_PATH"
     fi
-  else
-    ok "[DRY RUN] Would create SQLite database at $DB_PATH"
   fi
+
+  blank
 fi
 
-# =============================================================================
-# STEP 4: IMPORT .md FILES
-# =============================================================================
-# Run the import-md script to read .md files and insert them into the database.
-# In dry-run mode, import-md shows what it would do without writing.
-# See import-md for the full categorization logic.
 
-step "Step 4/6: Importing .md files"
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                                                                            │
+# │   STEP 4 of 6:  IMPORT YOUR .md FILES                                     │
+# │                                                                            │
+# │   This reads your workspace .md files and imports them into the database.  │
+# │                                                                            │
+# │   Here's where each file goes:                                             │
+# │                                                                            │
+# │     SOUL.md, IDENTITY.md  →  startup table  (agent identity)               │
+# │     USER.md               →  memories table  (category: personal)          │
+# │     MEMORY.md             →  memories table  (category: general)           │
+# │     BOOTSTRAP.md          →  memories table  (category: ops)               │
+# │     TOOLS.md              →  skipped  (framework manages this)             │
+# │     AGENTS.md             →  skipped  (you'll replace this with 11 bytes)  │
+# │     HEARTBEAT.md          →  skipped  (framework manages this)             │
+# │     everything else       →  memories table  (auto-categorized)            │
+# │                                                                            │
+# │   Your original files are NOT modified. We only READ them.                 │
+# │                                                                            │
+# └────────────────────────────────────────────────────────────────────────────┘
 
-if [[ -d "$WORKSPACE" ]] && [[ -f "$SCRIPT_DIR/import-md" ]]; then
-  info "Running import-md on $WORKSPACE..."
-  if ! $DRY_RUN; then
-    "$SCRIPT_DIR/import-md" "$WORKSPACE" --backend "$BACKEND"
-    ok "Import complete"
+header "Step 4 of 6 — Importing your .md files"
+
+if [[ -d "$WORKSPACE" ]] && [[ $MD_COUNT -gt 0 ]]; then
+
+  info "Importing from: ${BOLD}${WORKSPACE}${NC}"
+  blank
+
+  if [[ -f "$SCRIPT_DIR/import-md" ]]; then
+
+    if confirm "Import ${MD_COUNT} .md files into the database?"; then
+      blank
+
+      if ! $DRY_RUN; then
+        "$SCRIPT_DIR/import-md" "$WORKSPACE" --backend "$BACKEND"
+      else
+        "$SCRIPT_DIR/import-md" "$WORKSPACE" --backend "$BACKEND" --dry-run
+      fi
+
+      blank
+      ok "Import complete"
+    fi
+
   else
-    "$SCRIPT_DIR/import-md" "$WORKSPACE" --backend "$BACKEND" --dry-run
-    ok "[DRY RUN] Import preview complete"
+    warn "import-md script not found in $SCRIPT_DIR"
+    detail "You can import files manually later — see README.md"
   fi
+
 else
   if [[ ! -d "$WORKSPACE" ]]; then
-    warn "Workspace $WORKSPACE doesn't exist — skipping import"
+    info "Workspace directory doesn't exist yet — skipping import"
   else
-    warn "import-md script not found — skipping import"
+    info "No .md files to import — skipping"
   fi
 fi
 
-# =============================================================================
-# STEP 5: TEST SEARCH
-# =============================================================================
-# Run a quick search to verify the pipeline works end-to-end:
-#   query → embedding → FTS + vector search → RRF fusion → results
-# If this works, your setup is complete.
+blank
 
-step "Step 5/6: Testing"
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                                                                            │
+# │   STEP 5 of 6:  VERIFY IT WORKS                                           │
+# │                                                                            │
+# │   We run a quick test search to make sure the full pipeline works:         │
+# │                                                                            │
+# │     query  →  database  →  search  →  ranked results                       │
+# │                                                                            │
+# │   If you see results, everything is working. If not, the database          │
+# │   might be empty (which is fine — add records with `m save`).              │
+# │                                                                            │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+header "Step 5 of 6 — Verifying installation"
 
 if ! $DRY_RUN; then
+
   if [[ -f "$SCRIPT_DIR/m" ]]; then
-    info "Running: m \"test\""
+    info "Running test search:  ${BOLD}m \"test\"${NC}"
+    blank
+
     OUTPUT=$("$SCRIPT_DIR/m" "test" 2>&1 || true)
+
     if [[ -n "$OUTPUT" ]]; then
-      ok "m returned results! Here's a preview:"
-      echo "$OUTPUT" | head -10
+      ok "Search is working! Here's a preview:"
+      blank
+      echo "$OUTPUT" | head -15 | sed 's/^/     /'
     else
-      warn "m returned no results — this is normal if the database is empty"
-      info "Try: m \"your search term\" after importing some data"
+      info "No results returned — this is normal for an empty database."
+      detail "Add your first record:  m save \"Hello\" \"My first memory\""
     fi
+
   else
-    warn "m script not found in $SCRIPT_DIR"
+    warn "m script not found — can't verify"
   fi
+
 else
   ok "[DRY RUN] Would test with: m \"test\""
 fi
 
-# =============================================================================
-# STEP 6: SUCCESS + NEXT STEPS
-# =============================================================================
+blank
 
-step "Step 6/6: All done! 🎉"
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                                                                            │
+# │   STEP 6 of 6:  WRITE THE CONFIG FILE                                     │
+# │                                                                            │
+# │   ShadowDB needs a small JSON config file at ~/.shadowdb.json that tells   │
+# │   it which database to use and where to find the embedding model.          │
+# │                                                                            │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+header "Step 6 of 6 — Writing config"
+
+if [[ -f "$CONFIG_FILE" ]]; then
+  ok "Config already exists at ${CONFIG_FILE}"
+  detail "Leaving it as-is. Edit manually if you need to change settings."
+else
+  info "Creating config:  ${BOLD}${CONFIG_FILE}${NC}"
+  blank
+
+  if [[ "$BACKEND" == "postgres" ]]; then
+    CONFIG_CONTENT='{
+  "backend": "postgres",
+  "postgres": {
+    "psql_path": "'$(command -v psql || echo "/opt/homebrew/opt/postgresql@17/bin/psql")'",
+    "database": "'"$DB_NAME"'",
+    "embedding_url": "http://localhost:11434/api/embeddings",
+    "embedding_model": "nomic-embed-text"
+  }
+}'
+  else
+    CONFIG_CONTENT='{
+  "backend": "sqlite",
+  "sqlite": {
+    "db_path": "~/.shadowdb/shadow.db",
+    "embedding_url": "http://localhost:11434/api/embeddings",
+    "embedding_model": "nomic-embed-text"
+  }
+}'
+  fi
+
+  if ! $DRY_RUN; then
+    echo "$CONFIG_CONTENT" > "$CONFIG_FILE"
+    ok "Config written to ${CONFIG_FILE}"
+  else
+    ok "[DRY RUN] Would write config to ${CONFIG_FILE}"
+  fi
+fi
+
+blank
+
+
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                                                                            ║
+# ║                              ALL DONE! 🎉                                  ║
+# ║                                                                            ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
 
 echo ""
-echo "╔══════════════════════════════════════════════╗"
-echo "║            🧠 Setup Complete! 🧠             ║"
-echo "╚══════════════════════════════════════════════╝"
+echo "  ╔══════════════════════════════════════════════════════════════════╗"
+echo "  ║                                                                  ║"
+echo "  ║                    🧠  Setup Complete!  🧠                       ║"
+echo "  ║                                                                  ║"
+echo "  ╚══════════════════════════════════════════════════════════════════╝"
 echo ""
-echo "  Next steps:"
 echo ""
-echo "  1. Point your agent at ShadowDB:"
-echo "     echo 'DB: m query' > ${WORKSPACE}/AGENTS.md"
+echo "  Now do two things:"
 echo ""
-echo "  2. Zero out the old .md files (optional):"
-echo "     for f in SOUL.md USER.md MEMORY.md; do"
-echo "       echo -n > \"${WORKSPACE}/\$f\""
-echo "     done"
 echo ""
-echo "  3. Try a search:"
-echo "     m \"your query here\""
+echo "  ┌──────────────────────────────────────────────────────────────────┐"
+echo "  │                                                                  │"
+echo "  │   1.  Replace your AGENTS.md with this:                          │"
+echo "  │                                                                  │"
+echo "  │         echo 'DB: m query' > ${WORKSPACE}/AGENTS.md"
+echo "  │                                                                  │"
+echo "  │       That's the entire agent config. 11 bytes.                  │"
+echo "  │                                                                  │"
+echo "  └──────────────────────────────────────────────────────────────────┘"
 echo ""
-echo "  📦 Your originals are backed up at:"
-echo "     ${BACKUP_DIR}/"
 echo ""
-echo "  🔄 To restore anytime:"
-echo "     cp ${BACKUP_DIR}/*.md ${WORKSPACE}/"
+echo "  ┌──────────────────────────────────────────────────────────────────┐"
+echo "  │                                                                  │"
+echo "  │   2.  Zero out the old files (optional — keeps things clean):    │"
+echo "  │                                                                  │"
+echo "  │         cd ${WORKSPACE}"
+echo "  │         for f in SOUL.md USER.md MEMORY.md BOOTSTRAP.md; do"
+echo "  │           echo -n > \"\$f\""
+echo "  │         done"
+echo "  │                                                                  │"
+echo "  │       This empties them without deleting — the framework         │"
+echo "  │       won't complain about missing files.                        │"
+echo "  │                                                                  │"
+echo "  └──────────────────────────────────────────────────────────────────┘"
 echo ""
-echo "  📖 Full docs: https://github.com/openclaw/shadowdb"
+echo ""
+echo "  Try it out:"
+echo ""
+echo "     m \"your search query\"          Search your knowledge base"
+echo "     m save \"Title\" \"Content\"       Save a new record"
+echo "     m d                            Daily dashboard"
+echo ""
+echo ""
+echo "  ┌──────────────────────────────────────────────────────────────────┐"
+echo "  │                                                                  │"
+echo "  │   📦  Your originals are backed up at:                           │"
+echo "  │       ${BACKUP_DIR}/"
+echo "  │                                                                  │"
+echo "  │   🔄  Restore anytime:                                           │"
+echo "  │       cp ~/OpenClaw-Workspace-Backup-*/*.md \\                   │"
+echo "  │          ${WORKSPACE}/                              │"
+echo "  │                                                                  │"
+echo "  └──────────────────────────────────────────────────────────────────┘"
+echo ""
+echo "  📖  Docs:  https://github.com/openclaw/shadowdb"
 echo ""
