@@ -134,7 +134,16 @@ Every step asks for confirmation. Nothing happens without your say-so.
 > ```
 
 > [!NOTE]
-> **Options:** `./quickstart.sh --backend sqlite` (no server needed), `--backend postgres` (best search), `--backend mysql`, `--dry-run` to preview without changes, `--yes` to skip prompts.
+> **Options:**
+>
+> | Flag | What it does |
+> |------|-------------|
+> | `--backend sqlite` | Use SQLite — no server needed |
+> | `--backend postgres` | Use PostgreSQL — best search quality |
+> | `--backend mysql` | Use MySQL / MariaDB |
+> | `--dry-run` | Preview what would happen, change nothing |
+> | `--yes` | Skip confirmation prompts |
+>
 > Default: auto-detects what's installed. See [full setup instructions](#setup) for all backends.
 
 ---
