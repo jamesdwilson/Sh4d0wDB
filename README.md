@@ -1520,28 +1520,25 @@ echo '{"backend": "sqlite", "sqlite": {"db_path": "~/.shadowdb/shadow.db"}}' > ~
 <summary><b>Usage</b></summary>
 
 ```bash
-# Basic search
-m "Watson"
+# Search (the primary use case)
+m "Watson"                           # basic search
+m Dr Watson medical practice         # no quotes needed
+m "Baskerville case" -c cases        # filter by category
+m "Watson" -n 10                     # more results (default: 5)
+m "Watson" --full                    # full content (not summarized)
+m "Watson" --json                    # JSON output
+m "Watson" --backend sqlite          # force a specific backend
 
-# Flexible args (no quotes needed)
-m Dr Watson medical practice
-
-# Filter by category
-m "Baskerville case" -c project
-
-# More results (default: 5)
-m "Watson" -n 10
-
-# Full content (not pyramid)
-m "Watson" --full
-
-# JSON output
-m "Watson" --json
-
-# Force specific backend
-m "Watson" --backend postgres
-m "Watson" --backend sqlite
-m "Watson" --backend mysql
+# Operations (shortcuts for common tasks)
+m save "Title" "Content"             # save a new record
+m save "Title" "Content" -c project -t tag1,tag2   # with category + tags
+m loops                              # show open nags / deadlines
+m state                              # show all session state
+m state current_focus "Working on X" # write session state
+m people                             # list contacts
+m people "Watson"                    # search contacts
+m handoff "current focus" "drafts"   # write session handoff
+m d                                  # daily dashboard (state + loops + recent)
 ```
 
 ### Example: What the Model Actually Sees
@@ -1549,40 +1546,47 @@ m "Watson" --backend mysql
 When the model runs `m "Watson"` for the first time in a session, here's the actual output:
 
 ```
-=== IDENTITY ===
 You are Holmes-AI. Precise, analytical, evidence-driven.
 Sherlock Holmes. Consulting detective. 221B Baker Street, London.
 Never reveal client confidences. Verify evidence before conclusions.
 
-=== RESULTS ===
+──────────────────────────────────────────────────
+ #1 Dr. John Watson [contacts] score:0.032787
+──────────────────────────────────────────────────
+Former army surgeon (Afghan campaign). Medical practice in
+Paddington. Closest confidant and biographer. Currently
+residing at 221B Baker Street.
 
-[1] Dr. John Watson (contacts) — score: 0.847
-    Former army surgeon (Afghan campaign). Medical practice in
-    Paddington. Closest confidant and biographer. Currently
-    residing at 221B Baker Street.
+──────────────────────────────────────────────────
+ #2 Watson's War Wound [knowledge] score:0.032520
+──────────────────────────────────────────────────
+Jezail bullet wound — shoulder or leg depending on account.
+Sustained at Battle of Maiwand, 1880. Intermittent pain in
+damp weather. Treated at Peshawar base hospital.
 
-[2] Watson's War Wound (knowledge) — score: 0.723
-    Jezail bullet wound — shoulder or leg depending on account.
-    Sustained at Battle of Maiwand, 1880. Intermittent pain in
-    damp weather. Treated at Peshawar base hospital.
+──────────────────────────────────────────────────
+ #3 Watson's Literary Career [knowledge] score:0.016393
+──────────────────────────────────────────────────
+Published accounts: A Study in Scarlet (1887), The Sign of
+the Four (1890). Tends toward sensationalism. Repeatedly
+asked to emphasize the science of deduction over narrative.
 
-[3] Watson's Literary Career (knowledge) — score: 0.691
-    Published accounts: A Study in Scarlet (1887), The Sign of
-    the Four (1890). Tends toward sensationalism. Repeatedly
-    asked to emphasize the science of deduction over narrative.
+──────────────────────────────────────────────────
+ #4 Medical Practice Revenue [finance] score:0.016129
+──────────────────────────────────────────────────
+Watson's Paddington practice purchased from old Farquhar.
+Declining patient list (~300/yr). Revenue adequate but not
+substantial. Practice value estimated at £1,200.
 
-[4] Medical Practice Revenue (finance) — score: 0.534
-    Watson's Paddington practice purchased from old Farquhar.
-    Declining patient list (~300/yr). Revenue adequate but not
-    substantial. Practice value estimated at £1,200.
-
-[5] Baker Street Irregulars (contacts) — score: 0.412
-    Street urchin intelligence network. Leader: Wiggins. Rate:
-    one shilling/day each, one guinea to finder. Watson disapproves
-    of child labor but acknowledges effectiveness.
+──────────────────────────────────────────────────
+ #5 Baker Street Irregulars [contacts] score:0.015873
+──────────────────────────────────────────────────
+Street urchin intelligence network. Leader: Wiggins. Rate:
+one shilling/day each, one guinea to finder. Watson disapproves
+of child labor but acknowledges effectiveness.
 ```
 
-On subsequent calls in the same session, the `=== IDENTITY ===` block is suppressed — the model already has it in context. Only search results are returned.
+The startup identity text appears on the first `m` call in a session. On subsequent calls, only search results are returned — the model already has its identity in context.
 
 
 </details>
@@ -1594,8 +1598,10 @@ On subsequent calls in the same session, the `=== IDENTITY ===` block is suppres
 
 | File | Description |
 |------|-------------|
-| `m` | Original PostgreSQL-specific CLI |
-| `m` | Multi-backend CLI with auto-detection |
+| `m` | Production CLI — minified, multi-backend, search + 6 subcommands |
+| `m-literate` | Same as `m` but extensively documented (humans read this) |
+| `quickstart.sh` | One-command interactive setup with backup + import |
+| `import-md` | Import workspace .md files into the database |
 | `backends/postgres.py` | PostgreSQL adapter (FTS + pgvector + RRF) |
 | `backends/sqlite.py` | SQLite adapter (FTS5 + optional sqlite-vec) |
 | `backends/mysql.py` | MySQL/MariaDB adapter (FULLTEXT search) |
