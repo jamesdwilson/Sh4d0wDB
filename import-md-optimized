@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# import-md — Import agent .md files into ShadowDB.
+# Usage: ./import-md <workspace-dir> [--dry-run] [--backend postgres|sqlite]
+set -euo pipefail
+
+CF="${SHADOWDB_CONFIG:-$HOME/.shadowdb.json}";DR=false;WS="";BE=""
+
+usage() { echo "Usage: $0 <workspace-dir> [--dry-run] [--backend postgres|sqlite]"; exit 1; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) DR=true; shift ;;
+    --backend) BE="$2"; shift 2 ;;
+    --help|-h) usage ;;
+    *) [[ -z "$WS" ]] && { WS="$1"; shift; } || { echo "Error: unexpected argument '$1'" >&2; usage; } ;;
+  esac
+done
+[[ -z "$WS" ]] && usage; WS="${WS%/}"
+[[ ! -d "$WS" ]] && { echo "Error: '$WS' is not a directory" >&2; exit 1; }
+
+[[ -z "$BE" ]] && [[ -f "$CF" ]] && BE=$(python3 -c "import json; print(json.load(open('$CF')).get('backend','postgres'))" 2>/dev/null || echo "postgres")
+BE="${BE:-postgres}"
+
+if [[ "$BE" == "postgres" ]]; then
+  DN=$(python3 -c "import json; print(json.load(open('$CF')).get('postgres',{}).get('database','shadow'))" 2>/dev/null || echo "shadow")
+  PQ=$(python3 -c "import json; print(json.load(open('$CF')).get('postgres',{}).get('psql_path','psql'))" 2>/dev/null || echo "psql")
+  db_exec() { "$PQ" -q "$DN" -c "$1"; }
+  insert_startup() {
+    local k="$1" c="$2"
+    $DR && { echo "  [DRY RUN] INSERT startup: key=$k (${#c} chars)"; return; }
+    db_exec "INSERT INTO startup (key, content) VALUES ('$k', \$md\$$c\$md\$) ON CONFLICT (key) DO UPDATE SET content = EXCLUDED.content;"
+    echo "  ✓ startup.$k (${#c} chars)"
+  }
+  insert_memory() {
+    local t="$1" c="$2" cat="$3" tg="$4"
+    $DR && { echo "  [DRY RUN] INSERT memory: $t → $cat (${#c} chars)"; return; }
+    db_exec "INSERT INTO memories (title, content, category, tags) VALUES (\$t\$$t\$t\$, \$c\$$c\$c\$, '$cat', '{$tg}');"
+    echo "  ✓ $t → $cat (${#c} chars)"
+  }
+elif [[ "$BE" == "sqlite" ]]; then
+  DP=$(python3 -c "import json; print(json.load(open('$CF')).get('sqlite',{}).get('db_path','$HOME/.shadowdb/shadow.db'))" 2>/dev/null || echo "$HOME/.shadowdb/shadow.db")
+  db_exec() { sqlite3 "$DP" "$1"; }
+  insert_startup() {
+    local k="$1" c="$2"
+    $DR && { echo "  [DRY RUN] INSERT startup: key=$k (${#c} chars)"; return; }
+    sqlite3 "$DP" "INSERT OR REPLACE INTO startup (key, content) VALUES ('$k', '$c');"
+    echo "  ✓ startup.$k (${#c} chars)"
+  }
+  insert_memory() {
+    local t="$1" c="$2" cat="$3" tg="$4"
+    $DR && { echo "  [DRY RUN] INSERT memory: $t → $cat (${#c} chars)"; return; }
+    sqlite3 "$DP" "INSERT INTO memories (title, content, category, tags) VALUES ('$t', '$c', '$cat', '$tg');"
+    echo "  ✓ $t → $cat (${#c} chars)"
+  }
+else echo "Error: unsupported backend '$BE'" >&2; exit 1; fi
+
+fcat() {
+  case "$1" in
+    SOUL.md|SOUL.txt) echo "startup:soul" ;; IDENTITY.md|IDENTITY.txt) echo "startup:identity" ;;
+    USER.md|USER.txt) echo "memory:personal:user-profile" ;; MEMORY.md|MEMORY.txt) echo "memory:general:memory-index" ;;
+    BOOTSTRAP.md) echo "memory:ops:bootstrap" ;; TOOLS.md) echo "skip:framework-managed" ;;
+    AGENTS.md) echo "skip:will-be-replaced" ;; HEARTBEAT.md) echo "skip:will-be-replaced" ;;
+    *research*) echo "memory:research:$1" ;; *fitness*|*health*) echo "memory:fitness:$1" ;;
+    *finance*|*tax*|*budget*) echo "memory:finance:$1" ;; *project*|*plan*) echo "memory:project:$1" ;;
+    *meeting*|*prep*) echo "memory:meeting-prep:$1" ;; *contact*|*people*) echo "memory:contacts:$1" ;;
+    *decision*|*choice*) echo "memory:decision:$1" ;; *) echo "memory:general:$1" ;;
+  esac
+}
+
+echo "═══════════════════════════════════════"
+echo " ShadowDB Import — $BE | Source: $WS"
+$DR && echo " MODE: DRY RUN (no writes)"
+echo "═══════════════════════════════════════"
+echo ""
+
+find "$WS" -maxdepth 2 -name "*.md" -type f | sort | while read -r fp; do
+  fn=$(basename "$fp"); rp="${fp#$WS/}"; ct=$(cat "$fp")
+  [[ -z "${ct// /}" ]] || [[ ${#ct} -lt 5 ]] && { echo "  ⊘ $rp (empty — skipped)"; continue; }
+  mp=$(fcat "$fn"); tgt="${mp%%:*}"; rest="${mp#*:}"
+  case "$tgt" in
+    startup) echo "→ $rp → startup.${rest}"; insert_startup "$rest" "$ct" ;;
+    memory) cat="${rest%%:*}"; tag="${rest#*:}"; echo "→ $rp → memories ($cat)"; insert_memory "$fn" "$ct" "$cat" "imported,md-import,$tag" ;;
+    skip) echo "  ⊘ $rp ($rest)" ;;
+  esac
+done
+
+echo ""
+echo "═══════════════════════════════════════"
+echo " Done. Next: m \"test\" | echo 'DB: m query' > AGENTS.md"
+echo "═══════════════════════════════════════"

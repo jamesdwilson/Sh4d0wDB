@@ -1,0 +1,23 @@
+{
+  "backend": "postgres",
+  "postgres": {
+    "psql_path": "/opt/homebrew/opt/postgresql@17/bin/psql",
+    "database": "shadow",
+    "embedding_url": "http://localhost:11434/api/embeddings",
+    "embedding_model": "nomic-embed-text"
+  },
+  "sqlite": {
+    "db_path": "~/.sh4d0wdb/shadow.db",
+    "embedding_url": "http://localhost:11434/api/embeddings",
+    "embedding_model": "nomic-embed-text"
+  },
+  "mysql": {
+    "host": "localhost",
+    "port": 3306,
+    "user": "root",
+    "password": "",
+    "database": "shadow",
+    "embedding_url": "http://localhost:11434/api/embeddings",
+    "embedding_model": "nomic-embed-text"
+  }
+}
