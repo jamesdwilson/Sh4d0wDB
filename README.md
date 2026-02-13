@@ -368,12 +368,17 @@ INSERT INTO memories (title, content, content_pyramid, category, tags) VALUES
    'knowledge', '{violin,music,stradivarius}');
 ```
 
-This gives you a searchable knowledge base where:
-- `m "Watson"` → exact FTS match on name + semantic context about army surgeon
-- `m "who is the criminal mastermind"` → vector search catches Moriarty semantically
-- `m "Baskerville"` → FTS exact + case details
-- `m "musical instrument"` → vector search finds Stradivarius violin
-- `m "1889 Dartmoor"` → FTS catches the date and location precisely
+This gives you a searchable knowledge base. Here's what each query returns — and what markdown files would give you for the same question:
+
+| Query | Sh4d0wDB | Markdown Files (best case) |
+|-------|----------|---------------------------|
+| `m "Watson"` | ✅ Exact FTS match on name + semantic context about army surgeon. **278ms.** | 🟡 `grep -r "Watson"` across all files — returns every line containing "Watson" with no ranking. You get 50 raw hits. The model has to read them all and figure out which matter. |
+| `m "who is the criminal mastermind"` | ✅ Vector search catches Moriarty semantically — zero keyword overlap with query. **312ms.** | ❌ `grep "criminal mastermind"` matches nothing (those words don't appear in Moriarty's file). The model would need to `cat` every file and reason across all of them in-context. At 5 records that's fine. At 5,000 it's impossible. |
+| `m "Baskerville"` | ✅ FTS exact match + full case details + related records surface via RRF. **278ms.** | 🟡 `cat cases/baskerville.md` works — if you know the filename. If you search "Baskerville" you'll find it, but you won't find the Stapleton connection unless that keyword appears in the same file. |
+| `m "musical instrument"` | ✅ Vector search finds Stradivarius violin — "musical instrument" shares no keywords with the record, but embeddings capture the semantic relationship. **305ms.** | ❌ Dead end. `grep "musical instrument"` returns nothing. The word "instrument" doesn't appear anywhere in the violin entry. The model would have to read every file to discover the violin exists. |
+| `m "1889 Dartmoor"` | ✅ FTS catches the date and location precisely, returns the Baskerville case. **278ms.** | 🟡 `grep -r "1889"` might find it — if the date is in the filename or content. But "Dartmoor" and "1889" in the same query? `grep` can't AND multiple terms without `awk` pipelines the model has to construct. |
+
+The pattern: **exact keyword matches work in both systems** (FTS ≈ grep for simple cases). The gap opens on semantic queries — questions where the words in the query don't match the words in the answer. That's most real questions. You rarely search for the exact words you already know.
 
 </details>
 
