@@ -104,7 +104,7 @@ import subprocess
 
 CONFIG_PATH = os.path.expanduser("~/.shadowdb.json")
 
-# Default embedding service — Ollama running locally with nomic-embed-text.
+# Default embedding service — Ollama with nomic-embed-text.
 # Override in ~/.shadowdb.json per-backend if you use a different provider.
 DEFAULT_EMBEDDING_URL = "http://localhost:11434/api/embeddings"
 DEFAULT_EMBEDDING_MODEL = "nomic-embed-text"

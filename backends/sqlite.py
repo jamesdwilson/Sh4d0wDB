@@ -28,9 +28,9 @@ SEARCH STRATEGIES:
 WHEN TO USE SQLITE vs POSTGRESQL:
   Use SQLite when:
     - You want zero-infrastructure setup (no PostgreSQL server)
-    - You're running on a single machine
     - Your knowledge base is under ~100K records
     - You want a portable, single-file database you can copy/backup
+    - File can live anywhere: local disk, NFS mount, cloud drive, USB
 
   Use PostgreSQL when:
     - You want the best search quality (native hybrid FTS + vector + RRF)

@@ -892,7 +892,7 @@ All benchmarks measured on a MacBook Pro M3 Max against a real production knowle
 | Search cold start | 1–3s (load embedding model) | **55ms** (FTS always hot, PG always running) | **ShadowDB 5–55×** faster |
 | Sub-agent identity load | ∞ (impossible — filtered out) | **230ms** (first `m` query) | **ShadowDB** — from impossible to 230ms |
 
-Stock MD doesn't "search" in the traditional sense — it dumps the entire MEMORY.md into the prompt and hopes the model finds what it needs. When it does use `memory_search`, the builtin system scans a local SQLite file with OpenAI embeddings. ShadowDB's FTS path (55ms) is pure PostgreSQL with no embedding overhead — instant keyword lookup. The hybrid path (230ms) adds Ollama embedding generation (85ms) + pgvector cosine search (130ms) and fuses both with RRF.
+Stock MD doesn't "search" in the traditional sense — it dumps the entire MEMORY.md into the prompt and hopes the model finds what it needs. When it does use `memory_search`, the builtin system scans a file-based SQLite database with OpenAI embeddings. ShadowDB's FTS path (55ms) is pure PostgreSQL with no embedding overhead — instant keyword lookup. The hybrid path (230ms) adds Ollama embedding generation (85ms) + pgvector cosine search (130ms) and fuses both with RRF.
 
 ### Ceiling
 
@@ -994,7 +994,7 @@ xychart-beta
 
 ⁵ MySQL has no native vector search. Requires external vector store (Milvus, Pinecone, etc.) or MariaDB 11.6+ vector type.
 
-⁶ OpenClaw's builtin `memory_search` uses a local SQLite database with OpenAI embeddings. Latency varies by corpus size and whether embeddings are cached. Range is 200–500ms for a warm cache, 1–3s on cold start.
+⁶ OpenClaw's builtin `memory_search` uses a file-based SQLite database with OpenAI embeddings. Latency varies by corpus size and whether embeddings are cached. Range is 200–500ms for a warm cache, 1–3s on cold start.
 
 ⁷ SQLite with sqlite-vec extension enables hybrid FTS5 + vector search with RRF fusion, matching PostgreSQL's quality. Without the extension, it's FTS5-only (no semantic search).
 
