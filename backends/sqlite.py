@@ -83,18 +83,19 @@ class SQLiteBackend:
         results = backend.search("Watson")
     """
 
-    def __init__(self, db_path="shadow.db",
+    def __init__(self, db_path=None,
                  embedding_url="http://localhost:11434/api/embeddings",
                  embedding_model="nomic-embed-text"):
         """
         Initialize the SQLite backend.
 
         Args:
-            db_path:         Path to the SQLite database file.
-                             Will be created if it doesn't exist.
+            db_path:         Path to the SQLite database file (required — no default).
             embedding_url:   Ollama API endpoint for embeddings.
             embedding_model: Ollama model name (nomic-embed-text = 768 dims).
         """
+        if not db_path:
+            raise ValueError("SQLiteBackend requires 'db_path' — set sqlite.db_path in ~/.shadowdb.json")
         self.db_path = db_path
         self.embed_url = embedding_url
         self.embed_model = embedding_model

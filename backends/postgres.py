@@ -74,27 +74,29 @@ class PostgresBackend:
 
         backend = PostgresBackend(
             psql_path="/opt/homebrew/opt/postgresql@17/bin/psql",
-            database="shadow"
+            database="myagent"
         )
         print(backend.startup())
         results = backend.search("Watson")
     """
 
-    def __init__(self, psql_path="/usr/bin/psql", database="shadow",
+    def __init__(self, psql_path="psql", database=None,
                  embedding_url="http://localhost:11434/api/embeddings",
                  embedding_model="nomic-embed-text"):
         """
         Initialize the PostgreSQL backend.
 
         Args:
-            psql_path:       Full path to the psql CLI binary.
-                             macOS Homebrew: /opt/homebrew/opt/postgresql@17/bin/psql
+            psql_path:       Path to the psql CLI binary (default: "psql" from PATH).
+                             macOS Homebrew example: /opt/homebrew/opt/postgresql@17/bin/psql
                              Linux default:  /usr/bin/psql
-            database:        PostgreSQL database name (created with `createdb shadow`)
+            database:        PostgreSQL database name (required — no default)
             embedding_url:   Ollama embedding API endpoint (must be running locally)
             embedding_model: Which Ollama model to use for embeddings.
                              nomic-embed-text produces 768-dim vectors.
         """
+        if not database:
+            raise ValueError("PostgresBackend requires 'database' — set postgres.database in ~/.shadowdb.json")
         self.psql = psql_path
         self.db = database
         self.embed_url = embedding_url

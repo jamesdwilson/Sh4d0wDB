@@ -71,29 +71,33 @@ class MySQLBackend:
 
     Usage:
         backend = MySQLBackend(
-            host="localhost", database="shadow",
-            user="root", password=""
+            host="localhost", database="myagent",
+            user="myuser", password="mypass"
         )
         print(backend.startup())
         results = backend.search("Watson")
     """
 
-    def __init__(self, host="localhost", port=3306, user="root",
-                 password="", database="shadow",
+    def __init__(self, host="localhost", port=3306, user=None,
+                 password="", database=None,
                  embedding_url="http://localhost:11434/api/embeddings",
                  embedding_model="nomic-embed-text"):
         """
         Initialize the MySQL backend.
 
         Args:
-            host:            MySQL server hostname
+            host:            MySQL server hostname (default localhost)
             port:            MySQL server port (default 3306)
-            user:            MySQL username (default root)
+            user:            MySQL username (required — no default)
             password:        MySQL password (default empty)
-            database:        Database name containing ShadowDB tables
+            database:        Database name (required — no default)
             embedding_url:   Ollama API endpoint (for future vector support)
             embedding_model: Ollama model name (for future vector support)
         """
+        if not database:
+            raise ValueError("MySQLBackend requires 'database' — set mysql.database in ~/.shadowdb.json")
+        if not user:
+            raise ValueError("MySQLBackend requires 'user' — set mysql.user in ~/.shadowdb.json")
         self.host = host
         self.port = port
         self.user = user

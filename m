@@ -14,43 +14,63 @@ def lcfg():
 def get_backend_name():
     c=lcfg();b=os.environ.get("SHADOWDB_BACKEND") or c.get("backend")
     if not b:
-        p=c.get("postgres",{}).get("psql_path","psql");d=c.get("postgres",{}).get("database","shadow")
-        try:
-            r=subprocess.run([p,d,"-t","-A","-c","SELECT 1;"],capture_output=True,text=True,timeout=3)
-            if r.returncode==0:b="postgres"
-        except:pass
-        if not b:b="sqlite" if os.path.exists(os.path.expanduser(c.get("sqlite",{}).get("db_path","~/.shadowdb/shadow.db"))) else "sqlite"
-    return(b or "sqlite").lower().strip()
+        # Auto-detect: try postgres config first, then sqlite file, then error
+        pc=c.get("postgres",{})
+        if pc.get("database"):
+            try:
+                r=subprocess.run([pc.get("psql_path","psql"),pc["database"],"-t","-A","-c","SELECT 1;"],capture_output=True,text=True,timeout=3)
+                if r.returncode==0:return "postgres"
+            except:pass
+        sc=c.get("sqlite",{})
+        if sc.get("db_path") and os.path.exists(os.path.expanduser(sc["db_path"])):return "sqlite"
+        mc=c.get("mysql",{})
+        if mc.get("database"):return "mysql"
+        print("No backend configured. Set 'backend' in ~/.shadowdb.json or SHADOWDB_BACKEND env var.",file=sys.stderr);sys.exit(1)
+    return b.lower().strip()
+
+def _require(cfg, key, backend_name):
+    """Get a required config key or exit with a clear message."""
+    v=cfg.get(key)
+    if not v:print(f"Missing required config: {backend_name}.{key} in ~/.shadowdb.json",file=sys.stderr);sys.exit(1)
+    return v
 
 def resolve(override=None):
     c=lcfg();b=override or get_backend_name()
     if b in("postgres","pg"):
         from backends.postgres import PostgresBackend;pc=c.get("postgres",{})
-        return PostgresBackend(psql_path=pc.get("psql_path","/opt/homebrew/opt/postgresql@17/bin/psql"),database=pc.get("database","shadow"),embedding_url=pc.get("embedding_url",DEFAULT_EMBEDDING_URL),embedding_model=pc.get("embedding_model",DEFAULT_EMBEDDING_MODEL))
+        return PostgresBackend(psql_path=pc.get("psql_path","psql"),database=_require(pc,"database","postgres"),embedding_url=pc.get("embedding_url",DEFAULT_EMBEDDING_URL),embedding_model=pc.get("embedding_model",DEFAULT_EMBEDDING_MODEL))
     elif b=="sqlite":
         from backends.sqlite import SQLiteBackend;sc=c.get("sqlite",{})
-        return SQLiteBackend(db_path=sc.get("db_path","shadow.db"),embedding_url=sc.get("embedding_url",DEFAULT_EMBEDDING_URL),embedding_model=sc.get("embedding_model",DEFAULT_EMBEDDING_MODEL))
+        return SQLiteBackend(db_path=_require(sc,"db_path","sqlite"),embedding_url=sc.get("embedding_url",DEFAULT_EMBEDDING_URL),embedding_model=sc.get("embedding_model",DEFAULT_EMBEDDING_MODEL))
     elif b in("mysql","mariadb"):
         from backends.mysql import MySQLBackend;mc=c.get("mysql",{})
-        return MySQLBackend(host=mc.get("host","localhost"),port=mc.get("port",3306),user=mc.get("user","root"),password=mc.get("password",""),database=mc.get("database","shadow"),embedding_url=mc.get("embedding_url",DEFAULT_EMBEDDING_URL),embedding_model=mc.get("embedding_model",DEFAULT_EMBEDDING_MODEL))
+        return MySQLBackend(host=mc.get("host","localhost"),port=mc.get("port",3306),user=_require(mc,"user","mysql"),password=mc.get("password",""),database=_require(mc,"database","mysql"),embedding_url=mc.get("embedding_url",DEFAULT_EMBEDDING_URL),embedding_model=mc.get("embedding_model",DEFAULT_EMBEDDING_MODEL))
     else:print(f"Unknown backend: {b}",file=sys.stderr);sys.exit(1)
 
 # ── Database helpers (backend-aware) ──────────────────────────
+def _pg_args(c):
+    pc=c.get("postgres",{});return pc.get("psql_path","psql"),_require(pc,"database","postgres")
+
+def _sq_path(c):
+    return os.path.expanduser(_require(c.get("sqlite",{}),"db_path","sqlite"))
+
+def _my_args(c):
+    mc=c.get("mysql",{});return mc.get("host","localhost"),_require(mc,"user","mysql"),mc.get("password",""),_require(mc,"database","mysql")
+
 def db_cmd(sql):
     """Run SQL, return raw text. Routes to the configured backend."""
     c=lcfg();b=get_backend_name()
     if b in("postgres","pg"):
-        p=c.get("postgres",{}).get("psql_path","/opt/homebrew/opt/postgresql@17/bin/psql")
-        d=c.get("postgres",{}).get("database","shadow")
+        p,d=_pg_args(c)
         r=subprocess.run([p,d,"-t","-A","-c",sql],capture_output=True,text=True,timeout=10)
         return r.stdout.strip()
     elif b=="sqlite":
-        dp=os.path.expanduser(c.get("sqlite",{}).get("db_path","~/.shadowdb/shadow.db"))
-        r=subprocess.run(["sqlite3",dp,sql],capture_output=True,text=True,timeout=10)
+        r=subprocess.run(["sqlite3",_sq_path(c),sql],capture_output=True,text=True,timeout=10)
         return r.stdout.strip()
     elif b in("mysql","mariadb"):
-        mc=c.get("mysql",{})
-        r=subprocess.run(["mysql","-u",mc.get("user","root"),f"-p{mc.get('password','')}","-h",mc.get("host","localhost"),mc.get("database","shadow"),"-N","-B","-e",sql],capture_output=True,text=True,timeout=10)
+        h,u,pw,d=_my_args(c);cmd=["mysql","-u",u,"-h",h,d,"-N","-B","-e",sql]
+        if pw:cmd.insert(3,f"-p{pw}")
+        r=subprocess.run(cmd,capture_output=True,text=True,timeout=10)
         return r.stdout.strip()
     return ""
 
@@ -58,17 +78,16 @@ def db_pretty(sql):
     """Run SQL, return formatted table output. Routes to the configured backend."""
     c=lcfg();b=get_backend_name()
     if b in("postgres","pg"):
-        p=c.get("postgres",{}).get("psql_path","/opt/homebrew/opt/postgresql@17/bin/psql")
-        d=c.get("postgres",{}).get("database","shadow")
+        p,d=_pg_args(c)
         r=subprocess.run([p,d,"-c",sql],capture_output=True,text=True,timeout=10)
         return r.stdout.strip()
     elif b=="sqlite":
-        dp=os.path.expanduser(c.get("sqlite",{}).get("db_path","~/.shadowdb/shadow.db"))
-        r=subprocess.run(["sqlite3","-header","-column",dp,sql],capture_output=True,text=True,timeout=10)
+        r=subprocess.run(["sqlite3","-header","-column",_sq_path(c),sql],capture_output=True,text=True,timeout=10)
         return r.stdout.strip()
     elif b in("mysql","mariadb"):
-        mc=c.get("mysql",{})
-        r=subprocess.run(["mysql","-u",mc.get("user","root"),f"-p{mc.get('password','')}","-h",mc.get("host","localhost"),mc.get("database","shadow"),"-e",sql],capture_output=True,text=True,timeout=10)
+        h,u,pw,d=_my_args(c);cmd=["mysql","-u",u,"-h",h,d,"-e",sql]
+        if pw:cmd.insert(3,f"-p{pw}")
+        r=subprocess.run(cmd,capture_output=True,text=True,timeout=10)
         return r.stdout.strip()
     return ""
 
