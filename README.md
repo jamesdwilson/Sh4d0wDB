@@ -113,7 +113,7 @@ Works with **any database** — PostgreSQL, SQLite, MySQL/MariaDB. Built for [Op
 One command. It backs up your files first, walks you through every step, and you can undo everything at any time.
 
 ```bash
-git clone https://github.com/openclaw/shadowdb && cd shadowdb && ./quickstart.sh
+git clone https://github.com/openclaw/shadowdb && cd shadowdb && ./setup.sh
 ```
 
 That's it. The script will:
@@ -138,13 +138,38 @@ Every step asks for confirmation. Nothing happens without your say-so.
 >
 > | Flag | What it does |
 > |------|-------------|
-> | `--backend sqlite` | Use SQLite — no server needed |
-> | `--backend postgres` | Use PostgreSQL — best search quality |
-> | `--backend mysql` | Use MySQL / MariaDB |
+> | `--backend sqlite` | SQLite — no server needed |
+> | `--backend postgres` | PostgreSQL — best search quality |
+> | `--backend mysql` | MySQL / MariaDB |
 > | `--dry-run` | Preview what would happen, change nothing |
-> | `--yes` | Skip confirmation prompts |
+> | `--yes` | Skip confirmation prompts (CI/automation) |
 >
 > Default: auto-detects what's installed. See [full setup instructions](#setup) for all backends.
+
+> [!IMPORTANT]
+> **Got rules your agent must never forget?** Create `RULES_REINFORCE.md` in your workspace before running setup. These rules survive context compaction — they appear in **every** query result, not just the first.
+>
+> ```markdown
+> # Exit Gate
+> Before sending any response: "Am I stating what I do next?"
+> YES → send. NO → find work → state it → send.
+>
+> # Comms Gate
+> Unless the user said "send", don't send. Write ≠ send.
+> ```
+>
+> <details>
+> <summary>Why this works — positional attention and Liu et al. (2023)</summary>
+>
+> [Lost in the Middle (Liu et al., 2023)](https://arxiv.org/abs/2307.03172) showed that models attend best to the **beginning** and **end** of context, with accuracy dropping for information in the middle. System prompt rules sit at position 0 — technically the "beginning" — but after 50 turns of reading the same rules, the model has habituated to them. They're cognitive wallpaper.
+>
+> Reinforced rules arrive as **fresh tool output** at the **end** of context — the high-attention zone. The rule hasn't changed. The *position* changed. Same content, dramatically different attention weight.
+>
+> This isn't "repeat the rules louder." It's "move the rules to where the model is actually looking."
+>
+> Cost: ~100–300 bytes per reinforced rule per `m` call. For 2–3 critical rules, that's negligible — and it's your choice which rules (if any) to reinforce.
+>
+> </details>
 
 ---
 
@@ -1471,7 +1496,7 @@ Intercept `exec` calls at the framework level, rewrite syntax.
 
 ### Quick Setup (Any Backend)
 
-The easiest path is the [one-liner quickstart](#-quick-start) — it detects what you have installed and configures the right backend automatically. The manual steps below are for reference.
+The easiest path is the [one-liner setup](#-quick-start) — it detects what you have installed and configures the right backend automatically. The manual steps below are for reference.
 
 ### SQLite (Simplest — No Server)
 
@@ -1665,7 +1690,7 @@ The startup identity text appears on the first `m` call in a session. On subsequ
 |------|-------------|
 | `m` | Production CLI — minified, multi-backend, search + 6 subcommands |
 | `m-literate` | Same as `m` but extensively documented (humans read this) |
-| `quickstart.sh` | One-command interactive setup with backup + import |
+| `setup.sh` | Interactive setup — backup, import, RULES_REINFORCE.md, verify. Re-runnable. |
 | `import-md` | Import workspace .md files into the database |
 | `backends/postgres.py` | PostgreSQL adapter (FTS + pgvector + RRF) |
 | `backends/sqlite.py` | SQLite adapter (FTS5 + optional sqlite-vec) |

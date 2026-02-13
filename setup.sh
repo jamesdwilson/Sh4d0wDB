@@ -1,34 +1,45 @@
 #!/usr/bin/env bash
 # ╔══════════════════════════════════════════════════════════════════════════════╗
 # ║                                                                            ║
-# ║                      ShadowDB — Quick Start Installer                      ║
+# ║                          ShadowDB — Setup                                  ║
 # ║                                                                            ║
 # ║   Replace 9,198 bytes of static markdown bloat with an 11-byte database    ║
 # ║   instruction. Your agent gets smarter with every record.                  ║
 # ║                                                                            ║
 # ║   ONE COMMAND:                                                             ║
-# ║     curl -sSL https://raw.githubusercontent.com/openclaw/shadowdb/main/quickstart.sh | bash
+# ║     git clone https://github.com/openclaw/shadowdb && cd shadowdb          ║
+# ║     ./setup.sh                                                             ║
 # ║                                                                            ║
-# ║   Or if you already cloned the repo:                                       ║
-# ║     ./quickstart.sh                                                        ║
+# ║   Re-runnable. Safe. Backs up first, always.                               ║
 # ║                                                                            ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 #
 #
 #   WHAT THIS SCRIPT DOES (step by step, with your permission):
 #
-#     1.  Checks that your system has the tools it needs
-#     2.  Backs up ALL your workspace .md files (you can always undo everything)
-#     3.  Creates the ShadowDB database
+#     1.  Backs up ALL your workspace .md files (always first, always safe)
+#     2.  Checks that your system has the tools it needs
+#     3.  Creates the ShadowDB database (skips if it already exists)
 #     4.  Imports your .md files into the database
-#     5.  Verifies everything works with a test search
-#     6.  Shows you the two lines to paste into your workspace
+#     5.  Imports RULES_REINFORCE.md as always-on rules (if it exists)
+#     6.  Empties workspace .md files and writes AGENTS.md
+#     7.  Verifies everything works with a test search
+#
+#
+#   ⚠️  THIS SCRIPT WILL EMPTY .md FILES IN YOUR WORKSPACE ROOT.
+#
+#     After importing your files into the database, the script replaces
+#     workspace .md files with empty files (so the framework doesn't
+#     complain about missing files) and writes AGENTS.md with the
+#     11-byte database instruction.
+#
+#     Your originals are ALWAYS backed up first. Restore anytime:
+#       cp ~/OpenClaw-Workspace-Backup-*/*.md ~/.openclaw/workspace/
 #
 #
 #   WHAT THIS SCRIPT WILL NEVER DO:
 #
-#     ✗  Delete or modify your original .md files
-#     ✗  Change your AGENTS.md (you do that — we just tell you what to paste)
+#     ✗  Touch anything before backing up your files
 #     ✗  Install software without telling you exactly what and why
 #     ✗  Continue if something fails — it stops and tells you what went wrong
 #
@@ -110,24 +121,29 @@ blank()   { echo ""; }
 usage() {
   cat <<'EOF'
 
-  ShadowDB Quick Start
-  ════════════════════
+  ShadowDB Setup
+  ═══════════════
 
   Usage:
 
-    ./quickstart.sh                              # defaults (postgres, ~/.openclaw/workspace)
-    ./quickstart.sh --workspace ~/my-agent       # custom workspace
-    ./quickstart.sh --backend sqlite             # use SQLite instead
-    ./quickstart.sh --dry-run                    # preview without changes
-    ./quickstart.sh --yes                        # skip prompts (CI/automation)
+    ./setup.sh                                   # defaults (postgres, ~/.openclaw/workspace)
+    ./setup.sh --workspace ~/my-agent            # custom workspace
+    ./setup.sh --backend sqlite                  # use SQLite (no server needed)
+    ./setup.sh --backend postgres                # use PostgreSQL (best search)
+    ./setup.sh --backend mysql                   # use MySQL / MariaDB
+    ./setup.sh --dry-run                         # preview without changes
+    ./setup.sh --yes                             # skip prompts (CI/automation)
 
   Flags:
 
     --workspace <dir>   Where your .md files live (default: ~/.openclaw/workspace)
-    --backend <type>    Database backend: postgres or sqlite (default: postgres)
+    --backend <type>    Database backend: postgres, sqlite, or mysql (default: postgres)
     --dry-run           Show what would happen without making any changes
     --yes               Auto-confirm all prompts
     --help, -h          Show this help
+
+  Re-runnable: safe to run again. Backs up first, skips existing database,
+  re-imports files and RULES_REINFORCE.md if they changed.
 
 EOF
   exit 0
@@ -183,10 +199,10 @@ clear 2>/dev/null || true
 echo ""
 echo "  ╔══════════════════════════════════════════════════════╗"
 echo "  ║                                                      ║"
-echo "  ║         🧠  ShadowDB Quick Start  🧠                ║"
+echo "  ║             🧠  ShadowDB Setup  🧠                  ║"
 echo "  ║                                                      ║"
 echo "  ║   Replace .md file bloat with a database brain.      ║"
-echo "  ║   Your files are backed up. You can undo anytime.    ║"
+echo "  ║   Your files are backed up first. Undo anytime.      ║"
 echo "  ║                                                      ║"
 echo "  ╚══════════════════════════════════════════════════════╝"
 echo ""
@@ -202,17 +218,108 @@ fi
 
 blank
 
+echo -e "  ${RED}${BOLD}┌──────────────────────────────────────────────────────────────┐${NC}"
+echo -e "  ${RED}${BOLD}│                                                              │${NC}"
+echo -e "  ${RED}${BOLD}│   ⚠️   WARNING: This will empty .md files in your workspace  │${NC}"
+echo -e "  ${RED}${BOLD}│                                                              │${NC}"
+echo -e "  ${RED}${BOLD}│   After importing your files into the database, this script  │${NC}"
+echo -e "  ${RED}${BOLD}│   will REPLACE workspace .md files with empty files and      │${NC}"
+echo -e "  ${RED}${BOLD}│   write AGENTS.md with the 11-byte database instruction.     │${NC}"
+echo -e "  ${RED}${BOLD}│                                                              │${NC}"
+echo -e "  ${RED}${BOLD}│   Your originals are backed up FIRST.  Restore anytime:      │${NC}"
+echo -e "  ${RED}${BOLD}│     cp ~/OpenClaw-Workspace-Backup-*/*.md \\                  │${NC}"
+echo -e "  ${RED}${BOLD}│        ${WORKSPACE}/                             │${NC}"
+echo -e "  ${RED}${BOLD}│                                                              │${NC}"
+echo -e "  ${RED}${BOLD}└──────────────────────────────────────────────────────────────┘${NC}"
+
+blank
+
+if ! confirm "Continue with setup?"; then
+  info "Aborted. Nothing was changed."
+  exit 0
+fi
+
+blank
+
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                                                                            │
-# │   STEP 1 of 6:  CHECK PREREQUISITES                                       │
+# │   STEP 1 of 7:  BACK UP YOUR FILES                                        │
+# │                                                                            │
+# │   ALWAYS FIRST. Before anything else touches your system, we copy ALL      │
+# │   your .md files to a safe location. If anything goes wrong at any         │
+# │   point — now or months from now — you restore with one command.           │
+# │                                                                            │
+# │   Backup location:                                                         │
+# │     ~/OpenClaw-Workspace-Backup-2025-02-13/                                │
+# │                                                                            │
+# │   Restore command:                                                         │
+# │     cp ~/OpenClaw-Workspace-Backup-*/*.md ~/.openclaw/workspace/           │
+# │                                                                            │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+header "Step 1 of 7 — Backing up your files"
+
+if [[ ! -d "$WORKSPACE" ]]; then
+  warn "Workspace directory not found: $WORKSPACE"
+  detail "We'll skip the backup and import. You can create it later."
+  blank
+  MD_COUNT=0
+else
+  MD_COUNT=$(find "$WORKSPACE" -maxdepth 1 -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
+
+  if [[ $MD_COUNT -eq 0 ]]; then
+    info "No .md files found in $WORKSPACE"
+    detail "Nothing to back up — this might be a fresh workspace."
+    blank
+  else
+    info "Found ${BOLD}${MD_COUNT} .md files${NC} to back up:"
+    blank
+
+    find "$WORKSPACE" -maxdepth 1 -name "*.md" -type f | sort | while read -r f; do
+      size=$(wc -c < "$f" | tr -d ' ')
+      name=$(basename "$f")
+      printf "     %-30s  %s bytes\n" "$name" "$size"
+    done
+
+    blank
+    info "Backup destination:  ${BOLD}${BACKUP_DIR}/${NC}"
+    blank
+
+    if ! $DRY_RUN; then
+      mkdir -p "$BACKUP_DIR"
+      cp "$WORKSPACE"/*.md "$BACKUP_DIR/"
+      ok "Backed up ${MD_COUNT} files to ${BACKUP_DIR}/"
+    else
+      ok "[DRY RUN] Would back up ${MD_COUNT} files"
+    fi
+
+    blank
+    echo "  ┌──────────────────────────────────────────────────────────────┐"
+    echo "  │                                                              │"
+    echo "  │   📦  Your originals are safe!                               │"
+    echo "  │                                                              │"
+    echo "  │   To restore at any time, run:                               │"
+    echo "  │                                                              │"
+    echo "  │     cp ${BACKUP_DIR}/*.md \\"
+    echo "  │        ${WORKSPACE}/                              │"
+    echo "  │                                                              │"
+    echo "  └──────────────────────────────────────────────────────────────┘"
+    blank
+  fi
+fi
+
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                                                                            │
+# │   STEP 2 of 7:  CHECK PREREQUISITES                                       │
 # │                                                                            │
 # │   We need a few tools installed before we can set up ShadowDB.             │
 # │   If anything's missing, we'll tell you exactly how to install it.         │
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 1 of 6 — Checking prerequisites"
+header "Step 2 of 7 — Checking prerequisites"
 
 MISSING=0
 
@@ -320,82 +427,9 @@ blank
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                                                                            │
-# │   STEP 2 of 6:  BACK UP YOUR FILES                                        │
+# │   STEP 3 of 7:  CREATE THE DATABASE                                        │
 # │                                                                            │
-# │   This is the most important step. We copy ALL your .md files to a         │
-# │   safe location before touching anything else. If anything goes wrong      │
-# │   at any point — now or months from now — you restore with one command.    │
-# │                                                                            │
-# │   Backup location:                                                         │
-# │     ~/OpenClaw-Workspace-Backup-2025-02-13/                                │
-# │                                                                            │
-# │   Restore command:                                                         │
-# │     cp ~/OpenClaw-Workspace-Backup-*/*.md ~/.openclaw/workspace/           │
-# │                                                                            │
-# └────────────────────────────────────────────────────────────────────────────┘
-
-header "Step 2 of 6 — Backing up your files"
-
-if [[ ! -d "$WORKSPACE" ]]; then
-  warn "Workspace directory not found: $WORKSPACE"
-  detail "We'll skip the backup and import. You can create it later."
-  blank
-  MD_COUNT=0
-else
-  # Count .md files (top-level only — not subdirectories)
-  MD_COUNT=$(find "$WORKSPACE" -maxdepth 1 -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
-
-  if [[ $MD_COUNT -eq 0 ]]; then
-    info "No .md files found in $WORKSPACE"
-    detail "Nothing to back up — this might be a fresh workspace."
-    blank
-  else
-    info "Found ${BOLD}${MD_COUNT} .md files${NC} to back up:"
-    blank
-
-    # Show each file with its size so the user knows exactly what's being copied
-    find "$WORKSPACE" -maxdepth 1 -name "*.md" -type f | sort | while read -r f; do
-      size=$(wc -c < "$f" | tr -d ' ')
-      name=$(basename "$f")
-      printf "     %-30s  %s bytes\n" "$name" "$size"
-    done
-
-    blank
-    info "Backup destination:  ${BOLD}${BACKUP_DIR}/${NC}"
-    blank
-
-    if confirm "Back up these files now?"; then
-      if ! $DRY_RUN; then
-        mkdir -p "$BACKUP_DIR"
-        cp "$WORKSPACE"/*.md "$BACKUP_DIR/"
-        ok "Backed up ${MD_COUNT} files to ${BACKUP_DIR}/"
-      else
-        ok "[DRY RUN] Would back up ${MD_COUNT} files"
-      fi
-
-      blank
-      echo "  ┌──────────────────────────────────────────────────────────────┐"
-      echo "  │                                                              │"
-      echo "  │   📦  Your originals are safe!                               │"
-      echo "  │                                                              │"
-      echo "  │   To restore at any time, run:                               │"
-      echo "  │                                                              │"
-      echo "  │     cp ${BACKUP_DIR}/*.md \\"
-      echo "  │        ${WORKSPACE}/                              │"
-      echo "  │                                                              │"
-      echo "  └──────────────────────────────────────────────────────────────┘"
-      blank
-    fi
-  fi
-fi
-
-
-# ┌────────────────────────────────────────────────────────────────────────────┐
-# │                                                                            │
-# │   STEP 3 of 6:  CREATE THE DATABASE                                        │
-# │                                                                            │
-# │   We create a database called "shadow" and set up the tables ShadowDB      │
-# │   needs:                                                                   │
+# │   We create a database and set up the tables ShadowDB needs:                                                                   │
 # │                                                                            │
 # │     startup   — Your agent's identity (who it is, who you are, rules)      │
 # │     memories  — Searchable knowledge base (everything the agent knows)     │
@@ -404,7 +438,7 @@ fi
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 3 of 6 — Creating database"
+header "Step 3 of 7 — Creating database"
 
 if [[ "$BACKEND" == "postgres" ]]; then
 
@@ -495,7 +529,7 @@ fi
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                                                                            │
-# │   STEP 4 of 6:  IMPORT YOUR .md FILES                                     │
+# │   STEP 4 of 7:  IMPORT YOUR .md FILES                                     │
 # │                                                                            │
 # │   This reads your workspace .md files and imports them into the database.  │
 # │                                                                            │
@@ -514,7 +548,7 @@ fi
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 4 of 6 — Importing your .md files"
+header "Step 4 of 7 — Importing your .md files"
 
 if [[ -d "$WORKSPACE" ]] && [[ $MD_COUNT -gt 0 ]]; then
 
@@ -554,7 +588,136 @@ blank
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                                                                            │
-# │   STEP 5 of 6:  VERIFY IT WORKS                                           │
+# │   STEP 5 of 7:  IMPORT RULES_REINFORCE.md (if it exists)                  │
+# │                                                                            │
+# │   Convention: if your workspace contains RULES_REINFORCE.md, those rules   │
+# │   are imported as always-on startup rows (reinforce=true). These rules     │
+# │   appear in EVERY m query result — not just the first call in a session.   │
+# │                                                                            │
+# │   Why: critical rules (safety gates, communication policies) fail under    │
+# │   context pressure. Reinforced rules arrive as fresh tool output in the    │
+# │   high-attention zone (end of context), not habituated system prompt       │
+# │   content at position 0. See: Lost in the Middle (Liu et al., 2023).      │
+# │                                                                            │
+# │   Format:                                                                  │
+# │     # Rule Name                                                            │
+# │     Rule content on following lines.                                       │
+# │                                                                            │
+# │     # Another Rule                                                         │
+# │     More content here.                                                     │
+# │                                                                            │
+# │   Each # heading becomes a startup key. Content below becomes the rule.    │
+# │   No file = no reinforcement = no questions asked.                         │
+# │                                                                            │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+header "Step 5 of 7 — Checking for RULES_REINFORCE.md"
+
+REINFORCE_FILE="${WORKSPACE}/RULES_REINFORCE.md"
+
+if [[ -f "$REINFORCE_FILE" ]]; then
+  RULE_COUNT=$(grep -c '^# ' "$REINFORCE_FILE" 2>/dev/null || echo "0")
+  info "Found ${BOLD}RULES_REINFORCE.md${NC} with ${BOLD}${RULE_COUNT} rules${NC}"
+  detail "These rules will appear in EVERY m query result (reinforced)."
+  blank
+
+  if ! $DRY_RUN; then
+    # Parse: each # heading = key, content below = rule text
+    current_key=""
+    current_content=""
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" =~ ^#\  ]]; then
+        # Save previous rule if exists
+        if [[ -n "$current_key" && -n "$current_content" ]]; then
+          key_slug=$(echo "$current_key" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd 'a-z0-9_')
+          escaped_content=$(echo "$current_content" | sed "s/'/''/g")
+          if [[ "$BACKEND" == "postgres" ]]; then
+            psql "$DB_NAME" -c "INSERT INTO startup (key, content, priority, reinforce) VALUES ('${key_slug}', '${escaped_content}', 10, true) ON CONFLICT (key) DO UPDATE SET content='${escaped_content}', reinforce=true;" 2>/dev/null
+          elif [[ "$BACKEND" == "sqlite" ]]; then
+            sqlite3 "$DB_PATH" "INSERT OR REPLACE INTO startup (key, content, priority, reinforce) VALUES ('${key_slug}', '${escaped_content}', 10, true);" 2>/dev/null
+          fi
+          ok "  Reinforced: ${current_key}"
+        fi
+        current_key="${line#\# }"
+        current_content=""
+      else
+        [[ -n "$line" ]] && current_content="${current_content:+$current_content\n}${line}"
+      fi
+    done < "$REINFORCE_FILE"
+
+    # Save last rule
+    if [[ -n "$current_key" && -n "$current_content" ]]; then
+      key_slug=$(echo "$current_key" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd 'a-z0-9_')
+      escaped_content=$(echo "$current_content" | sed "s/'/''/g")
+      if [[ "$BACKEND" == "postgres" ]]; then
+        psql "$DB_NAME" -c "INSERT INTO startup (key, content, priority, reinforce) VALUES ('${key_slug}', '${escaped_content}', 10, true) ON CONFLICT (key) DO UPDATE SET content='${escaped_content}', reinforce=true;" 2>/dev/null
+      elif [[ "$BACKEND" == "sqlite" ]]; then
+        sqlite3 "$DB_PATH" "INSERT OR REPLACE INTO startup (key, content, priority, reinforce) VALUES ('${key_slug}', '${escaped_content}', 10, true);" 2>/dev/null
+      fi
+      ok "  Reinforced: ${current_key}"
+    fi
+
+    blank
+    ok "Reinforced rules imported"
+  else
+    ok "[DRY RUN] Would import ${RULE_COUNT} reinforced rules"
+  fi
+else
+  info "No RULES_REINFORCE.md found — skipping"
+  detail "To add reinforced rules later, create RULES_REINFORCE.md and re-run setup."
+fi
+
+blank
+
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                                                                            │
+# │   STEP 6 of 7:  REPLACE WORKSPACE .md FILES                               │
+# │                                                                            │
+# │   Now that everything is in the database, we empty the workspace .md       │
+# │   files and write AGENTS.md with the 11-byte database instruction.         │
+# │                                                                            │
+# │   Files are emptied (not deleted) so the framework doesn't complain        │
+# │   about missing files. AGENTS.md gets the instruction that makes           │
+# │   everything work.                                                         │
+# │                                                                            │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+header "Step 6 of 7 — Replacing workspace .md files"
+
+if [[ -d "$WORKSPACE" ]] && [[ $MD_COUNT -gt 0 ]]; then
+
+  info "Emptying .md files in ${BOLD}${WORKSPACE}${NC}"
+  detail "Files are emptied, not deleted — framework won't complain."
+  blank
+
+  if ! $DRY_RUN; then
+    # Empty all .md files except AGENTS.md (we'll write that next)
+    find "$WORKSPACE" -maxdepth 1 -name "*.md" -type f ! -name "AGENTS.md" | while read -r f; do
+      echo -n > "$f"
+      ok "  Emptied: $(basename "$f")"
+    done
+
+    blank
+
+    # Write AGENTS.md with the 11-byte instruction
+    echo "DB: m query" > "${WORKSPACE}/AGENTS.md"
+    ok "Wrote AGENTS.md:  ${BOLD}DB: m query${NC}  (11 bytes)"
+  else
+    ok "[DRY RUN] Would empty ${MD_COUNT} files and write AGENTS.md"
+  fi
+
+else
+  info "No workspace files to replace — skipping"
+fi
+
+blank
+
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                                                                            │
+# │   STEP 7 of 7:  VERIFY IT WORKS                                           │
 # │                                                                            │
 # │   We run a quick test search to make sure the full pipeline works:         │
 # │                                                                            │
@@ -565,7 +728,7 @@ blank
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 5 of 6 — Verifying installation"
+header "Step 7 of 7 — Verifying installation"
 
 if ! $DRY_RUN; then
 
@@ -595,16 +758,7 @@ fi
 blank
 
 
-# ┌────────────────────────────────────────────────────────────────────────────┐
-# │                                                                            │
-# │   STEP 6 of 6:  WRITE THE CONFIG FILE                                     │
-# │                                                                            │
-# │   ShadowDB needs a small JSON config file at ~/.shadowdb.json that tells   │
-# │   it which database to use and where to find the embedding model.          │
-# │                                                                            │
-# └────────────────────────────────────────────────────────────────────────────┘
-
-header "Step 6 of 6 — Writing config"
+header "Writing config"
 
 if [[ -f "$CONFIG_FILE" ]]; then
   ok "Config already exists at ${CONFIG_FILE}"
@@ -659,33 +813,10 @@ echo "  ║                                                                  ║
 echo "  ╚══════════════════════════════════════════════════════════════════╝"
 echo ""
 echo ""
-echo "  Now do two things:"
+echo "  Your workspace is now database-backed."
 echo ""
-echo ""
-echo "  ┌──────────────────────────────────────────────────────────────────┐"
-echo "  │                                                                  │"
-echo "  │   1.  Replace your AGENTS.md with this:                          │"
-echo "  │                                                                  │"
-echo "  │         echo 'DB: m query' > ${WORKSPACE}/AGENTS.md"
-echo "  │                                                                  │"
-echo "  │       That's the entire agent config. 11 bytes.                  │"
-echo "  │                                                                  │"
-echo "  └──────────────────────────────────────────────────────────────────┘"
-echo ""
-echo ""
-echo "  ┌──────────────────────────────────────────────────────────────────┐"
-echo "  │                                                                  │"
-echo "  │   2.  Zero out the old files (optional — keeps things clean):    │"
-echo "  │                                                                  │"
-echo "  │         cd ${WORKSPACE}"
-echo "  │         for f in SOUL.md USER.md MEMORY.md BOOTSTRAP.md; do"
-echo "  │           echo -n > \"\$f\""
-echo "  │         done"
-echo "  │                                                                  │"
-echo "  │       This empties them without deleting — the framework         │"
-echo "  │       won't complain about missing files.                        │"
-echo "  │                                                                  │"
-echo "  └──────────────────────────────────────────────────────────────────┘"
+echo "     AGENTS.md  →  ${BOLD}DB: m query${NC}  (11 bytes)"
+echo "     All other .md files  →  emptied (data is in the database)"
 echo ""
 echo ""
 echo "  Try it out:"
@@ -703,6 +834,9 @@ echo "  │                                                                  │
 echo "  │   🔄  Restore anytime:                                           │"
 echo "  │       cp ~/OpenClaw-Workspace-Backup-*/*.md \\                   │"
 echo "  │          ${WORKSPACE}/                              │"
+echo "  │                                                                  │"
+echo "  │   🔁  Re-run setup anytime:                                      │"
+echo "  │       ./setup.sh                                                 │"
 echo "  │                                                                  │"
 echo "  └──────────────────────────────────────────────────────────────────┘"
 echo ""
