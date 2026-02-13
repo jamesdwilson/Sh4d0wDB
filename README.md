@@ -134,8 +134,8 @@ Every step asks for confirmation. Nothing happens without your say-so.
 > ```
 
 > [!NOTE]
-> **Options:** `./quickstart.sh --backend sqlite` for SQLite (no server needed), `--dry-run` to preview without changes, `--yes` to skip prompts.
-> See [full setup instructions](#setup) for all backends.
+> **Options:** `./quickstart.sh --backend sqlite` (no server needed), `--backend postgres` (best search), `--backend mysql`, `--dry-run` to preview without changes, `--yes` to skip prompts.
+> Default: auto-detects what's installed. See [full setup instructions](#setup) for all backends.
 
 ---
 
@@ -1460,7 +1460,46 @@ Intercept `exec` calls at the framework level, rewrite syntax.
 <details>
 <summary><b>Setup</b></summary>
 
-### PostgreSQL Backend (Recommended)
+### Quick Setup (Any Backend)
+
+The easiest path is the [one-liner quickstart](#-quick-start) — it detects what you have installed and configures the right backend automatically. The manual steps below are for reference.
+
+### SQLite (Simplest — No Server)
+
+Zero infrastructure. Ships with Python. Great starting point.
+
+```bash
+# Prerequisites
+brew install ollama          # optional — enables semantic search
+ollama pull nomic-embed-text # optional
+
+# Create database + identity
+python3 -c "
+import sqlite3, os, pathlib
+db = pathlib.Path('~/.shadowdb/shadow.db').expanduser()
+db.parent.mkdir(parents=True, exist_ok=True)
+conn = sqlite3.connect(str(db))
+conn.executescript(open('schema-sqlite.sql').read())
+conn.execute(\"INSERT INTO startup VALUES ('soul', 'Your agent personality here.', 0)\")
+conn.execute(\"INSERT INTO startup VALUES ('user', 'Owner name and context here.', 1)\")
+conn.commit()
+"
+
+# Config
+cat > ~/.shadowdb.json << 'EOF'
+{
+  "backend": "sqlite",
+  "sqlite": { "db_path": "~/.shadowdb/shadow.db" }
+}
+EOF
+
+# Test
+m "test query"
+```
+
+### PostgreSQL (Full Power — Best Search)
+
+Hybrid BM25 + vector search with RRF fusion. Recommended if you already run PostgreSQL or want the best search quality.
 
 ```bash
 # Prerequisites
@@ -1495,20 +1534,35 @@ EOF
 m "test query"
 ```
 
-### SQLite Backend
+### MySQL / MariaDB
 
 ```bash
-# Create database
-python3 -c "
-import sqlite3
-conn = sqlite3.connect('~/.shadowdb/shadow.db')
-conn.executescript(open('schema-sqlite.sql').read())
-conn.execute(\"INSERT INTO startup VALUES ('soul', 'Your personality here.')\")
-conn.commit()
-"
+# Prerequisites
+brew install mysql ollama    # or mariadb
+brew services start mysql
+ollama pull nomic-embed-text # optional
+
+# Database + identity
+mysql -e "CREATE DATABASE shadow;"
+mysql shadow < schema-mysql.sql
+mysql shadow -e "INSERT INTO startup (skey, content) VALUES
+  ('soul', 'Your agent personality here.'),
+  ('user', 'Owner name and context here.');"
 
 # Config
-echo '{"backend": "sqlite", "sqlite": {"db_path": "~/.shadowdb/shadow.db"}}' > ~/.shadowdb.json
+cat > ~/.shadowdb.json << 'EOF'
+{
+  "backend": "mysql",
+  "mysql": {
+    "database": "shadow",
+    "host": "localhost",
+    "user": "root"
+  }
+}
+EOF
+
+# Test
+m "test query"
 ```
 
 
@@ -1527,7 +1581,9 @@ m "Baskerville case" -c cases        # filter by category
 m "Watson" -n 10                     # more results (default: 5)
 m "Watson" --full                    # full content (not summarized)
 m "Watson" --json                    # JSON output
-m "Watson" --backend sqlite          # force a specific backend
+m "Watson" --backend sqlite          # force SQLite
+m "Watson" --backend postgres        # force PostgreSQL
+m "Watson" --backend mysql           # force MySQL
 
 # Operations (shortcuts for common tasks)
 m save "Title" "Content"             # save a new record
@@ -1609,6 +1665,7 @@ The startup identity text appears on the first `m` call in a session. On subsequ
 | `shadowdb.example.json` | Example config file |
 | `schema.sql` | PostgreSQL schema (TODO) |
 | `schema-sqlite.sql` | SQLite schema (TODO) |
+| `schema-mysql.sql` | MySQL/MariaDB schema (TODO) |
 
 
 </details>
@@ -1624,7 +1681,7 @@ The startup identity text appears on the first `m` call in a session. On subsequ
 - [ ] **Native framework PR**: `memory.backend: "postgres"` option for OpenClaw — eliminates AGENTS.md instruction entirely.
 - [ ] **Ingest pipeline**: Watch workspace for new files, auto-embed and index. Hook into conversation memory flush.
 - [ ] **Multi-agent support**: Per-agent startup rows. `m --agent=research "query"` returns different identity.
-- [ ] **MySQL/MariaDB backend**: For users already running MySQL.
+- [ ] **MySQL/MariaDB backend**: Complete and test (adapter started in `backends/mysql.py`).
 - [ ] **DuckDB backend**: Analytical queries over memory (trends, stats, aggregations).
 - [ ] **Remote database support**: Connection strings, pooling, TLS for hosted databases.
 - [ ] **Embedding cache**: Avoid redundant Ollama calls for repeated/similar queries.
@@ -1656,18 +1713,18 @@ That's it — you're back to where you started. No harm done.
 Check two things:
 
 ```bash
-# Is Ollama running?
+# Is Ollama running? (needed for semantic search)
 ollama list
 
-# Is the database created and populated?
-psql shadow -c "SELECT count(*) FROM memories"
+# Is the database populated?
+m state    # should show record counts
 ```
 
-If Ollama isn't running: `ollama serve` in a separate terminal. If the count is 0: re-run `./import-md ~/.openclaw/workspace/`.
+If Ollama isn't running: `ollama serve` in a separate terminal. If `m state` shows zero records: re-run `./import-md ~/.openclaw/workspace/`.
 
 **2. "Embeddings are slow"**
 
-The first query in a session loads the embedding model into memory (~5 seconds). Every query after that is fast (~55ms FTS, ~230ms hybrid). This is completely normal — Ollama keeps the model warm after first use.
+The first query in a session loads the embedding model into memory (~5 seconds). Every query after that is fast (~55ms FTS, ~230ms hybrid). This is completely normal — Ollama keeps the model warm after first use. If you're on SQLite without `sqlite-vec`, or MySQL without an external vector store, `m` uses FTS-only search and skips embeddings entirely — fast by default.
 
 **3. "Sub-agents don't use `m`"**
 
@@ -1709,7 +1766,7 @@ Done — you're back to stock. ShadowDB doesn't modify your original files; it o
 
 ### Still stuck?
 
-[Open an issue](https://github.com/openclaw/shadowdb/issues) — we're friendly and we respond fast. Include your backend (postgres/sqlite), OS, and the query that failed.
+[Open an issue](https://github.com/openclaw/shadowdb/issues) — we're friendly and we respond fast. Include your backend (`postgres`/`sqlite`/`mysql`), OS, and the query that failed.
 
 ---
 
@@ -1718,7 +1775,7 @@ Done — you're back to stock. ShadowDB doesn't modify your original files; it o
 Contributions welcome. The project is in beta — rough edges exist.
 
 **Good first issues:**
-- Complete `schema.sql` and `schema-sqlite.sql` with indexes and sample Sherlock Holmes data
+- Complete `schema.sql`, `schema-sqlite.sql`, and `schema-mysql.sql` with indexes and sample Sherlock Holmes data
 - Add `--budget` flag to cap output by character count
 - Cross-model validation: test `DB: m query` on GPT-4, Gemini, Llama 3, Mistral, DeepSeek
 - MySQL/MariaDB backend implementation
