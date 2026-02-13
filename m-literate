@@ -104,6 +104,11 @@ import subprocess
 
 CONFIG_PATH = os.path.expanduser("~/.shadowdb.json")
 
+# Default embedding service — Ollama running locally with nomic-embed-text.
+# Override in ~/.shadowdb.json per-backend if you use a different provider.
+DEFAULT_EMBEDDING_URL = "http://localhost:11434/api/embeddings"
+DEFAULT_EMBEDDING_MODEL = "nomic-embed-text"
+
 
 def load_config():
     """
@@ -194,8 +199,8 @@ def resolve_backend(override=None):
         return PostgresBackend(
             psql_path=pg.get("psql_path", "/opt/homebrew/opt/postgresql@17/bin/psql"),
             database=pg.get("database", "shadow"),
-            embedding_url=pg.get("embedding_url", "http://localhost:11434/api/embeddings"),
-            embedding_model=pg.get("embedding_model", "nomic-embed-text"),
+            embedding_url=pg.get("embedding_url", DEFAULT_EMBEDDING_URL),
+            embedding_model=pg.get("embedding_model", DEFAULT_EMBEDDING_MODEL),
         )
 
     elif name == "sqlite":
@@ -203,8 +208,8 @@ def resolve_backend(override=None):
         sq = config.get("sqlite", {})
         return SQLiteBackend(
             db_path=sq.get("db_path", "shadow.db"),
-            embedding_url=sq.get("embedding_url", "http://localhost:11434/api/embeddings"),
-            embedding_model=sq.get("embedding_model", "nomic-embed-text"),
+            embedding_url=sq.get("embedding_url", DEFAULT_EMBEDDING_URL),
+            embedding_model=sq.get("embedding_model", DEFAULT_EMBEDDING_MODEL),
         )
 
     elif name in ("mysql", "mariadb"):
@@ -216,8 +221,8 @@ def resolve_backend(override=None):
             user=my.get("user", "root"),
             password=my.get("password", ""),
             database=my.get("database", "shadow"),
-            embedding_url=my.get("embedding_url", "http://localhost:11434/api/embeddings"),
-            embedding_model=my.get("embedding_model", "nomic-embed-text"),
+            embedding_url=my.get("embedding_url", DEFAULT_EMBEDDING_URL),
+            embedding_model=my.get("embedding_model", DEFAULT_EMBEDDING_MODEL),
         )
 
     else:

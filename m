@@ -3,6 +3,8 @@
 import argparse,json,os,sys,subprocess
 
 CFG=os.path.expanduser("~/.shadowdb.json")
+DEFAULT_EMBEDDING_URL="http://localhost:11434/api/embeddings"
+DEFAULT_EMBEDDING_MODEL="nomic-embed-text"
 
 def lcfg():
     if os.path.exists(CFG):
@@ -24,13 +26,13 @@ def resolve(override=None):
     c=lcfg();b=override or get_backend_name()
     if b in("postgres","pg"):
         from backends.postgres import PostgresBackend;pc=c.get("postgres",{})
-        return PostgresBackend(psql_path=pc.get("psql_path","/opt/homebrew/opt/postgresql@17/bin/psql"),database=pc.get("database","shadow"),embedding_url=pc.get("embedding_url","http://localhost:11434/api/embeddings"),embedding_model=pc.get("embedding_model","nomic-embed-text"))
+        return PostgresBackend(psql_path=pc.get("psql_path","/opt/homebrew/opt/postgresql@17/bin/psql"),database=pc.get("database","shadow"),embedding_url=pc.get("embedding_url",DEFAULT_EMBEDDING_URL),embedding_model=pc.get("embedding_model",DEFAULT_EMBEDDING_MODEL))
     elif b=="sqlite":
         from backends.sqlite import SQLiteBackend;sc=c.get("sqlite",{})
-        return SQLiteBackend(db_path=sc.get("db_path","shadow.db"),embedding_url=sc.get("embedding_url","http://localhost:11434/api/embeddings"),embedding_model=sc.get("embedding_model","nomic-embed-text"))
+        return SQLiteBackend(db_path=sc.get("db_path","shadow.db"),embedding_url=sc.get("embedding_url",DEFAULT_EMBEDDING_URL),embedding_model=sc.get("embedding_model",DEFAULT_EMBEDDING_MODEL))
     elif b in("mysql","mariadb"):
         from backends.mysql import MySQLBackend;mc=c.get("mysql",{})
-        return MySQLBackend(host=mc.get("host","localhost"),port=mc.get("port",3306),user=mc.get("user","root"),password=mc.get("password",""),database=mc.get("database","shadow"),embedding_url=mc.get("embedding_url","http://localhost:11434/api/embeddings"),embedding_model=mc.get("embedding_model","nomic-embed-text"))
+        return MySQLBackend(host=mc.get("host","localhost"),port=mc.get("port",3306),user=mc.get("user","root"),password=mc.get("password",""),database=mc.get("database","shadow"),embedding_url=mc.get("embedding_url",DEFAULT_EMBEDDING_URL),embedding_model=mc.get("embedding_model",DEFAULT_EMBEDDING_MODEL))
     else:print(f"Unknown backend: {b}",file=sys.stderr);sys.exit(1)
 
 # ── Database helpers (backend-aware) ──────────────────────────
