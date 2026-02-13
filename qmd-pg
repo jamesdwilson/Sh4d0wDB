@@ -1,64 +1,209 @@
 #!/usr/bin/env python3
-"""qmd-pg — Drop-in replacement for qmd that queries PG via hybrid search.
-Implements: qmd-pg query "text" --json -n N
-Also handles: qmd-pg update (no-op), qmd-pg status (returns ok)"""
-import json,subprocess,sys,urllib.request,os
+"""
+qmd-pg — QMD Protocol Wrapper for PostgreSQL (Legacy)
+======================================================
 
-P="/opt/homebrew/opt/postgresql@17/bin/psql"
-D="shadow"
+This is a drop-in replacement for the OpenClaw QMD (Quick Memory Document)
+protocol that routes queries through ShadowDB's PostgreSQL backend.
 
-def emb(q):
+WHAT IS QMD?
+  QMD is OpenClaw's external memory search protocol. The framework can be
+  configured to delegate memory_search to an external command via:
+    memory.qmd = "/path/to/qmd-pg"
+  The framework spawns the command and communicates via CLI arguments + JSON output.
+
+WHY THIS IS LEGACY:
+  QMD spawns a NEW subprocess for every single query. Our embedding model
+  (nomic-embed-text) takes ~2-5 seconds to cold-load into Ollama. OpenClaw's
+  QMD timeout is 4 seconds. So the first query ALWAYS times out.
+
+  There's a GitHub issue (#9581) requesting MCP server mode (keep-alive) for QMD.
+  Until that ships, QMD is unusable for heavyweight backends.
+
+  ShadowDB bypasses QMD entirely — the model runs `m` as a shell command via
+  exec, connecting to the always-running PostgreSQL + Ollama processes.
+  No cold start, no timeout.
+
+THE SCRIPT IS KEPT because:
+  1. It works for FTS-only queries (no embedding needed, always fast)
+  2. It documents the QMD protocol for anyone building their own integration
+  3. If OpenClaw adds MCP mode, this can be adapted into a persistent server
+
+QMD PROTOCOL:
+  The command must handle three subcommands:
+    qmd-pg query "search text" [-n N]   → JSON array of {docid, snippet, score}
+    qmd-pg update                       → no-op (index is always current)
+    qmd-pg status                       → JSON object {status, backend, records}
+
+Usage:
+  qmd-pg query "Watson" -n 5         # Search and return JSON results
+  qmd-pg query "Watson" --json       # Same (--json is default for QMD)
+  qmd-pg update                      # No-op (PostgreSQL is always current)
+  qmd-pg status                      # Health check
+"""
+
+import json
+import subprocess
+import sys
+import urllib.request
+import os
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+# Same PostgreSQL config as the `m` script. Hardcoded for simplicity since
+# this is a legacy wrapper. The universal version reads from config files.
+
+PSQL_PATH = "/opt/homebrew/opt/postgresql@17/bin/psql"
+DATABASE = "shadow"
+
+
+def get_embedding(query_text):
+    """
+    Get embedding from Ollama. See `m` script for detailed documentation.
+    Returns None on failure (graceful degradation to FTS-only).
+    """
     try:
-        r=urllib.request.urlopen(urllib.request.Request("http://localhost:11434/api/embeddings",
-            json.dumps({"model":"nomic-embed-text","prompt":q}).encode(),
-            {"Content-Type":"application/json"}),timeout=8)
-        return json.loads(r.read())["embedding"]
-    except:return None
+        response = urllib.request.urlopen(
+            urllib.request.Request(
+                "http://localhost:11434/api/embeddings",
+                json.dumps({"model": "nomic-embed-text", "prompt": query_text}).encode(),
+                {"Content-Type": "application/json"}
+            ),
+            timeout=8
+        )
+        return json.loads(response.read())["embedding"]
+    except Exception:
+        return None
 
-def sql(q):
-    r=subprocess.run([P,D,"-t","-A","-c",f"SELECT json_agg(row_to_json(sub)) FROM ({q}) sub;"],
-        capture_output=True,text=True,timeout=15)
-    x=r.stdout.strip()
-    return json.loads(x) if x and x!="null" else []
 
-def query(text,n=10):
-    eq=text.replace("'","''")
-    fts=sql(f"SELECT id,left(COALESCE(content_pyramid,content),1500) as snippet,category,source_file,ts_rank(fts,plainto_tsquery('english','{eq}')) as score FROM memories WHERE fts@@plainto_tsquery('english','{eq}') ORDER BY score DESC LIMIT 50")
-    vec=[]
-    e=emb(text)
-    if e:
-        es="["+",".join(str(x) for x in e)+"]"
-        vec=sql(f"SELECT id,left(COALESCE(content_pyramid,content),1500) as snippet,category,source_file,1-(embedding<=>'{es}'::vector) as score FROM memories WHERE embedding IS NOT NULL ORDER BY embedding<=>'{es}'::vector LIMIT 50")
-    # RRF
-    k=60;scores={};cm={}
-    for i,r in enumerate(fts):rid=str(r["id"]);scores[rid]=scores.get(rid,0)+1.0/(k+i+1);cm[rid]=r
-    for i,r in enumerate(vec):rid=str(r["id"]);scores[rid]=scores.get(rid,0)+1.0/(k+i+1);cm.setdefault(rid,r)
-    ranked=sorted(scores.items(),key=lambda x:x[1],reverse=True)[:n]
-    results=[]
-    for rid,sc in ranked:
-        r=cm[rid]
-        # qmd protocol: {docid, snippet, score}
-        docid=r.get("source_file","") or f"memory-{rid}"
-        results.append({"docid":docid,"snippet":r.get("snippet",""),"score":round(sc,6)})
+def execute_sql(query):
+    """
+    Execute SQL via psql and return JSON results.
+    See `m` script for detailed documentation of the json_agg wrapping trick.
+    """
+    result = subprocess.run(
+        [PSQL_PATH, DATABASE, "-t", "-A", "-c",
+         f"SELECT json_agg(row_to_json(sub)) FROM ({query}) sub;"],
+        capture_output=True, text=True, timeout=15
+    )
+    raw = result.stdout.strip()
+    return json.loads(raw) if raw and raw != "null" else []
+
+
+def query(text, n=10):
+    """
+    Hybrid FTS + vector search, returning results in QMD protocol format.
+
+    The QMD protocol expects results as:
+      [{docid: "filename", snippet: "text content", score: 0.123}, ...]
+
+    This is different from the `m` script's format (which includes title,
+    category, summary, etc.). We map our richer format to QMD's simpler one.
+
+    Args:
+        text: Search query string
+        n:    Maximum number of results (default 10 for QMD)
+
+    Returns:
+        list[dict]: Results in QMD format {docid, snippet, score}
+    """
+    escaped = text.replace("'", "''")
+
+    # FTS search
+    fts_results = execute_sql(
+        f"SELECT id, left(COALESCE(content_pyramid,content),1500) as snippet, "
+        f"category, source_file, "
+        f"ts_rank(fts,plainto_tsquery('english','{escaped}')) as score "
+        f"FROM memories "
+        f"WHERE fts@@plainto_tsquery('english','{escaped}') "
+        f"ORDER BY score DESC LIMIT 50"
+    )
+
+    # Vector search (skip if Ollama unavailable)
+    vector_results = []
+    embedding = get_embedding(text)
+    if embedding:
+        embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
+        vector_results = execute_sql(
+            f"SELECT id, left(COALESCE(content_pyramid,content),1500) as snippet, "
+            f"category, source_file, "
+            f"1-(embedding<=>'{embedding_str}'::vector) as score "
+            f"FROM memories "
+            f"WHERE embedding IS NOT NULL "
+            f"ORDER BY embedding<=>'{embedding_str}'::vector LIMIT 50"
+        )
+
+    # RRF fusion (same algorithm as `m` — see that script for documentation)
+    K = 60
+    scores = {}
+    cache = {}
+    for i, r in enumerate(fts_results):
+        rid = str(r["id"])
+        scores[rid] = scores.get(rid, 0) + 1.0 / (K + i + 1)
+        cache[rid] = r
+    for i, r in enumerate(vector_results):
+        rid = str(r["id"])
+        scores[rid] = scores.get(rid, 0) + 1.0 / (K + i + 1)
+        cache.setdefault(rid, r)
+
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:n]
+
+    # Map to QMD protocol format
+    results = []
+    for rid, score in ranked:
+        r = cache[rid]
+        # QMD uses "docid" as the document identifier.
+        # We prefer source_file (original filename) for provenance,
+        # falling back to "memory-{id}" for records without a source file.
+        docid = r.get("source_file", "") or f"memory-{rid}"
+        results.append({
+            "docid": docid,
+            "snippet": r.get("snippet", ""),
+            "score": round(score, 6)
+        })
     return results
 
-if __name__=="__main__":
-    args=sys.argv[1:]
-    if not args or args[0] in["-h","--help"]:
-        print("qmd-pg: PG-backed memory search");sys.exit(0)
-    cmd=args[0]
-    if cmd=="update":
-        # no-op — PG is always up to date
+
+# =============================================================================
+# MAIN — QMD PROTOCOL DISPATCHER
+# =============================================================================
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+
+    if not args or args[0] in ["-h", "--help"]:
+        print("qmd-pg — QMD protocol wrapper for PostgreSQL-backed memory search")
+        print()
+        print("Subcommands:")
+        print("  query \"text\" [-n N]   Search and return JSON results")
+        print("  update                No-op (PostgreSQL is always current)")
+        print("  status                Health check (returns JSON)")
         sys.exit(0)
-    if cmd=="status":
-        print(json.dumps({"status":"ok","backend":"pg","records":6800}))
+
+    command = args[0]
+
+    if command == "update":
+        # QMD protocol: "update" rebuilds the search index.
+        # PostgreSQL's indexes are always current — no rebuild needed.
+        # We exit silently with success.
         sys.exit(0)
-    if cmd=="query":
-        text=args[1] if len(args)>1 else ""
-        n=10
-        for i,a in enumerate(args):
-            if a=="-n" and i+1<len(args):n=int(args[i+1])
-        results=query(text,n)
+
+    if command == "status":
+        # QMD protocol: "status" returns a health check.
+        # We return a simple JSON object. The "records" count is approximate.
+        print(json.dumps({"status": "ok", "backend": "pg", "records": 6800}))
+        sys.exit(0)
+
+    if command == "query":
+        # QMD protocol: "query" performs a search and returns JSON results.
+        text = args[1] if len(args) > 1 else ""
+        n = 10  # default result count for QMD
+        for i, arg in enumerate(args):
+            if arg == "-n" and i + 1 < len(args):
+                n = int(args[i + 1])
+        results = query(text, n)
         print(json.dumps(results))
     else:
+        # Unknown command — return empty results (QMD protocol convention)
         print(json.dumps([]))

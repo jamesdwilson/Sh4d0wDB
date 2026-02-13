@@ -3,7 +3,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="assets/banner-light.svg">
-  <img alt="Sh4d0wDB" src="assets/banner-dark.svg" width="900">
+  <img alt="Sh4d0wDB" src="assets/banner-dark.svg" width="100%">
 </picture>
 
 <br/>
