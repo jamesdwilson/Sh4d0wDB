@@ -181,6 +181,7 @@ echo 'DB: m query' > AGENTS.md
 - [Setup](#setup)
 - [Usage](#usage)
 - [Future Work](#future-work)
+- [Exit Gates: Structural Enforcement for Agents](#-exit-gates-structural-enforcement-for-agents)
 - [Contributing](#contributing)
 - [Community](#community)
 - [License](#license)
@@ -1750,6 +1751,81 @@ Contributions welcome. The project is in beta — rough edges exist.
 - **Built with ShadowDB?** Open a PR to add your project to the README.
 
 If this saves you tokens, money, or headaches — ⭐ the repo. It helps others find it.
+
+---
+
+## 🚧 Exit Gates: Structural Enforcement for Agents
+
+> **Gates > Rules.** The same way types > tests for code.
+> Tests can be skipped. Types can't be forgotten. Gates fire every time. Rules get buried in context.
+
+AI agents have a fundamental problem: behavioral rules don't survive context pressure. You can tell an agent "always do X before responding" in a 2,000-word ops playbook, but under cognitive load — context switching, multi-step reasoning, large tool outputs — the agent forgets. Not because it doesn't know the rule. Because behavioral rules require **runtime discipline**, and discipline fails.
+
+Exit Gates are structural enforcement points that **cannot be bypassed by forgetting**. They're built into the execution flow, not the instruction set.
+
+### The Pattern
+
+```
+Agent receives input
+    ↓
+Agent processes (tools, reasoning, queries)
+    ↓
+Agent drafts response
+    ↓
+🚧 EXIT GATE: Does this response pass structural checks?
+    YES → send
+    NO  → fix → re-check → send
+```
+
+### Gate Types in Sh4d0wDB
+
+| Gate | What It Enforces | How It Works |
+|------|-----------------|--------------|
+| **Startup Gate** | Agent identity + operational rules load every turn | `startup` table content prepended to every `m` query result. Agent can't "forget" its instructions — they're in the data pipeline, not the instruction set. |
+| **Staleness Gate** | Expired/superseded records never surface | `WHERE superseded_by IS NULL AND (valid_to IS NULL OR valid_to > now())` baked into the query layer. Agent can't accidentally retrieve stale data. |
+| **Insert Gate** | Every record has category + tags + record_type | Validation at write time. No "I'll tag it later." Untagged data is unsearchable data is dead data. |
+| **Compound Gate** | Cross-references verified before compound summaries | Before returning aggregated results, verify adjacent records exist. Partial data when complete data exists in the DB = system failure. |
+
+### Why This Matters for Agent Databases
+
+Traditional agent memory is **advisory** — the framework loads context files and *hopes* the model reads them. Sh4d0wDB's startup table is **structural** — it's injected into the data the model processes, not the instructions it may or may not follow.
+
+```
+Advisory (fragile):
+  System prompt says "always check for stale records"
+  → Agent forgets under context pressure
+  → Stale data surfaces
+  → Wrong decisions
+
+Structural (robust):
+  Query layer filters stale records automatically
+  → Agent CAN'T retrieve stale data
+  → Correct by construction
+```
+
+This is the same insight that drives type systems over unit tests, CI gates over code review comments, and database constraints over application-layer validation. **Push enforcement to the lowest layer that can enforce it.** For agent databases, that layer is the query pipeline.
+
+### Implementing Your Own Gates
+
+The simplest exit gate is a SQL `WHERE` clause. If your agent shouldn't see superseded records, don't make the agent responsible for filtering — make the database responsible:
+
+```sql
+-- Bad: agent must remember to filter
+SELECT * FROM memories WHERE content @@ 'search query';
+
+-- Good: gate is structural
+CREATE VIEW active_memories AS
+SELECT * FROM memories
+WHERE superseded_by IS NULL
+  AND (valid_to IS NULL OR valid_to > now());
+
+-- Agent queries the view — can't bypass the gate
+SELECT * FROM active_memories WHERE content @@ 'search query';
+```
+
+The startup gate is even simpler — your query script prepends `startup` table content to every result. The agent processes its identity and rules as **data**, not instructions. Data gets read. Instructions get skimmed.
+
+> **Design principle:** Every rule you want an agent to follow reliably should be a gate, not a guideline. If it can be enforced structurally, it must be. Behavioral rules are the fallback for things that can't be gated — not the default.
 
 ---
 
