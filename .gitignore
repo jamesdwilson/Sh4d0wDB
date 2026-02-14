@@ -1,8 +1,17 @@
+# Editor
 .idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Node
+node_modules/
+*.log
+
+# Python
 __pycache__/
 *.pyc
+
+# Temp
 /tmp/
-.idea/
-__pycache__/
-.idea/
-__pycache__/

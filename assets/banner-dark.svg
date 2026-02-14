@@ -48,8 +48,8 @@
   <g transform="translate(0, 210)">
     <rect x="100" y="0" width="1000" height="50" rx="10" fill="#21262d" />
     
-    <text x="250" y="33" font-family="'SF Mono', monospace" font-size="20" fill="#58a6ff" text-anchor="middle" font-weight="600">11 bytes</text>
-    <text x="250" y="16" font-family="sans-serif" font-size="11" fill="#484f58" text-anchor="middle">CONFIG</text>
+    <text x="250" y="33" font-family="'SF Mono', monospace" font-size="20" fill="#58a6ff" text-anchor="middle" font-weight="600">OpenClaw Plugin</text>
+    <text x="250" y="16" font-family="sans-serif" font-size="11" fill="#484f58" text-anchor="middle">MEMORY</text>
     
     <line x1="420" y1="8" x2="420" y2="42" stroke="#30363d" stroke-width="1"/>
     
@@ -58,12 +58,12 @@
     
     <line x1="690" y1="8" x2="690" y2="42" stroke="#30363d" stroke-width="1"/>
     
-    <text x="810" y="33" font-family="'SF Mono', monospace" font-size="20" fill="#f778ba" text-anchor="middle" font-weight="600">99.88%</text>
-    <text x="810" y="16" font-family="sans-serif" font-size="11" fill="#484f58" text-anchor="middle">REDUCTION</text>
+    <text x="810" y="33" font-family="'SF Mono', monospace" font-size="20" fill="#f778ba" text-anchor="middle" font-weight="600">Know More, Faster</text>
+    <text x="810" y="16" font-family="sans-serif" font-size="11" fill="#484f58" text-anchor="middle">LESS PROMPT WASTE</text>
     
     <line x1="940" y1="8" x2="940" y2="42" stroke="#30363d" stroke-width="1"/>
     
-    <text x="1020" y="33" font-family="'SF Mono', monospace" font-size="20" fill="#3fb950" text-anchor="middle" font-weight="600">3</text>
-    <text x="1020" y="16" font-family="sans-serif" font-size="11" fill="#484f58" text-anchor="middle">BACKENDS</text>
+    <text x="1020" y="33" font-family="'SF Mono', monospace" font-size="16" fill="#3fb950" text-anchor="middle" font-weight="600">INFINITE STORAGE</text>
+    <text x="1020" y="16" font-family="sans-serif" font-size="11" fill="#484f58" text-anchor="middle">CAPACITY</text>
   </g>
 </svg>

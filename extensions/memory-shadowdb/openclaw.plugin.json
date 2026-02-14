@@ -1,0 +1,207 @@
+{
+  "id": "memory-shadowdb",
+  "kind": "memory",
+  "uiHints": {
+    "connectionString": {
+      "label": "PostgreSQL Connection String",
+      "sensitive": true,
+      "placeholder": "postgresql://user:pass@host:5432/shadow",
+      "help": "PG connection URL. Falls back to ~/.shadowdb.json if omitted."
+    },
+    "embedding.provider": {
+      "label": "Embedding Provider",
+      "placeholder": "ollama",
+      "help": "ollama | openai | openai-compatible | voyage | gemini | command"
+    },
+    "embedding.model": {
+      "label": "Embedding Model",
+      "placeholder": "nomic-embed-text",
+      "help": "Model name for selected provider"
+    },
+    "embedding.dimensions": {
+      "label": "Embedding Dimensions",
+      "help": "Must match existing vector column dimensions (default: 768)"
+    },
+    "embedding.apiKey": {
+      "label": "Embedding API Key",
+      "sensitive": true,
+      "placeholder": "key...",
+      "help": "Used for openai/openai-compatible/voyage/gemini providers"
+    },
+    "embedding.baseUrl": {
+      "label": "Provider Base URL",
+      "placeholder": "https://api.openai.com",
+      "help": "Optional base URL override (OpenAI-compatible, Voyage, Gemini)"
+    },
+    "embedding.headers": {
+      "label": "Extra Headers",
+      "help": "Optional extra headers sent with embedding requests"
+    },
+    "embedding.ollamaUrl": {
+      "label": "Ollama URL",
+      "placeholder": "http://localhost:11434",
+      "help": "Ollama API endpoint (default: http://localhost:11434)"
+    },
+    "embedding.voyageInputType": {
+      "label": "Voyage Input Type",
+      "help": "query or document"
+    },
+    "embedding.geminiTaskType": {
+      "label": "Gemini Task Type",
+      "help": "Example: RETRIEVAL_QUERY"
+    },
+    "embedding.command": {
+      "label": "Embedding Command",
+      "help": "For provider=command. Command receives JSON on stdin and must return JSON embedding"
+    },
+    "embedding.commandArgs": {
+      "label": "Embedding Command Args",
+      "help": "Optional argv list for embedding.command"
+    },
+    "embedding.commandTimeoutMs": {
+      "label": "Embedding Command Timeout (ms)",
+      "help": "Timeout for provider=command (default: 15000)"
+    },
+    "table": {
+      "label": "Table Name",
+      "placeholder": "memories",
+      "help": "PG table with content + embedding columns"
+    },
+    "startup.enabled": {
+      "label": "Startup Hydration Enabled",
+      "help": "Inject startup identity/rules context from DB before runs (default: true)"
+    },
+    "startup.mode": {
+      "label": "Startup Hydration Mode",
+      "help": "always | first-run | digest (default: always)"
+    },
+    "startup.maxChars": {
+      "label": "Startup Max Chars",
+      "help": "Max characters injected from startup records per hydration (default: 4000)"
+    },
+    "startup.cacheTtlMs": {
+      "label": "Startup Digest Cache TTL (ms)",
+      "help": "For mode=digest, reinject after TTL even if digest unchanged (default: 600000)"
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "connectionString": {
+        "type": "string"
+      },
+      "configPath": {
+        "type": "string",
+        "description": "Path to ~/.shadowdb.json (default: ~/.shadowdb.json)"
+      },
+      "embedding": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "ollama",
+              "openai",
+              "openai-compatible",
+              "voyage",
+              "gemini",
+              "command"
+            ],
+            "description": "Embedding provider"
+          },
+          "apiKey": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "dimensions": {
+            "type": "number"
+          },
+          "ollamaUrl": {
+            "type": "string",
+            "description": "Ollama API endpoint (default: http://localhost:11434)"
+          },
+          "baseUrl": {
+            "type": "string",
+            "description": "Provider base URL override"
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "voyageInputType": {
+            "type": "string",
+            "enum": [
+              "query",
+              "document"
+            ]
+          },
+          "geminiTaskType": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "commandArgs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "commandTimeoutMs": {
+            "type": "number"
+          }
+        }
+      },
+      "table": {
+        "type": "string"
+      },
+      "search": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "maxResults": {
+            "type": "number"
+          },
+          "minScore": {
+            "type": "number"
+          },
+          "vectorWeight": {
+            "type": "number"
+          },
+          "textWeight": {
+            "type": "number"
+          }
+        }
+      },
+      "startup": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "always",
+              "first-run",
+              "digest"
+            ]
+          },
+          "maxChars": {
+            "type": "number"
+          },
+          "cacheTtlMs": {
+            "type": "number"
+          }
+        }
+      }
+    }
+  }
+}

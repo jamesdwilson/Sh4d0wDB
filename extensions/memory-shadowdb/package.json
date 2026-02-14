@@ -1,0 +1,22 @@
+{
+  "name": "@shadowdb/memory-shadowdb",
+  "version": "0.1.0",
+  "description": "OpenClaw memory plugin backed by PostgreSQL + pgvector. Drop-in replacement for memory-core.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test ./index.test.mjs"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "0.34.48",
+    "openai": "^4.77.0",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
