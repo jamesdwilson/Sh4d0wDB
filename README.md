@@ -30,7 +30,8 @@
 - `memory_get`
 - `memory_write` (config-gated)
 - `memory_update` (config-gated)
-- `memory_delete` (config-gated)
+- `memory_delete` (config-gated, soft-delete only)
+- `memory_undelete` (config-gated)
 
 ---
 
@@ -89,7 +90,7 @@ curl -fsSL https://raw.githubusercontent.com/openclaw/shadowdb/main/setup.sh | b
 flowchart LR
     U[User Prompt] --> A[OpenClaw Agent]
     A --> TR[memory_search / memory_get]
-    A --> TW[memory_write / memory_update / memory_delete]
+    A --> TW[memory_write / memory_update / memory_delete / memory_undelete]
     TR --> P[memory-shadowdb plugin]
     TW --> P
     P --> D[(ShadowDB / PostgreSQL)]
@@ -158,8 +159,10 @@ erDiagram
       tsvector fts
       bool contradicted
       bigint superseded_by FK
+      timestamptz deleted_at
       timestamptz created_at
       timestamptz updated_at
+      timestamptz last_accessed
     }
 ```
 
@@ -289,7 +292,20 @@ Rows are fetched `ORDER BY priority ASC` and concatenated until the budget is hi
 
 ## Overview
 
-ShadowDB supports write operations through three tools: `memory_write`, `memory_update`, and `memory_delete`. All writes are **config-gated** — disabled by default, requiring explicit opt-in via plugin config. This is a deliberate safety choice: reads are always safe, writes require intent.
+ShadowDB supports write operations through four tools: `memory_write`, `memory_update`, `memory_delete`, and `memory_undelete`. All writes are **config-gated** — disabled by default, requiring explicit opt-in via plugin config. This is a deliberate safety choice: reads are always safe, writes require intent.
+
+### Design Principle: Tools Never Destroy Data
+
+**`memory_delete` is always a soft-delete. There is no hard-delete parameter.**
+
+The agent can mark records as deleted. Only time can permanently remove them. This is an intentional architectural decision:
+
+- An agent misjudging relevance is recoverable. A permanent delete is not.
+- Soft-deleted records remain in the database with a `deleted_at` timestamp.
+- All search, get, and startup operations skip soft-deleted records automatically.
+- Permanent removal happens only through the **retention policy** — a config-driven background process that purges records that have been soft-deleted for longer than the configured retention window.
+
+This means: every `memory_delete` call is reversible within the retention window. If the agent (or a bad prompt) deletes something it shouldn't have, you can recover it. After the retention window expires, the record is gone forever — but by then, the decision has aged past the "oops" window.
 
 ## Tools
 
@@ -328,20 +344,35 @@ Modify a record's content, title, category, or tags. Re-embeds automatically on 
 - Sets `updated_at = NOW()` automatically (via database trigger)
 - Returns confirmation with the updated record path
 - Fails with clear error if record ID does not exist
+- Cannot update a soft-deleted record (must undelete first)
 
-### `memory_delete` — Soft-delete or hard-delete a record
+### `memory_delete` — Soft-delete a record
 
-Remove a record from active search results.
+Remove a record from active search results. **Always a soft-delete — never permanent.**
 
 | Parameter    | Type       | Required | Description                                           |
 |-------------|-----------|----------|-------------------------------------------------------|
 | `id`        | `number`  | ✅       | Record ID to delete                                   |
-| `hard`      | `boolean` | ❌       | Hard-delete (permanent). Default: `false` (soft-delete)|
 
 **Behavior:**
-- **Soft-delete (default):** Sets `contradicted = TRUE` — record remains in DB but is excluded from search results by the `WHERE contradicted IS NOT TRUE` filter
-- **Hard-delete:** Permanently removes the row. Requires `writes.allowDelete = true` in config — if not set, hard-delete requests are rejected
-- Returns confirmation with the deleted record ID and method used
+- Sets `deleted_at = NOW()` — record remains in the database but is excluded from all search, get, and startup operations
+- The record is recoverable within the retention window (default: 30 days)
+- After the retention window, the background purge permanently removes the row
+- Returns confirmation with the record ID and the retention expiry date
+- Calling `memory_delete` on an already-deleted record is a no-op (idempotent)
+
+### `memory_undelete` — Restore a soft-deleted record
+
+Undo a soft-delete before the retention purge removes it permanently.
+
+| Parameter    | Type       | Required | Description                                           |
+|-------------|-----------|----------|-------------------------------------------------------|
+| `id`        | `number`  | ✅       | Record ID to restore                                  |
+
+**Behavior:**
+- Sets `deleted_at = NULL` — record becomes active and searchable again
+- Fails with clear error if the record doesn't exist (already purged or never existed)
+- Returns confirmation with the restored record path
 
 ## Config Reference
 
@@ -350,20 +381,24 @@ Remove a record from active search results.
 "writes": {
   "enabled": true,           // Gate: must be true for any write tool to function
   "autoEmbed": true,         // Auto-generate embedding on write/update (default: true)
-  "allowDelete": false       // Allow hard-delete (permanent). Default: false (soft-delete only)
+  "retention": {
+    "purgeAfterDays": 30,    // Hard-purge soft-deleted records after N days (0 = never purge)
+    "stalePurgeDays": 0      // Hard-purge records not accessed in N days (0 = disabled, opt-in)
+  }
 }
 ```
 
 ### Config Behavior Matrix
 
-| `writes.enabled` | Tool call         | Result                                |
-|-------------------|-------------------|---------------------------------------|
-| `false` (default) | `memory_write`    | Error: "Write operations are disabled" |
-| `true`            | `memory_write`    | Insert + auto-embed                   |
-| `true`            | `memory_update`   | Update + re-embed if content changed  |
-| `true`            | `memory_delete`   | Soft-delete (set contradicted=true)   |
-| `true` + `allowDelete: true` | `memory_delete(hard=true)` | Hard-delete (permanent) |
-| `true` + `allowDelete: false` | `memory_delete(hard=true)` | Error: "Hard delete is not enabled" |
+| `writes.enabled` | Tool call          | Result                                |
+|-------------------|--------------------|---------------------------------------|
+| `false` (default) | `memory_write`     | Error: "Write operations are disabled" |
+| `true`            | `memory_write`     | Insert + auto-embed                   |
+| `true`            | `memory_update`    | Update + re-embed if content changed  |
+| `true`            | `memory_delete`    | Soft-delete (`deleted_at = NOW()`)    |
+| `true`            | `memory_undelete`  | Restore (`deleted_at = NULL`)         |
+
+No hard-delete parameter exists. No config flag enables hard-delete via tools. Permanent removal is exclusively a retention policy operation.
 
 ### Embedding on Write
 
@@ -373,17 +408,67 @@ If `autoEmbed` is `false`, records are inserted with `embedding = NULL`. They'll
 
 If embedding fails (e.g., provider is down), the write **still succeeds** — the record is inserted without an embedding, and a warning is logged. This fail-open design prioritizes data persistence over search quality.
 
+## Data Retention & Bloat Management
+
+### The Problem
+
+Soft-delete-only means the table grows monotonically. Every deleted record stays in the database, consuming storage and slowing index operations. At scale (100K+ records), this becomes a real cost — primarily from the embedding vectors (~3KB per 768-dim float32 vector), not the text content.
+
+### The Solution: Retention Policy
+
+ShadowDB runs a background retention sweep on plugin service start (and optionally on a configurable interval). The sweep permanently removes records that meet purge criteria:
+
+**1. Soft-delete retention (`purgeAfterDays`, default: 30)**
+
+Records with `deleted_at` older than N days are hard-purged. This is the primary bloat control mechanism. The 30-day default gives a generous recovery window while ensuring deleted records don't accumulate forever.
+
+```sql
+-- Executed by retention sweep, not by any tool
+DELETE FROM memories WHERE deleted_at < NOW() - INTERVAL '30 days';
+```
+
+**2. Stale access purge (`stalePurgeDays`, default: 0 = disabled)**
+
+Records where `last_accessed` is older than N days can be auto-purged. **This is disabled by default** because it's aggressive — a record that's correct and important but rarely queried would be silently removed. Enable only if you understand the risk.
+
+```sql
+-- Only runs when stalePurgeDays > 0
+DELETE FROM memories
+WHERE last_accessed < NOW() - INTERVAL '365 days'
+  AND deleted_at IS NULL
+  AND contradicted IS NOT TRUE;
+```
+
+**3. Sweep logging**
+
+Every retention sweep logs what it purged:
+```
+memory-shadowdb: retention sweep — purged 47 soft-deleted (>30d), 0 stale (disabled)
+```
+
+### Bloat Budget
+
+| Records | Text (~1KB avg) | Embeddings (768×4B) | Total     | Notes                    |
+|---------|-----------------|---------------------|-----------|--------------------------|
+| 10K     | ~10 MB          | ~30 MB              | ~40 MB    | Current scale. No concern.|
+| 100K    | ~100 MB         | ~300 MB             | ~400 MB   | Retention policy important.|
+| 1M      | ~1 GB           | ~3 GB               | ~4 GB     | Need vacuuming + partitioning.|
+
+For most single-agent deployments, the 30-day retention purge keeps the table well within the 10K-100K range indefinitely.
+
 ## Security Model
 
 1. **Config-gated access**: Writes are disabled by default. The `writes.enabled` flag must be explicitly set in plugin config — there is no way to enable writes via tool parameters, environment variables, or runtime state.
 
-2. **Soft-delete by default**: `memory_delete` marks records as contradicted rather than removing them. Hard-delete requires a separate config flag (`writes.allowDelete`), creating a two-layer safety gate.
+2. **No tool-accessible hard-delete**: The `memory_delete` tool can only soft-delete. There is no parameter, flag, or config that enables permanent deletion through a tool call. Only the retention policy (background process, config-driven) can permanently remove data. This eliminates an entire class of prompt injection risk.
 
 3. **Input validation**: Content is validated for type, length (max 100,000 chars), and non-emptiness. Category and title are sanitized strings. Tags must be an array of strings.
 
 4. **SQL parameterization**: All write queries use parameterized SQL (`$1`, `$2`, ...). No user input is ever interpolated into SQL strings — same security model as read operations.
 
 5. **Embedding isolation**: Auto-embedding uses the same `EmbeddingClient` as search — API keys come from config/env only, never from tool parameters.
+
+6. **Retention logging**: Every purge operation is logged with counts. No silent data loss.
 
 ---
 
@@ -395,8 +480,11 @@ If embedding fails (e.g., provider is down), the write **still succeeds** — th
 - [ ] rollback path tested
 - [ ] `memory_write` inserts and auto-embeds when `writes.enabled = true`
 - [ ] `memory_update` re-embeds on content change
-- [ ] `memory_delete` soft-deletes by default, hard-delete rejected without `allowDelete`
+- [ ] `memory_delete` sets `deleted_at`, record excluded from search
+- [ ] `memory_undelete` restores soft-deleted record
+- [ ] Retention purge removes records deleted > `purgeAfterDays` ago
 - [ ] Write tools return clear errors when `writes.enabled = false`
+- [ ] Search/get/startup all filter `WHERE deleted_at IS NULL`
 
 ---
 
@@ -448,7 +536,7 @@ Current tests cover:
 
 ## Write Operations
 - [x] **`memory_write` tool** — Structured insert with auto-embedding, category/title/content/tags
-  - Config: `writes.enabled` (default false), `writes.autoEmbed` (default true), `writes.allowDelete` (default false)
+  - Config: `writes.enabled` (default false), `writes.autoEmbed` (default true)
   - Validates input (non-empty, max 100K chars), returns new record ID and virtual path
   - Embedding failure is non-fatal (record persists without vector)
 
@@ -457,10 +545,20 @@ Current tests cover:
   - Automatic embedding regeneration when content changes
   - Fails clearly if record ID does not exist
 
-- [x] **`memory_delete` tool** — Soft-delete by default, hard-delete config-gated
-  - Soft-delete: sets `contradicted = TRUE` (excluded from search by existing WHERE clause)
-  - Hard-delete: requires `writes.allowDelete = true` in config (two-layer safety gate)
-  - Returns confirmation with method used (soft/hard)
+- [x] **`memory_delete` tool** — Soft-delete only (sets `deleted_at = NOW()`)
+  - No hard-delete parameter — tools never permanently destroy data
+  - Excluded from all search/get/startup by `WHERE deleted_at IS NULL`
+  - Recoverable via `memory_undelete` within retention window
+
+- [x] **`memory_undelete` tool** — Restore soft-deleted records
+  - Sets `deleted_at = NULL`, record becomes searchable again
+  - Fails if record already purged or never existed
+
+- [x] **Retention policy** — Background purge of expired soft-deleted records
+  - `writes.retention.purgeAfterDays` (default: 30) — permanent removal after N days
+  - `writes.retention.stalePurgeDays` (default: 0 = disabled) — purge untouched records
+  - Runs on service start + configurable interval
+  - Logged with counts — no silent data loss
 
 ## Maintenance & Operations
 - [ ] **Batch embedding backfill** — CLI command to embed all NULL-embedding rows

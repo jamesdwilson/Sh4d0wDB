@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS memories (
   ) STORED,
   contradicted BOOLEAN NOT NULL DEFAULT FALSE,
   superseded_by BIGINT REFERENCES memories(id) ON DELETE SET NULL,
+  deleted_at TIMESTAMPTZ DEFAULT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CHECK (embedding IS NULL OR vector_dims(embedding) = 768)
@@ -44,6 +45,7 @@ CREATE INDEX IF NOT EXISTS memories_category_idx ON memories(category);
 CREATE INDEX IF NOT EXISTS memories_created_at_idx ON memories(created_at DESC);
 CREATE INDEX IF NOT EXISTS memories_superseded_idx ON memories(superseded_by);
 CREATE INDEX IF NOT EXISTS memories_contradicted_idx ON memories(contradicted);
+CREATE INDEX IF NOT EXISTS memories_deleted_at_idx ON memories(deleted_at) WHERE deleted_at IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS memories_fts_idx ON memories USING GIN (fts);
 CREATE INDEX IF NOT EXISTS memories_content_trgm_idx ON memories USING GIN (content gin_trgm_ops);

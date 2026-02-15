@@ -75,9 +75,13 @@
       "label": "Auto-Embed on Write",
       "help": "Generate embedding automatically on write/update (default: true)"
     },
-    "writes.allowDelete": {
-      "label": "Allow Hard Delete",
-      "help": "Permit permanent row removal via memory_delete(hard=true). Default: false (soft-delete only)."
+    "writes.retention.purgeAfterDays": {
+      "label": "Retention: Purge After Days",
+      "help": "Permanently remove soft-deleted records after N days (default: 30, 0 = never)"
+    },
+    "writes.retention.stalePurgeDays": {
+      "label": "Retention: Stale Purge Days",
+      "help": "Permanently remove records not accessed in N days (default: 0 = disabled)"
     },
     "startup.enabled": {
       "label": "Startup Hydration Enabled",
@@ -207,9 +211,19 @@
             "type": "boolean",
             "description": "Auto-generate embedding on write/update. Default: true."
           },
-          "allowDelete": {
-            "type": "boolean",
-            "description": "Allow hard-delete (permanent row removal). Default: false."
+          "retention": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "purgeAfterDays": {
+                "type": "number",
+                "description": "Permanently remove soft-deleted records after N days (default: 30, 0 = never)"
+              },
+              "stalePurgeDays": {
+                "type": "number",
+                "description": "Permanently remove records not accessed in N days (default: 0 = disabled)"
+              }
+            }
           }
         }
       },

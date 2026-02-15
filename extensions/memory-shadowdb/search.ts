@@ -105,7 +105,7 @@ export class ShadowSearch {
    * SECURITY:
    * - All user input is parameterized ($1=vector, $2=maxResults, $3=query)
    * - Table name is interpolated but comes from config (not user input)
-   * - Query filters: superseded_by IS NULL AND contradicted IS NOT TRUE
+   * - Query filters: deleted_at IS NULL AND superseded_by IS NULL AND contradicted IS NOT TRUE
    *   (only returns active, non-contradicted records)
    * - Oversample factor: 5x maxResults for each CTE to ensure good RRF merge
    *
@@ -138,7 +138,7 @@ export class ShadowSearch {
                ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS vec_rank
         FROM ${this.table}
         WHERE embedding IS NOT NULL
-          AND superseded_by IS NULL AND contradicted IS NOT TRUE
+          AND deleted_at IS NULL AND superseded_by IS NULL AND contradicted IS NOT TRUE
         ORDER BY embedding <=> $1::vector
         LIMIT $2
       ),
@@ -149,7 +149,7 @@ export class ShadowSearch {
         FROM ${this.table}
         WHERE fts IS NOT NULL
           AND fts @@ plainto_tsquery('english', $3)
-          AND superseded_by IS NULL AND contradicted IS NOT TRUE
+          AND deleted_at IS NULL AND superseded_by IS NULL AND contradicted IS NOT TRUE
         ORDER BY fts_score DESC
         LIMIT $2
       ),
@@ -159,7 +159,7 @@ export class ShadowSearch {
                ROW_NUMBER() OVER (ORDER BY content <-> $3) AS trgm_rank
         FROM ${this.table}
         WHERE (content % $3 OR content ILIKE '%' || $3 || '%')
-          AND superseded_by IS NULL AND contradicted IS NOT TRUE
+          AND deleted_at IS NULL AND superseded_by IS NULL AND contradicted IS NOT TRUE
         ORDER BY content <-> $3
         LIMIT $2
       ),
@@ -228,7 +228,8 @@ export class ShadowSearch {
    */
   async get(recordId: number): Promise<{ text: string; path: string } | null> {
     // SECURITY: ID is parameterized, table name from config only
-    const sql = `SELECT id, content, category, title, record_type FROM ${this.table} WHERE id = $1`;
+    // SECURITY: Filter out soft-deleted records — deleted records are invisible to tools
+    const sql = `SELECT id, content, category, title, record_type FROM ${this.table} WHERE id = $1 AND deleted_at IS NULL`;
     const result = await this.getPool().query(sql, [recordId]);
     
     if (result.rows.length === 0) {
@@ -299,8 +300,8 @@ export class ShadowSearch {
     
     // SECURITY: Category is parameterized if present, otherwise query all records
     const sql = category
-      ? `SELECT id, left(content, 200) as content, category, title FROM ${this.table} WHERE category = $1 ORDER BY id DESC LIMIT 20`
-      : `SELECT id, left(content, 200) as content, category, title FROM ${this.table} ORDER BY id DESC LIMIT 20`;
+      ? `SELECT id, left(content, 200) as content, category, title FROM ${this.table} WHERE category = $1 AND deleted_at IS NULL ORDER BY id DESC LIMIT 20`
+      : `SELECT id, left(content, 200) as content, category, title FROM ${this.table} WHERE deleted_at IS NULL ORDER BY id DESC LIMIT 20`;
     
     const params = category ? [category] : [];
     const result = await this.getPool().query(sql, params);

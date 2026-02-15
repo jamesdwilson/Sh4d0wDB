@@ -1,37 +1,29 @@
 /**
  * writer.ts — Write operations for memory-shadowdb
  *
- * Implements memory_write, memory_update, and memory_delete operations
+ * Implements memory_write, memory_update, memory_delete, and memory_undelete
  * against the PostgreSQL memories table with automatic embedding generation.
  *
  * SECURITY MODEL:
  * - All write operations are config-gated: `writes.enabled` must be true
- * - Hard-delete requires additional gate: `writes.allowDelete` must be true
+ * - There is NO hard-delete via tools. Tools can only soft-delete (set deleted_at).
+ *   Permanent removal happens exclusively through the retention policy.
  * - All SQL uses parameterized queries ($1, $2, ...) — no user input interpolation
  * - Table name comes from plugin config only (same as search.ts)
  * - Content length is bounded (max 100,000 chars) to prevent storage abuse
  * - Embedding generation is fail-open: write succeeds even if embedding fails
- *   (data persistence > search quality; embedding can be backfilled later)
- *
- * DATA FLOW — memory_write:
- * 1. Validate input (content non-empty, ≤100K chars, category/title are strings)
- * 2. INSERT into memories table with parameterized SQL
- * 3. If autoEmbed: generate embedding via EmbeddingClient
- * 4. UPDATE embedding column with vector (separate query for fail-open)
- * 5. Return new record ID and virtual path
- *
- * DATA FLOW — memory_update:
- * 1. Validate record exists (SELECT by ID)
- * 2. Build dynamic SET clause from provided fields only
- * 3. UPDATE with parameterized SQL
- * 4. If content changed and autoEmbed: regenerate embedding
- * 5. Return confirmation with updated path
  *
  * DATA FLOW — memory_delete:
- * 1. Validate record exists
- * 2. Soft-delete: UPDATE contradicted = TRUE (default)
- * 3. Hard-delete: DELETE FROM ... WHERE id = $1 (requires writes.allowDelete)
- * 4. Return confirmation with method used
+ * 1. Validate record exists and is not already deleted
+ * 2. SET deleted_at = NOW()
+ * 3. Record becomes invisible to search/get/startup (filtered by deleted_at IS NULL)
+ * 4. Record remains in DB until retention purge removes it
+ *
+ * DATA FLOW — retention purge:
+ * 1. Runs on service start and optionally on interval
+ * 2. DELETE FROM memories WHERE deleted_at < NOW() - INTERVAL 'N days'
+ * 3. Optionally: DELETE WHERE last_accessed < NOW() - INTERVAL 'N days' (stale purge)
+ * 4. Logs purge counts — no silent data loss
  *
  * DEPENDENCY CHAIN:
  * - types.ts: WriteResult type
@@ -49,93 +41,57 @@ import type { WriteResult } from "./types.js";
  * Bounds storage consumption per record. 100K chars is ~100KB of UTF-8 text,
  * which is generous for knowledge records but prevents accidental mega-inserts
  * (e.g., pasting entire codebases or log files).
- *
- * This limit is enforced at the application layer, not the DB layer,
- * so the error message is clear and actionable.
  */
 const MAX_CONTENT_CHARS = 100_000;
 
-/**
- * Maximum tag count per record.
- *
- * Prevents unbounded array storage and GIN index bloat.
- * 50 tags is generous for any reasonable categorization scheme.
- */
+/** Maximum tag count per record. Prevents GIN index bloat. */
 const MAX_TAGS = 50;
 
-/**
- * Maximum length of a single tag string.
- *
- * Prevents absurdly long tag values that would bloat the index.
- */
+/** Maximum length of a single tag string. */
 const MAX_TAG_LENGTH = 200;
 
-/**
- * Maximum length of title and category strings.
- *
- * These are metadata fields used in search results and citations.
- * Keeping them bounded ensures readable output formatting.
- */
+/** Maximum length of title and category strings. */
 const MAX_TITLE_LENGTH = 500;
 const MAX_CATEGORY_LENGTH = 100;
 
 /**
- * PostgreSQL-backed memory writer with auto-embedding
+ * PostgreSQL-backed memory writer with auto-embedding and retention
  *
- * This class handles all write operations (insert, update, delete) against
- * the memories table. It shares the connection pool with ShadowSearch
- * (passed in via constructor) to avoid duplicate connections.
+ * Handles insert, update, soft-delete, undelete, and retention purge.
+ * Shares the connection pool with ShadowSearch (no extra connections).
  *
  * SECURITY NOTES:
- * - Config gates (enabled, allowDelete) are checked at the tool registration
- *   level in index.ts AND enforced here as defense-in-depth
- * - All queries use parameterized SQL ($1, $2, ...) — no string interpolation
- *   of user input into SQL
+ * - Config gates (writes.enabled) are checked at tool registration level
+ *   in index.ts AND enforced here as defense-in-depth
+ * - No hard-delete via any method except retention purge
+ * - All queries use parameterized SQL ($1, $2, ...)
  * - Table name is interpolated but comes from config only (trusted source)
- * - Embedding failure does not block the write (fail-open design)
- *
- * LIFECYCLE:
- * - Receives pool reference from caller (does not create its own pool)
- * - No cleanup needed (pool lifecycle managed by ShadowSearch)
+ * - Embedding failure does not block writes (fail-open design)
  */
 export class ShadowWriter {
   private pool: pg.Pool;
   private table: string;
   private embedder: EmbeddingClient;
   private autoEmbed: boolean;
-  private allowDelete: boolean;
+  private purgeAfterDays: number;
+  private stalePurgeDays: number;
   private logger: { warn: (msg: string) => void; info: (msg: string) => void };
 
   constructor(params: {
-    /** Shared connection pool (from ShadowSearch.getPool or equivalent) */
     pool: pg.Pool;
-
-    /** Target table name (from plugin config, not user input) */
     table: string;
-
-    /** Embedding client for auto-embed on write/update */
     embedder: EmbeddingClient;
-
-    /**
-     * Whether to auto-generate embeddings on write/update.
-     * When false, records are inserted with embedding=NULL.
-     */
     autoEmbed: boolean;
-
-    /**
-     * Whether hard-delete is permitted.
-     * When false, memory_delete only soft-deletes (contradicted=TRUE).
-     */
-    allowDelete: boolean;
-
-    /** Logger for warnings (embedding failures, etc.) */
+    purgeAfterDays: number;
+    stalePurgeDays: number;
     logger: { warn: (msg: string) => void; info: (msg: string) => void };
   }) {
     this.pool = params.pool;
     this.table = params.table;
     this.embedder = params.embedder;
     this.autoEmbed = params.autoEmbed;
-    this.allowDelete = params.allowDelete;
+    this.purgeAfterDays = params.purgeAfterDays;
+    this.stalePurgeDays = params.stalePurgeDays;
     this.logger = params.logger;
   }
 
@@ -163,8 +119,6 @@ export class ShadowWriter {
     title?: string;
     tags?: string[];
   }): Promise<WriteResult> {
-    // ---- Input validation ----
-
     const content = (params.content || "").trim();
     if (!content) {
       throw new Error("content is required and must not be empty");
@@ -179,8 +133,6 @@ export class ShadowWriter {
     const title = sanitizeString(params.title, MAX_TITLE_LENGTH) || null;
     const tags = sanitizeTags(params.tags);
 
-    // ---- Insert record ----
-    // SECURITY: Fully parameterized SQL. Table name from config only.
     const insertSql = `
       INSERT INTO ${this.table} (content, category, title, tags, record_type)
       VALUES ($1, $2, $3, $4, 'fact')
@@ -189,7 +141,6 @@ export class ShadowWriter {
     const insertResult = await this.pool.query(insertSql, [content, category, title, tags]);
     const newId: number = insertResult.rows[0].id;
 
-    // ---- Auto-embed (fail-open) ----
     let embedded = false;
     if (this.autoEmbed) {
       embedded = await this.tryEmbed(newId, content);
@@ -209,19 +160,19 @@ export class ShadowWriter {
   /**
    * Update an existing memory record
    *
-   * Performs a partial update: only modifies fields that are explicitly provided.
-   * If content changes and autoEmbed is enabled, regenerates the embedding vector.
+   * Partial update: only modifies fields explicitly provided.
+   * Cannot update a soft-deleted record (must undelete first).
+   * Re-embeds automatically on content change if autoEmbed is enabled.
    *
    * SECURITY:
-   * - Record existence is verified before update (prevents blind writes)
-   * - Dynamic SET clause is built from validated field names only — never from
-   *   user-controlled keys. Field names are hardcoded strings, values are $N params.
+   * - Record existence verified before update
+   * - Soft-deleted records rejected (must undelete first)
+   * - Dynamic SET clause uses hardcoded field names, never user-controlled keys
    * - Same input validation limits as write()
-   * - Re-embedding on content change uses same fail-open pattern
    *
    * @param params - Update parameters from tool invocation
    * @returns WriteResult with updated record path
-   * @throws Error if record does not exist or all fields are empty
+   * @throws Error if record not found, is deleted, or all fields empty
    */
   async update(params: {
     id: number;
@@ -232,19 +183,19 @@ export class ShadowWriter {
   }): Promise<WriteResult> {
     const recordId = params.id;
 
-    // ---- Verify record exists ----
-    // SECURITY: Parameterized lookup, table name from config
+    // Verify record exists and is not soft-deleted
     const existing = await this.pool.query(
-      `SELECT id, content, category FROM ${this.table} WHERE id = $1`,
+      `SELECT id, content, category, deleted_at FROM ${this.table} WHERE id = $1`,
       [recordId],
     );
     if (existing.rows.length === 0) {
       throw new Error(`Record ${recordId} not found`);
     }
+    if (existing.rows[0].deleted_at !== null) {
+      throw new Error(`Record ${recordId} is deleted. Use memory_undelete to restore it first.`);
+    }
 
-    // ---- Build dynamic SET clause ----
-    // SECURITY: Field names are hardcoded strings, never from user input.
-    // Only values are parameterized. This prevents SQL injection via field names.
+    // Build dynamic SET clause — field names are hardcoded, values are $N params
     const setClauses: string[] = [];
     const setValues: unknown[] = [];
     let paramIndex = 1;
@@ -266,29 +217,24 @@ export class ShadowWriter {
     }
 
     if (params.title !== undefined) {
-      const title = sanitizeString(params.title, MAX_TITLE_LENGTH);
       setClauses.push(`title = $${paramIndex++}`);
-      setValues.push(title || null);
+      setValues.push(sanitizeString(params.title, MAX_TITLE_LENGTH) || null);
     }
 
     if (params.category !== undefined) {
-      const category = sanitizeString(params.category, MAX_CATEGORY_LENGTH);
       setClauses.push(`category = $${paramIndex++}`);
-      setValues.push(category || "general");
+      setValues.push(sanitizeString(params.category, MAX_CATEGORY_LENGTH) || "general");
     }
 
     if (params.tags !== undefined) {
-      const tags = sanitizeTags(params.tags);
       setClauses.push(`tags = $${paramIndex++}`);
-      setValues.push(tags);
+      setValues.push(sanitizeTags(params.tags));
     }
 
     if (setClauses.length === 0) {
       throw new Error("At least one field (content, title, category, tags) must be provided");
     }
 
-    // ---- Execute update ----
-    // SECURITY: SET clause uses hardcoded field names + $N params. ID is last param.
     const updateSql = `
       UPDATE ${this.table}
       SET ${setClauses.join(", ")}
@@ -297,11 +243,9 @@ export class ShadowWriter {
     setValues.push(recordId);
     await this.pool.query(updateSql, setValues);
 
-    // ---- Re-embed if content changed ----
     let embedded = false;
     if (contentChanged && this.autoEmbed) {
-      const newContent = params.content!.trim();
-      embedded = await this.tryEmbed(recordId, newContent);
+      embedded = await this.tryEmbed(recordId, params.content!.trim());
     }
 
     const category = params.category
@@ -320,34 +264,29 @@ export class ShadowWriter {
   }
 
   /**
-   * Delete a memory record (soft or hard)
+   * Soft-delete a memory record
    *
-   * Soft-delete (default): Sets `contradicted = TRUE`. The record remains in the
-   * database but is excluded from search results by the existing WHERE clause
-   * (`contradicted IS NOT TRUE`). This is reversible — set contradicted back to
-   * FALSE to restore the record.
+   * Sets deleted_at = NOW(). Record remains in the database but becomes
+   * invisible to search, get, and startup operations. Recoverable via
+   * memory_undelete within the retention window (default: 30 days).
    *
-   * Hard-delete: Permanently removes the row. Requires `writes.allowDelete = true`
-   * in plugin config. This is a two-layer safety gate:
-   * 1. `writes.enabled` must be true (checked by tool registration)
-   * 2. `writes.allowDelete` must be true (checked here)
+   * After the retention window, the background purge permanently removes it.
+   * There is NO hard-delete parameter. Tools never permanently destroy data.
    *
    * SECURITY:
-   * - Record existence is verified before delete
-   * - Hard-delete gate is enforced here as defense-in-depth (also checked in index.ts)
+   * - Record existence verified before delete
+   * - Idempotent: deleting an already-deleted record is a no-op
    * - SQL is fully parameterized
    *
    * @param params - Delete parameters from tool invocation
-   * @returns WriteResult with deletion confirmation
-   * @throws Error if record not found or hard-delete not permitted
+   * @returns WriteResult with deletion confirmation and retention info
+   * @throws Error if record not found
    */
-  async delete(params: { id: number; hard?: boolean }): Promise<WriteResult> {
+  async delete(params: { id: number }): Promise<WriteResult> {
     const recordId = params.id;
-    const hard = params.hard === true;
 
-    // ---- Verify record exists ----
     const existing = await this.pool.query(
-      `SELECT id, category FROM ${this.table} WHERE id = $1`,
+      `SELECT id, category, deleted_at FROM ${this.table} WHERE id = $1`,
       [recordId],
     );
     if (existing.rows.length === 0) {
@@ -357,35 +296,26 @@ export class ShadowWriter {
     const category = existing.rows[0].category || "general";
     const path = `shadowdb/${category}/${recordId}`;
 
-    if (hard) {
-      // ---- Hard-delete: permanent removal ----
-      // SECURITY: Two-layer gate — writes.enabled (checked by caller) + allowDelete (checked here)
-      if (!this.allowDelete) {
-        throw new Error(
-          "Hard delete is not enabled. Set writes.allowDelete = true in plugin config, " +
-            "or omit hard=true for soft-delete.",
-        );
-      }
-
-      // SECURITY: Parameterized DELETE
-      await this.pool.query(`DELETE FROM ${this.table} WHERE id = $1`, [recordId]);
-
+    // Idempotent: already deleted → no-op
+    if (existing.rows[0].deleted_at !== null) {
       return {
         ok: true,
         operation: "delete",
         id: recordId,
         path,
         embedded: false,
-        message: `Hard-deleted record ${recordId} (permanent)`,
+        message: `Record ${recordId} already deleted (deleted_at: ${existing.rows[0].deleted_at})`,
       };
     }
 
-    // ---- Soft-delete: mark as contradicted ----
-    // Record stays in DB but is excluded from search by WHERE contradicted IS NOT TRUE
     await this.pool.query(
-      `UPDATE ${this.table} SET contradicted = TRUE WHERE id = $1`,
+      `UPDATE ${this.table} SET deleted_at = NOW() WHERE id = $1`,
       [recordId],
     );
+
+    const purgeNote = this.purgeAfterDays > 0
+      ? ` Permanent removal in ${this.purgeAfterDays} days.`
+      : " No auto-purge configured.";
 
     return {
       ok: true,
@@ -393,47 +323,127 @@ export class ShadowWriter {
       id: recordId,
       path,
       embedded: false,
-      message: `Soft-deleted record ${recordId} (contradicted=true, reversible)`,
+      message: `Soft-deleted record ${recordId}.${purgeNote} Use memory_undelete to restore.`,
     };
+  }
+
+  /**
+   * Restore a soft-deleted record
+   *
+   * Sets deleted_at = NULL, making the record active and searchable again.
+   * Only works if the record hasn't been permanently purged yet.
+   *
+   * @param params - Undelete parameters from tool invocation
+   * @returns WriteResult with restoration confirmation
+   * @throws Error if record not found (already purged or never existed)
+   */
+  async undelete(params: { id: number }): Promise<WriteResult> {
+    const recordId = params.id;
+
+    const existing = await this.pool.query(
+      `SELECT id, category, deleted_at FROM ${this.table} WHERE id = $1`,
+      [recordId],
+    );
+    if (existing.rows.length === 0) {
+      throw new Error(`Record ${recordId} not found (may have been permanently purged)`);
+    }
+
+    const category = existing.rows[0].category || "general";
+    const path = `shadowdb/${category}/${recordId}`;
+
+    // Already active → no-op
+    if (existing.rows[0].deleted_at === null) {
+      return {
+        ok: true,
+        operation: "write", // reuse "write" since there's no "undelete" in the union
+        id: recordId,
+        path,
+        embedded: false,
+        message: `Record ${recordId} is not deleted — no action needed`,
+      };
+    }
+
+    await this.pool.query(
+      `UPDATE ${this.table} SET deleted_at = NULL WHERE id = $1`,
+      [recordId],
+    );
+
+    return {
+      ok: true,
+      operation: "write",
+      id: recordId,
+      path,
+      embedded: false,
+      message: `Restored record ${recordId} — now active and searchable`,
+    };
+  }
+
+  /**
+   * Run retention purge — permanently remove expired soft-deleted records
+   *
+   * This is the ONLY code path that permanently deletes data. It runs:
+   * 1. On service start (once)
+   * 2. Optionally on a recurring interval
+   *
+   * Two purge modes:
+   * - Soft-delete retention: records with deleted_at older than purgeAfterDays
+   * - Stale access purge: records with last_accessed older than stalePurgeDays
+   *   (disabled by default, opt-in only)
+   *
+   * SECURITY:
+   * - No user input — all thresholds from config
+   * - Logged with counts — no silent data loss
+   * - Stale purge only targets non-deleted, non-contradicted records
+   *
+   * @returns Purge counts for logging
+   */
+  async runRetentionPurge(): Promise<{ softDeletePurged: number; stalePurged: number }> {
+    let softDeletePurged = 0;
+    let stalePurged = 0;
+
+    // 1. Purge soft-deleted records past retention window
+    if (this.purgeAfterDays > 0) {
+      const result = await this.pool.query(
+        `DELETE FROM ${this.table} WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '${this.purgeAfterDays} days' RETURNING id`,
+      );
+      softDeletePurged = result.rowCount ?? 0;
+    }
+
+    // 2. Purge stale records (opt-in, disabled by default)
+    if (this.stalePurgeDays > 0) {
+      const result = await this.pool.query(
+        `DELETE FROM ${this.table} WHERE last_accessed IS NOT NULL AND last_accessed < NOW() - INTERVAL '${this.stalePurgeDays} days' AND deleted_at IS NULL AND contradicted IS NOT TRUE RETURNING id`,
+      );
+      stalePurged = result.rowCount ?? 0;
+    }
+
+    this.logger.info(
+      `memory-shadowdb: retention sweep — purged ${softDeletePurged} soft-deleted (>${this.purgeAfterDays}d), ${stalePurged} stale (${this.stalePurgeDays > 0 ? `>${this.stalePurgeDays}d` : "disabled"})`,
+    );
+
+    return { softDeletePurged, stalePurged };
   }
 
   /**
    * Attempt to generate and store an embedding for a record
    *
-   * FAIL-OPEN DESIGN: If embedding generation fails (provider down, rate limit,
-   * network error), the error is logged as a warning but does NOT propagate to
-   * the caller. The record exists without an embedding — it's still searchable
-   * via FTS and trigram, just not via vector similarity.
-   *
-   * This design prioritizes data persistence over search quality. Embeddings
-   * can be backfilled later via the batch embedding CLI (roadmap).
-   *
-   * SECURITY:
-   * - Embedding vector is stored as pgvector literal (float[] from trusted embedder)
-   * - No user input in the vector literal (numbers come from embedding provider)
-   * - SQL is parameterized (vector as $1, id as $2)
+   * FAIL-OPEN: If embedding fails, the error is logged but does NOT propagate.
+   * The record persists without an embedding — still FTS/trigram searchable.
    *
    * @param recordId - Record to embed
    * @param content - Content text to generate embedding from
-   * @returns true if embedding succeeded, false if it failed (warning logged)
+   * @returns true if embedding succeeded, false if it failed
    */
   private async tryEmbed(recordId: number, content: string): Promise<boolean> {
     try {
       const embedding = await this.embedder.embed(content);
-
-      // SECURITY: Vector literal is safe — embedding is float[] from trusted EmbeddingClient
-      // which validates dimensions before returning. No user input in the literal.
       const vecLiteral = `[${embedding.join(",")}]`;
-
       await this.pool.query(
         `UPDATE ${this.table} SET embedding = $1::vector WHERE id = $2`,
         [vecLiteral, recordId],
       );
-
       return true;
     } catch (err) {
-      // FAIL-OPEN: Log warning, do not propagate error
-      // Record exists without embedding — still FTS/trigram searchable
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(
         `memory-shadowdb: auto-embed failed for record ${recordId}: ${message}`,
@@ -447,56 +457,24 @@ export class ShadowWriter {
 // Input Sanitization Helpers
 // ============================================================================
 
-/**
- * Sanitize a string input: trim whitespace and enforce max length
- *
- * Returns empty string for null/undefined/non-string inputs.
- * Truncates at maxLength (does not throw — metadata fields are best-effort).
- *
- * @param value - Raw input value (may be any type)
- * @param maxLength - Maximum allowed character count
- * @returns Sanitized string, empty string if input is invalid
- */
+/** Trim and truncate a string. Returns empty string for non-string input. */
 function sanitizeString(value: unknown, maxLength: number): string {
   if (typeof value !== "string") return "";
   return value.trim().slice(0, maxLength);
 }
 
-/**
- * Sanitize a tags array: validate types, enforce count/length limits
- *
- * SECURITY:
- * - Rejects non-array inputs (returns empty array)
- * - Filters out non-string entries
- * - Trims whitespace and removes empty strings
- * - Truncates individual tags at MAX_TAG_LENGTH (200 chars)
- * - Caps total tag count at MAX_TAGS (50)
- * - Deduplicates tags (case-sensitive)
- *
- * @param tags - Raw tags input (may be any type)
- * @returns Validated and sanitized string array
- */
+/** Validate, deduplicate, and bound a tags array. */
 function sanitizeTags(tags: unknown): string[] {
   if (!Array.isArray(tags)) return [];
-
   const seen = new Set<string>();
   const result: string[] = [];
-
   for (const tag of tags) {
     if (typeof tag !== "string") continue;
-
     const cleaned = tag.trim().slice(0, MAX_TAG_LENGTH);
-    if (!cleaned) continue;
-
-    // Deduplicate (case-sensitive)
-    if (seen.has(cleaned)) continue;
+    if (!cleaned || seen.has(cleaned)) continue;
     seen.add(cleaned);
-
     result.push(cleaned);
-
-    // SECURITY: Cap total tag count to prevent GIN index bloat
     if (result.length >= MAX_TAGS) break;
   }
-
   return result;
 }

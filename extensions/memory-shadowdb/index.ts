@@ -97,11 +97,16 @@ const memoryShadowdbPlugin = {
     // SECURITY: Write config resolution — all gates default to safe values.
     // writes.enabled defaults to false (no writes unless explicitly enabled).
     // writes.autoEmbed defaults to true (new records are immediately searchable).
-    // writes.allowDelete defaults to false (only soft-delete permitted).
+    // Retention defaults: purge soft-deleted records after 30 days, stale purge disabled.
     const writesCfg = {
       enabled: pluginCfg.writes?.enabled === true,         // Must be explicitly true
       autoEmbed: pluginCfg.writes?.autoEmbed !== false,    // Default true
-      allowDelete: pluginCfg.writes?.allowDelete === true, // Must be explicitly true
+      purgeAfterDays: typeof pluginCfg.writes?.retention?.purgeAfterDays === "number"
+        ? Math.max(0, Math.floor(pluginCfg.writes.retention.purgeAfterDays))
+        : 30,
+      stalePurgeDays: typeof pluginCfg.writes?.retention?.stalePurgeDays === "number"
+        ? Math.max(0, Math.floor(pluginCfg.writes.retention.stalePurgeDays))
+        : 0,
     };
     
     // SECURITY: Startup injection cache bounded at 5000 entries (prevents memory exhaustion)
@@ -176,7 +181,8 @@ const memoryShadowdbPlugin = {
           table: tableName,
           embedder,
           autoEmbed: writesCfg.autoEmbed,
-          allowDelete: writesCfg.allowDelete,
+          purgeAfterDays: writesCfg.purgeAfterDays,
+          stalePurgeDays: writesCfg.stalePurgeDays,
           logger: api.logger,
         });
       }
@@ -434,29 +440,20 @@ const memoryShadowdbPlugin = {
             },
           };
 
-          // TOOL 5: memory_delete — soft-delete or hard-delete a memory record
+          // TOOL 5: memory_delete — soft-delete only (sets deleted_at, never permanent)
           const memoryDeleteTool = {
             label: "Memory Delete",
             name: "memory_delete",
             description:
-              "Delete a memory record from ShadowDB. Default: soft-delete (sets contradicted=true, reversible). " +
-              "Hard-delete (permanent) requires writes.allowDelete in config.",
+              "Soft-delete a memory record from ShadowDB (sets deleted_at, excluded from search). " +
+              "Reversible via memory_undelete. Permanent removal happens only via retention policy.",
             parameters: Type.Object({
-              id: Type.Number({ description: "Record ID to delete" }),
-              hard: Type.Optional(
-                Type.Boolean({
-                  description:
-                    "Hard-delete (permanent). Default: false (soft-delete). Requires writes.allowDelete config.",
-                }),
-              ),
+              id: Type.Number({ description: "Record ID to soft-delete" }),
             }),
             execute: async (_toolCallId: string, params: Record<string, unknown>) => {
               try {
                 const w = getWriter();
-                const result = await w.delete({
-                  id: params.id as number,
-                  hard: params.hard as boolean | undefined,
-                });
+                const result = await w.delete({ id: params.id as number });
                 return jsonResult(result as unknown as Record<string, unknown>);
               } catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
@@ -466,9 +463,32 @@ const memoryShadowdbPlugin = {
             },
           };
 
-          return [memoryWriteTool, memoryUpdateTool, memoryDeleteTool];
+          // TOOL 6: memory_undelete — restore a soft-deleted record
+          const memoryUndeleteTool = {
+            label: "Memory Undelete",
+            name: "memory_undelete",
+            description:
+              "Restore a soft-deleted memory record (clears deleted_at). " +
+              "Only works if the record hasn't been permanently purged by retention policy.",
+            parameters: Type.Object({
+              id: Type.Number({ description: "Record ID to restore" }),
+            }),
+            execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+              try {
+                const w = getWriter();
+                const result = await w.undelete({ id: params.id as number });
+                return jsonResult(result as unknown as Record<string, unknown>);
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                api.logger.warn(`memory-shadowdb undelete error: ${message}`);
+                return jsonResult({ ok: false, error: message });
+              }
+            },
+          };
+
+          return [memoryWriteTool, memoryUpdateTool, memoryDeleteTool, memoryUndeleteTool];
         },
-        { names: ["memory_write", "memory_update", "memory_delete"] },
+        { names: ["memory_write", "memory_update", "memory_delete", "memory_undelete"] },
       );
     }
 
@@ -538,6 +558,16 @@ const memoryShadowdbPlugin = {
         const ok = await search.ping();
         if (ok) {
           api.logger.info("memory-shadowdb: PostgreSQL connection verified");
+
+          // Run retention purge on service start (if writes are enabled)
+          if (writesCfg.enabled && (writesCfg.purgeAfterDays > 0 || writesCfg.stalePurgeDays > 0)) {
+            try {
+              const w = getWriter();
+              await w.runRetentionPurge();
+            } catch (err) {
+              api.logger.warn(`memory-shadowdb: retention purge failed: ${String(err)}`);
+            }
+          }
         } else {
           api.logger.warn("memory-shadowdb: PostgreSQL connection failed — searches will error");
         }

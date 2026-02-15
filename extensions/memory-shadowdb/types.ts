@@ -124,7 +124,7 @@ export type PluginConfig = {
   /** Write operations configuration (disabled by default) */
   writes?: {
     /**
-     * Master gate for all write tools (memory_write, memory_update, memory_delete).
+     * Master gate for all write tools (memory_write, memory_update, memory_delete, memory_undelete).
      * Must be explicitly set to true — defaults to false for safety.
      * There is no way to enable writes via tool parameters or env vars.
      */
@@ -139,13 +139,25 @@ export type PluginConfig = {
      */
     autoEmbed?: boolean;
 
-    /**
-     * Allow permanent hard-delete via memory_delete(hard=true).
-     * When false, memory_delete only soft-deletes (sets contradicted=TRUE).
-     * Two-layer safety: writes.enabled must ALSO be true.
-     * Default: false
-     */
-    allowDelete?: boolean;
+    /** Retention policy for automatic data cleanup */
+    retention?: {
+      /**
+       * Permanently remove soft-deleted records after N days.
+       * Only records with deleted_at older than this are purged.
+       * Set to 0 to never auto-purge (soft-deleted records persist forever).
+       * Default: 30
+       */
+      purgeAfterDays?: number;
+
+      /**
+       * Permanently remove records not accessed in N days.
+       * Uses last_accessed column. Only targets active (non-deleted) records.
+       * Set to 0 to disable (default). Use with caution — stable knowledge
+       * that is rarely queried would be silently removed.
+       * Default: 0 (disabled)
+       */
+      stalePurgeDays?: number;
+    };
   };
 
   /** Startup context injection configuration */
