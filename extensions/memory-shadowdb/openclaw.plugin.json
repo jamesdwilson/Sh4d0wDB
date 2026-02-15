@@ -82,6 +82,10 @@
     "startup.cacheTtlMs": {
       "label": "Startup Digest Cache TTL (ms)",
       "help": "For mode=digest, reinject after TTL even if digest unchanged (default: 600000)"
+    },
+    "startup.maxCharsByModel": {
+      "label": "Model-Aware Max Chars",
+      "help": "Map of model substring patterns to maxChars overrides. First match wins, falls back to startup.maxChars."
     }
   },
   "configSchema": {
@@ -199,6 +203,13 @@
           },
           "cacheTtlMs": {
             "type": "number"
+          },
+          "maxCharsByModel": {
+            "type": "object",
+            "description": "Model substring -> maxChars overrides. First matching pattern wins.",
+            "additionalProperties": {
+              "type": "number"
+            }
           }
         }
       }

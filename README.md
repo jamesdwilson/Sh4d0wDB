@@ -53,6 +53,7 @@ curl -fsSL https://raw.githubusercontent.com/openclaw/shadowdb/main/setup.sh | b
 
 - Fast, grounded retrieval from SQL via the memory plugin for OpenClaw (`memory_search` / `memory_get`)
 - Deterministic startup hydration from DB via `before_agent_start` hook
+- **Model-aware startup injection** — `maxCharsByModel` config maps model name patterns to per-model char budgets so small-context models (ministral-8b, qwen3) get compact P0/P1 essentials while large-context models (Opus, Sonnet) get the full priority stack
 - Startup mapping path for legacy identity files (`SOUL.md`, `IDENTITY.md`) through import scripts
 - Flexible embedding providers with strict dimension mismatch enforcement
 
@@ -60,7 +61,6 @@ curl -fsSL https://raw.githubusercontent.com/openclaw/shadowdb/main/setup.sh | b
 
 - Golden parity harness (automated before/after behavior checks)
 - Schema migration/versioning scripts
-- Multi-agent startup policy presets (`always`, `first-run`, `digest`) tuned per deployment profile
 
 ---
 
@@ -250,6 +250,29 @@ What remains is **verification depth**, not architectural capability.
 2. Keep minimal bootstrap stubs for identity safety.
 3. Move factual memory load to DB.
 4. Choose startup hydration mode (`always` for strict parity, `digest` for lower overhead).
+5. Optionally configure `maxCharsByModel` for model-aware injection budgets.
+
+### Startup Config Reference
+
+```jsonc
+// in openclaw.json → plugins.entries.memory-shadowdb.config
+"startup": {
+  "enabled": true,
+  "mode": "digest",           // "always" | "first-run" | "digest"
+  "maxChars": 6000,           // default budget (fallback)
+  "cacheTtlMs": 600000,       // digest re-check interval (10min)
+  "maxCharsByModel": {        // model substring → char budget
+    "opus": 6000,             // large context → full stack
+    "sonnet": 5000,
+    "mistral-large": 4000,
+    "llama-3.3": 3000,
+    "ministral-8b": 1500,     // small context → P0 essentials only
+    "qwen3": 2000
+  }
+}
+```
+
+Rows are fetched `ORDER BY priority ASC` and concatenated until the budget is hit. Use priority tiers (P0=critical identity, P1=operational rules, P2=behavioral, P3=reference) to control what smaller models see.
 
 ---
 

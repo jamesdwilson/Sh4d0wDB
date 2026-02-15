@@ -77,6 +77,9 @@ type PluginConfig = {
     enabled?: boolean;
     mode?: "always" | "first-run" | "digest";
     maxChars?: number;
+    /** Model-aware maxChars overrides. Keys are model patterns (substring match).
+     *  Checked in order; first match wins. Falls back to maxChars. */
+    maxCharsByModel?: Record<string, number>;
     cacheTtlMs?: number;
   };
 };
@@ -247,6 +250,7 @@ function resolveStartupInjectionConfig(pluginCfg: PluginConfig): {
   enabled: boolean;
   mode: StartupInjectionMode;
   maxChars: number;
+  maxCharsByModel: Record<string, number>;
   cacheTtlMs: number;
 } {
   const startup = pluginCfg.startup || {};
@@ -261,6 +265,16 @@ function resolveStartupInjectionConfig(pluginCfg: PluginConfig): {
       ? Math.floor(startup.maxChars)
       : 4000;
 
+  // Model-aware maxChars overrides
+  const maxCharsByModel: Record<string, number> = {};
+  if (startup.maxCharsByModel && typeof startup.maxCharsByModel === "object") {
+    for (const [pattern, chars] of Object.entries(startup.maxCharsByModel)) {
+      if (typeof chars === "number" && Number.isFinite(chars) && chars > 0) {
+        maxCharsByModel[pattern.toLowerCase()] = Math.floor(chars);
+      }
+    }
+  }
+
   const cacheTtlMs =
     typeof startup.cacheTtlMs === "number" && Number.isFinite(startup.cacheTtlMs) && startup.cacheTtlMs >= 0
       ? Math.floor(startup.cacheTtlMs)
@@ -270,8 +284,26 @@ function resolveStartupInjectionConfig(pluginCfg: PluginConfig): {
     enabled: startup.enabled !== false,
     mode,
     maxChars,
+    maxCharsByModel,
     cacheTtlMs,
   };
+}
+
+/** Resolve maxChars for a specific model. First matching pattern wins. */
+function resolveMaxCharsForModel(
+  startupCfg: { maxChars: number; maxCharsByModel: Record<string, number> },
+  model?: string,
+): number {
+  if (!model || Object.keys(startupCfg.maxCharsByModel).length === 0) {
+    return startupCfg.maxChars;
+  }
+  const modelLower = model.toLowerCase();
+  for (const [pattern, chars] of Object.entries(startupCfg.maxCharsByModel)) {
+    if (modelLower.includes(pattern)) {
+      return chars;
+    }
+  }
+  return startupCfg.maxChars;
 }
 
 function validateEmbeddingDimensions(
@@ -989,7 +1021,10 @@ const memoryShadowdbPlugin = {
     if (startupCfg.enabled) {
       api.on("before_agent_start", async (_event, ctx) => {
         try {
-          const startup = await search.getStartupContext(startupCfg.maxChars);
+          const currentModel = (ctx as Record<string, unknown>)?.model as string | undefined;
+          const effectiveMaxChars = resolveMaxCharsForModel(startupCfg, currentModel);
+
+          const startup = await search.getStartupContext(effectiveMaxChars);
           if (!startup?.text) {
             return;
           }
@@ -1031,7 +1066,7 @@ const memoryShadowdbPlugin = {
           const truncatedAttr = startup.truncated ? ' truncated="true"' : "";
 
           api.logger.debug?.(
-            `memory-shadowdb: startup injected (mode=${startupCfg.mode}, rows=${startup.rowCount}, chars=${startup.totalChars}, digest=${startup.digest}, session=${sessionKey})`,
+            `memory-shadowdb: startup injected (mode=${startupCfg.mode}, model=${currentModel || "unknown"}, maxChars=${effectiveMaxChars}, rows=${startup.rowCount}, chars=${startup.totalChars}, digest=${startup.digest}, session=${sessionKey})`,
           );
 
           return {
