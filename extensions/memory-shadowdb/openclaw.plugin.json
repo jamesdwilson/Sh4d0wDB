@@ -67,6 +67,18 @@
       "placeholder": "memories",
       "help": "PG table with content + embedding columns"
     },
+    "writes.enabled": {
+      "label": "Write Operations Enabled",
+      "help": "Master gate for memory_write, memory_update, memory_delete tools (default: false)"
+    },
+    "writes.autoEmbed": {
+      "label": "Auto-Embed on Write",
+      "help": "Generate embedding automatically on write/update (default: true)"
+    },
+    "writes.allowDelete": {
+      "label": "Allow Hard Delete",
+      "help": "Permit permanent row removal via memory_delete(hard=true). Default: false (soft-delete only)."
+    },
     "startup.enabled": {
       "label": "Startup Hydration Enabled",
       "help": "Inject startup identity/rules context from DB before runs (default: true)"
@@ -180,6 +192,24 @@
           },
           "textWeight": {
             "type": "number"
+          }
+        }
+      },
+      "writes": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Master gate for write tools (memory_write, memory_update, memory_delete). Default: false."
+          },
+          "autoEmbed": {
+            "type": "boolean",
+            "description": "Auto-generate embedding on write/update. Default: true."
+          },
+          "allowDelete": {
+            "type": "boolean",
+            "description": "Allow hard-delete (permanent row removal). Default: false."
           }
         }
       },

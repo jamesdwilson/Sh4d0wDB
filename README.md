@@ -28,6 +28,9 @@
 
 - `memory_search`
 - `memory_get`
+- `memory_write` (config-gated)
+- `memory_update` (config-gated)
+- `memory_delete` (config-gated)
 
 ---
 
@@ -52,6 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/openclaw/shadowdb/main/setup.sh | b
 ## ✅ Production-ready now
 
 - Fast, grounded retrieval from SQL via the memory plugin for OpenClaw (`memory_search` / `memory_get`)
+- **Write operations** — `memory_write`, `memory_update`, `memory_delete` tools with config-gated access, auto-embedding, and soft-delete safety
 - Deterministic startup hydration from DB via `before_agent_start` hook
 - **Model-aware startup injection** — `maxCharsByModel` config maps model name patterns to per-model char budgets so small-context models (ministral-8b, qwen3) get compact P0/P1 essentials while large-context models (Opus, Sonnet) get the full priority stack
 - Startup mapping path for legacy identity files (`SOUL.md`, `IDENTITY.md`) through import scripts
@@ -84,11 +88,13 @@ curl -fsSL https://raw.githubusercontent.com/openclaw/shadowdb/main/setup.sh | b
 ```mermaid
 flowchart LR
     U[User Prompt] --> A[OpenClaw Agent]
-    A --> T[memory_search / memory_get]
-    T --> P[memory-shadowdb plugin]
+    A --> TR[memory_search / memory_get]
+    A --> TW[memory_write / memory_update / memory_delete]
+    TR --> P[memory-shadowdb plugin]
+    TW --> P
     P --> D[(ShadowDB / PostgreSQL)]
     P --> E[Embedding Provider]
-    D --> R[Ranked memory results]
+    D --> R[Ranked results / Write confirmations]
     R --> A
 ```
 
@@ -133,7 +139,7 @@ sequenceDiagram
 erDiagram
     OPENCLAW_AGENT ||--|| MEMORY_PLUGIN : uses
     MEMORY_PLUGIN ||--o{ STARTUP_RECORD : reads
-    MEMORY_PLUGIN ||--o{ MEMORY_RECORD : reads
+    MEMORY_PLUGIN ||--o{ MEMORY_RECORD : "reads + writes"
 
     STARTUP_RECORD {
       text key PK
@@ -147,10 +153,13 @@ erDiagram
       text title
       text category
       text content
+      text_arr tags
       vector embedding
       tsvector fts
       bool contradicted
       bigint superseded_by FK
+      timestamptz created_at
+      timestamptz updated_at
     }
 ```
 
@@ -276,12 +285,118 @@ Rows are fetched `ORDER BY priority ASC` and concatenated until the budget is hi
 
 ---
 
+# ✏️ Write Operations
+
+## Overview
+
+ShadowDB supports write operations through three tools: `memory_write`, `memory_update`, and `memory_delete`. All writes are **config-gated** — disabled by default, requiring explicit opt-in via plugin config. This is a deliberate safety choice: reads are always safe, writes require intent.
+
+## Tools
+
+### `memory_write` — Create a new memory record
+
+Insert a new record into the memories table with automatic embedding generation.
+
+| Parameter    | Type       | Required | Description                                           |
+|-------------|-----------|----------|-------------------------------------------------------|
+| `content`   | `string`  | ✅       | Record content (the knowledge to persist)             |
+| `category`  | `string`  | ❌       | Organizational category (default: `"general"`)         |
+| `title`     | `string`  | ❌       | Human-readable title for the record                   |
+| `tags`      | `string[]`| ❌       | Searchable tag array                                  |
+
+**Behavior:**
+- Inserts into `memories` table with `record_type = 'fact'`
+- If `writes.autoEmbed` is enabled (default: `true`), generates embedding vector automatically
+- Returns the new record ID and virtual path (`shadowdb/{category}/{id}`)
+- Content is validated: must be non-empty, max 100,000 characters
+
+### `memory_update` — Update an existing record
+
+Modify a record's content, title, category, or tags. Re-embeds automatically on content change.
+
+| Parameter    | Type       | Required | Description                                           |
+|-------------|-----------|----------|-------------------------------------------------------|
+| `id`        | `number`  | ✅       | Record ID to update                                   |
+| `content`   | `string`  | ❌       | New content (triggers re-embedding if changed)        |
+| `title`     | `string`  | ❌       | New title                                             |
+| `category`  | `string`  | ❌       | New category                                          |
+| `tags`      | `string[]`| ❌       | New tag array (replaces existing)                     |
+
+**Behavior:**
+- Only updates fields that are explicitly provided (partial update)
+- If content changes and `writes.autoEmbed` is enabled, regenerates embedding
+- Sets `updated_at = NOW()` automatically (via database trigger)
+- Returns confirmation with the updated record path
+- Fails with clear error if record ID does not exist
+
+### `memory_delete` — Soft-delete or hard-delete a record
+
+Remove a record from active search results.
+
+| Parameter    | Type       | Required | Description                                           |
+|-------------|-----------|----------|-------------------------------------------------------|
+| `id`        | `number`  | ✅       | Record ID to delete                                   |
+| `hard`      | `boolean` | ❌       | Hard-delete (permanent). Default: `false` (soft-delete)|
+
+**Behavior:**
+- **Soft-delete (default):** Sets `contradicted = TRUE` — record remains in DB but is excluded from search results by the `WHERE contradicted IS NOT TRUE` filter
+- **Hard-delete:** Permanently removes the row. Requires `writes.allowDelete = true` in config — if not set, hard-delete requests are rejected
+- Returns confirmation with the deleted record ID and method used
+
+## Config Reference
+
+```jsonc
+// in openclaw.json → plugins.entries.memory-shadowdb.config
+"writes": {
+  "enabled": true,           // Gate: must be true for any write tool to function
+  "autoEmbed": true,         // Auto-generate embedding on write/update (default: true)
+  "allowDelete": false       // Allow hard-delete (permanent). Default: false (soft-delete only)
+}
+```
+
+### Config Behavior Matrix
+
+| `writes.enabled` | Tool call         | Result                                |
+|-------------------|-------------------|---------------------------------------|
+| `false` (default) | `memory_write`    | Error: "Write operations are disabled" |
+| `true`            | `memory_write`    | Insert + auto-embed                   |
+| `true`            | `memory_update`   | Update + re-embed if content changed  |
+| `true`            | `memory_delete`   | Soft-delete (set contradicted=true)   |
+| `true` + `allowDelete: true` | `memory_delete(hard=true)` | Hard-delete (permanent) |
+| `true` + `allowDelete: false` | `memory_delete(hard=true)` | Error: "Hard delete is not enabled" |
+
+### Embedding on Write
+
+When `writes.autoEmbed` is `true` (default), write and update operations automatically generate an embedding vector using the configured embedding provider. This means new records are immediately searchable via vector similarity — no separate backfill step required.
+
+If `autoEmbed` is `false`, records are inserted with `embedding = NULL`. They'll still be found by FTS and trigram search, but not by vector similarity. Use the batch embedding backfill CLI (roadmap) to embed them later.
+
+If embedding fails (e.g., provider is down), the write **still succeeds** — the record is inserted without an embedding, and a warning is logged. This fail-open design prioritizes data persistence over search quality.
+
+## Security Model
+
+1. **Config-gated access**: Writes are disabled by default. The `writes.enabled` flag must be explicitly set in plugin config — there is no way to enable writes via tool parameters, environment variables, or runtime state.
+
+2. **Soft-delete by default**: `memory_delete` marks records as contradicted rather than removing them. Hard-delete requires a separate config flag (`writes.allowDelete`), creating a two-layer safety gate.
+
+3. **Input validation**: Content is validated for type, length (max 100,000 chars), and non-emptiness. Category and title are sanitized strings. Tags must be an array of strings.
+
+4. **SQL parameterization**: All write queries use parameterized SQL (`$1`, `$2`, ...). No user input is ever interpolated into SQL strings — same security model as read operations.
+
+5. **Embedding isolation**: Auto-embedding uses the same `EmbeddingClient` as search — API keys come from config/env only, never from tool parameters.
+
+---
+
 # ✅ Validation Checklist
 
 - [ ] `memory_search` returns `provider: "shadowdb"`
 - [ ] core memories retrieve correctly
 - [ ] identity behavior remains stable across restarts/compactions
 - [ ] rollback path tested
+- [ ] `memory_write` inserts and auto-embeds when `writes.enabled = true`
+- [ ] `memory_update` re-embeds on content change
+- [ ] `memory_delete` soft-deletes by default, hard-delete rejected without `allowDelete`
+- [ ] Write tools return clear errors when `writes.enabled = false`
 
 ---
 
@@ -332,20 +447,20 @@ Current tests cover:
 # 📋 Roadmap / TODOs
 
 ## Write Operations
-- [ ] **`memory_write` tool** — Structured write with auto-embedding, category/title/content/tags, upsert by path
-  - Config: `writes.enabled` (default false), `writes.autoEmbed`, `writes.allowDelete`
-  - Enables agent to persist new knowledge directly to DB
-  - Security: strict validation, rate limiting, audit logging
+- [x] **`memory_write` tool** — Structured insert with auto-embedding, category/title/content/tags
+  - Config: `writes.enabled` (default false), `writes.autoEmbed` (default true), `writes.allowDelete` (default false)
+  - Validates input (non-empty, max 100K chars), returns new record ID and virtual path
+  - Embedding failure is non-fatal (record persists without vector)
 
-- [ ] **`memory_update` tool** — Update existing record content + re-embed
-  - Preserve record metadata (category, title, tags)
-  - Automatic embedding regeneration on content change
-  - Version tracking for update audit trail
+- [x] **`memory_update` tool** — Update existing record fields + auto re-embed on content change
+  - Partial update: only modifies fields explicitly provided
+  - Automatic embedding regeneration when content changes
+  - Fails clearly if record ID does not exist
 
-- [ ] **`memory_delete` tool** — Soft-delete or hard-delete with safety config
-  - Default: soft-delete (set `superseded_by` or `contradicted`)
-  - Hard-delete requires explicit config opt-in
-  - Confirmation required for bulk deletes
+- [x] **`memory_delete` tool** — Soft-delete by default, hard-delete config-gated
+  - Soft-delete: sets `contradicted = TRUE` (excluded from search by existing WHERE clause)
+  - Hard-delete: requires `writes.allowDelete = true` in config (two-layer safety gate)
+  - Returns confirmation with method used (soft/hard)
 
 ## Maintenance & Operations
 - [ ] **Batch embedding backfill** — CLI command to embed all NULL-embedding rows

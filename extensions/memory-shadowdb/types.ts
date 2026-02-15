@@ -121,6 +121,33 @@ export type PluginConfig = {
     textWeight?: number;
   };
   
+  /** Write operations configuration (disabled by default) */
+  writes?: {
+    /**
+     * Master gate for all write tools (memory_write, memory_update, memory_delete).
+     * Must be explicitly set to true — defaults to false for safety.
+     * There is no way to enable writes via tool parameters or env vars.
+     */
+    enabled?: boolean;
+
+    /**
+     * Auto-generate embedding vector on write/update operations.
+     * When true, new and updated records are immediately vector-searchable.
+     * When false, records are inserted with embedding=NULL (still FTS/trigram searchable).
+     * Embedding failure is non-fatal: record persists without vector, warning logged.
+     * Default: true
+     */
+    autoEmbed?: boolean;
+
+    /**
+     * Allow permanent hard-delete via memory_delete(hard=true).
+     * When false, memory_delete only soft-deletes (sets contradicted=TRUE).
+     * Two-layer safety: writes.enabled must ALSO be true.
+     * Default: false
+     */
+    allowDelete?: boolean;
+  };
+
   /** Startup context injection configuration */
   startup?: {
     /** Enable/disable startup context injection */
@@ -156,6 +183,32 @@ export type PluginConfig = {
  * - digest: inject when content changes or cache expires (balanced)
  */
 export type StartupInjectionMode = "always" | "first-run" | "digest";
+
+/**
+ * Write operation result structure
+ *
+ * Returned by memory_write, memory_update, memory_delete tools.
+ * Provides confirmation details for the agent to reference.
+ */
+export type WriteResult = {
+  /** Whether the operation succeeded */
+  ok: boolean;
+
+  /** Operation type for confirmation */
+  operation: "write" | "update" | "delete";
+
+  /** Record ID affected */
+  id: number;
+
+  /** Virtual path (shadowdb/{category}/{id}) */
+  path: string;
+
+  /** Whether an embedding was generated/updated */
+  embedded: boolean;
+
+  /** Human-readable status message */
+  message: string;
+};
 
 /**
  * Memory search result structure

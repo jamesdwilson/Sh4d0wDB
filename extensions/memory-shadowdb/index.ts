@@ -5,16 +5,17 @@
  * - Configuration resolution
  * - Embedding client initialization
  * - Search service setup
- * - Tool registration (memory_search, memory_get)
+ * - Tool registration (memory_search, memory_get, memory_write, memory_update, memory_delete)
  * - CLI command registration
  * - Startup context injection hook
  * - Service lifecycle (start/stop)
  *
  * ARCHITECTURE:
- * - types.ts: Pure type definitions
+ * - types.ts: Pure type definitions (SearchResult, WriteResult, PluginConfig, etc.)
  * - config.ts: Configuration resolution with fallback chains
  * - embedder.ts: Multi-provider embedding client
- * - search.ts: PostgreSQL hybrid search implementation
+ * - search.ts: PostgreSQL hybrid search implementation (read path)
+ * - writer.ts: Memory write/update/delete with auto-embedding (write path)
  * - index.ts (this file): Plugin registration and orchestration
  *
  * SECURITY MODEL:
@@ -35,7 +36,7 @@ import { Type } from "@sinclair/typebox";
 import { createHash } from "node:crypto";
 
 // Local module imports (ESM .js extensions required)
-import type { PluginConfig, SearchResult } from "./types.js";
+import type { PluginConfig, SearchResult, WriteResult } from "./types.js";
 import {
   resolveConnectionString,
   resolveEmbeddingConfig,
@@ -46,6 +47,7 @@ import {
 } from "./config.js";
 import { EmbeddingClient } from "./embedder.js";
 import { ShadowSearch } from "./search.js";
+import { ShadowWriter } from "./writer.js";
 
 /**
  * Memory-ShadowDB Plugin Definition
@@ -87,6 +89,20 @@ const memoryShadowdbPlugin = {
     const vectorWeight = pluginCfg.search?.vectorWeight ?? 0.7;
     const textWeight = pluginCfg.search?.textWeight ?? 0.3;
     const startupCfg = resolveStartupInjectionConfig(pluginCfg);
+
+    // ========================================================================
+    // Write Operations Configuration
+    // ========================================================================
+    
+    // SECURITY: Write config resolution — all gates default to safe values.
+    // writes.enabled defaults to false (no writes unless explicitly enabled).
+    // writes.autoEmbed defaults to true (new records are immediately searchable).
+    // writes.allowDelete defaults to false (only soft-delete permitted).
+    const writesCfg = {
+      enabled: pluginCfg.writes?.enabled === true,         // Must be explicitly true
+      autoEmbed: pluginCfg.writes?.autoEmbed !== false,    // Default true
+      allowDelete: pluginCfg.writes?.allowDelete === true, // Must be explicitly true
+    };
     
     // SECURITY: Startup injection cache bounded at 5000 entries (prevents memory exhaustion)
     const startupInjectState = new Map<string, { digest: string; at: number }>();
@@ -137,8 +153,38 @@ const memoryShadowdbPlugin = {
       textWeight,
     });
 
+    // Initialize writer lazily (uses shared pool from search to avoid duplicate connections).
+    // Lazy init ensures the pool is created before the writer tries to use it.
+    // SECURITY: Tools are only registered when writesCfg.enabled is true (primary gate).
+    // Writer also checks config internally (defense-in-depth).
+    let writer: ShadowWriter | null = null;
+
+    /**
+     * Lazy-initialize and return the ShadowWriter instance.
+     *
+     * Created on first write tool call rather than at plugin load time because:
+     * 1. The pool must be initialized (search.getSharedPool() creates it lazily)
+     * 2. Avoids unnecessary object creation when writes are disabled
+     *
+     * @returns ShadowWriter instance (singleton per plugin lifecycle)
+     * @throws Error if writes are not enabled (should never happen — tool gate prevents this)
+     */
+    function getWriter(): ShadowWriter {
+      if (!writer) {
+        writer = new ShadowWriter({
+          pool: search.getSharedPool(),
+          table: tableName,
+          embedder,
+          autoEmbed: writesCfg.autoEmbed,
+          allowDelete: writesCfg.allowDelete,
+          logger: api.logger,
+        });
+      }
+      return writer;
+    }
+
     api.logger.info(
-      `memory-shadowdb: registered (table: ${tableName}, provider: ${embeddingCfg.provider}, model: ${embeddingCfg.model}, dims: ${embeddingCfg.dimensions}, startup: ${startupCfg.enabled ? startupCfg.mode : "disabled"})`,
+      `memory-shadowdb: registered (table: ${tableName}, provider: ${embeddingCfg.provider}, model: ${embeddingCfg.model}, dims: ${embeddingCfg.dimensions}, startup: ${startupCfg.enabled ? startupCfg.mode : "disabled"}, writes: ${writesCfg.enabled ? "enabled" : "disabled"})`,
     );
 
     // ========================================================================
@@ -302,6 +348,131 @@ const memoryShadowdbPlugin = {
     );
 
     // ========================================================================
+    // Tool Registration: memory_write, memory_update, memory_delete
+    // ========================================================================
+    //
+    // SECURITY: Write tools are only registered when writes.enabled is true.
+    // When disabled, these tools simply don't exist — the agent cannot call them
+    // and they don't appear in tool listings. This is the primary access gate.
+    //
+    // Defense-in-depth: ShadowWriter also checks config internally, so even if
+    // tool registration were bypassed, writes would still be rejected.
+    //
+
+    if (writesCfg.enabled) {
+      api.registerTool(
+        (_ctx) => {
+          // TOOL 3: memory_write — create new memory record
+          const memoryWriteTool = {
+            label: "Memory Write",
+            name: "memory_write",
+            description:
+              "Create a new memory record in ShadowDB. Requires writes.enabled in plugin config. " +
+              "Auto-embeds for vector search if writes.autoEmbed is true.",
+            parameters: Type.Object({
+              content: Type.String({ description: "Record content (required, max 100K chars)" }),
+              category: Type.Optional(
+                Type.String({ description: 'Category (default: "general")' }),
+              ),
+              title: Type.Optional(Type.String({ description: "Human-readable title" })),
+              tags: Type.Optional(
+                Type.Array(Type.String(), { description: "Searchable tags (max 50)" }),
+              ),
+            }),
+            execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+              try {
+                const w = getWriter();
+                const result = await w.write({
+                  content: params.content as string,
+                  category: params.category as string | undefined,
+                  title: params.title as string | undefined,
+                  tags: params.tags as string[] | undefined,
+                });
+                return jsonResult(result as unknown as Record<string, unknown>);
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                api.logger.warn(`memory-shadowdb write error: ${message}`);
+                return jsonResult({ ok: false, error: message });
+              }
+            },
+          };
+
+          // TOOL 4: memory_update — update existing memory record
+          const memoryUpdateTool = {
+            label: "Memory Update",
+            name: "memory_update",
+            description:
+              "Update an existing memory record in ShadowDB. Partial update: only modifies provided fields. " +
+              "Re-embeds automatically if content changes.",
+            parameters: Type.Object({
+              id: Type.Number({ description: "Record ID to update" }),
+              content: Type.Optional(
+                Type.String({ description: "New content (triggers re-embedding)" }),
+              ),
+              title: Type.Optional(Type.String({ description: "New title" })),
+              category: Type.Optional(Type.String({ description: "New category" })),
+              tags: Type.Optional(
+                Type.Array(Type.String(), { description: "New tags (replaces existing)" }),
+              ),
+            }),
+            execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+              try {
+                const w = getWriter();
+                const result = await w.update({
+                  id: params.id as number,
+                  content: params.content as string | undefined,
+                  title: params.title as string | undefined,
+                  category: params.category as string | undefined,
+                  tags: params.tags as string[] | undefined,
+                });
+                return jsonResult(result as unknown as Record<string, unknown>);
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                api.logger.warn(`memory-shadowdb update error: ${message}`);
+                return jsonResult({ ok: false, error: message });
+              }
+            },
+          };
+
+          // TOOL 5: memory_delete — soft-delete or hard-delete a memory record
+          const memoryDeleteTool = {
+            label: "Memory Delete",
+            name: "memory_delete",
+            description:
+              "Delete a memory record from ShadowDB. Default: soft-delete (sets contradicted=true, reversible). " +
+              "Hard-delete (permanent) requires writes.allowDelete in config.",
+            parameters: Type.Object({
+              id: Type.Number({ description: "Record ID to delete" }),
+              hard: Type.Optional(
+                Type.Boolean({
+                  description:
+                    "Hard-delete (permanent). Default: false (soft-delete). Requires writes.allowDelete config.",
+                }),
+              ),
+            }),
+            execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+              try {
+                const w = getWriter();
+                const result = await w.delete({
+                  id: params.id as number,
+                  hard: params.hard as boolean | undefined,
+                });
+                return jsonResult(result as unknown as Record<string, unknown>);
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                api.logger.warn(`memory-shadowdb delete error: ${message}`);
+                return jsonResult({ ok: false, error: message });
+              }
+            },
+          };
+
+          return [memoryWriteTool, memoryUpdateTool, memoryDeleteTool];
+        },
+        { names: ["memory_write", "memory_update", "memory_delete"] },
+      );
+    }
+
+    // ========================================================================
     // CLI Registration: shadowdb commands
     // ========================================================================
 
@@ -413,6 +584,7 @@ export const __test__ = {
   resolveEmbeddingConfig,
   resolveStartupInjectionConfig,
   validateEmbeddingDimensions,
+  ShadowWriter,
 };
 
 export default memoryShadowdbPlugin;

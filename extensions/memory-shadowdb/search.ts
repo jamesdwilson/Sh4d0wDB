@@ -433,7 +433,22 @@ export class ShadowSearch {
   }
 
   /**
-   * Health check: verify database connection
+   * Expose the connection pool for shared use by ShadowWriter
+   *
+   * The writer needs a pool reference to execute write queries.
+   * Rather than creating a separate pool (which would double connection count),
+   * we share the same pool. This is safe because:
+   * - Pool handles concurrency internally (pg.Pool is connection-safe)
+   * - Max connections is still capped at 3 (set in getPool())
+   * - Writer and search operations are independent queries (no transaction conflicts)
+   *
+   * @returns The PostgreSQL connection pool (lazily created if needed)
+   */
+  getSharedPool(): pg.Pool {
+    return this.getPool();
+  }
+
+  /**
    *
    * Simple SELECT 1 query to test connectivity.
    * Used by plugin service for startup validation.
