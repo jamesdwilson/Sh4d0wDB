@@ -235,6 +235,13 @@ export class ShadowSearch {
     if (result.rows.length === 0) {
       return null;
     }
+
+    // Track access for operational insight and retention policy (stalePurgeDays).
+    // Fire-and-forget: don't block the response on this UPDATE.
+    // NOT used for ranking — see README "Access tracking: metadata, not ranking."
+    this.getPool()
+      .query(`UPDATE ${this.table} SET access_count = access_count + 1, last_accessed = NOW() WHERE id = $1`, [recordId])
+      .catch(() => {}); // Silently ignore — bookkeeping failure is not a read failure
     
     const row = result.rows[0];
     const virtualPath = `shadowdb/${row.category || "general"}/${row.id}`;
