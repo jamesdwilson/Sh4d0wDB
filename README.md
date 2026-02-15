@@ -327,6 +327,57 @@ Current tests cover:
 
 ---
 
+---
+
+# 📋 Roadmap / TODOs
+
+## Write Operations
+- [ ] **`memory_write` tool** — Structured write with auto-embedding, category/title/content/tags, upsert by path
+  - Config: `writes.enabled` (default false), `writes.autoEmbed`, `writes.allowDelete`
+  - Enables agent to persist new knowledge directly to DB
+  - Security: strict validation, rate limiting, audit logging
+
+- [ ] **`memory_update` tool** — Update existing record content + re-embed
+  - Preserve record metadata (category, title, tags)
+  - Automatic embedding regeneration on content change
+  - Version tracking for update audit trail
+
+- [ ] **`memory_delete` tool** — Soft-delete or hard-delete with safety config
+  - Default: soft-delete (set `superseded_by` or `contradicted`)
+  - Hard-delete requires explicit config opt-in
+  - Confirmation required for bulk deletes
+
+## Maintenance & Operations
+- [ ] **Batch embedding backfill** — CLI command to embed all NULL-embedding rows
+  - Progress reporting and resume on failure
+  - Rate limiting to avoid overwhelming embedding provider
+  - Dry-run mode for cost estimation
+
+- [ ] **Schema migration versioning** — Track schema version, auto-migrate on startup
+  - Detect schema drift and apply migrations automatically
+  - Rollback support for failed migrations
+  - Version table to track applied migrations
+
+## Testing & Validation
+- [ ] **Golden parity test harness** — Automated before/after behavior comparison
+  - Compare memory-core vs memory-shadowdb responses
+  - Regression detection for retrieval quality
+  - Performance benchmarking (latency, recall, precision)
+
+## Multi-Tenancy & Scoping
+- [ ] **Multi-agent scoped startup records** — Per-agent startup row filtering
+  - `startup.agent_filter` column for agent-specific rules
+  - Shared vs agent-specific identity isolation
+  - Enables multiple agents with different personas on same DB
+
+## Audit & Compliance
+- [ ] **Write audit log** — Track who wrote what and when (session, timestamp, diff)
+  - Immutable append-only audit table
+  - Track session ID, timestamp, user context, content diff
+  - Enables compliance tracking and abuse detection
+
+---
+
 # 🤝 Contributing
 
 If you contribute, please keep docs explicit and state current runtime truth (not aspirational claims).
