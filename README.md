@@ -123,6 +123,42 @@ The current database has ~30% duplicate records from multiple import passes that
 
 This is a data hygiene problem, not a schema problem. The fix is a one-time dedup pass, not a uniqueness constraint on content (which would break legitimate records that share prefixes). Going forward, the write tools include the data but don't prevent the operator from running the same import twice. That's a process problem, and process problems get process fixes.
 
+### Staleness as signal, not action
+
+The instinct when you find stale data is to build tools to remove it. But deletion is an action. Staleness is a signal. They shouldn't be conflated.
+
+A record from 30 days ago isn't necessarily wrong. Someone's phone number from last month is still valid. A project status from last month probably isn't. The system shouldn't decide — the LLM should, because it has the context of *what's being asked*.
+
+The practical options, roughly ordered from simplest to most complex:
+
+**1. Recency-aware search ranking (cheapest, most organic)**
+
+The current RRF search ranking uses vector similarity, FTS relevance, and trigram matching — but has zero recency signal. A fact from day one competes equally with a fact from today. Adding a recency decay factor to the RRF score would organically push old records down without removing them. Old records still appear when they're the best match — they just don't crowd out newer ones when both match equally.
+
+This is the most natural fix because it works like human memory: recent things are more salient, but old important things still surface when directly relevant.
+
+**2. Surface age in search results (let the LLM decide)**
+
+The search snippet format currently shows `[category] | type: record_type` but no date. If the snippet included `(5 days ago)` or `(created 2026-02-10)`, the LLM can judge relevance in context. A research report from two weeks ago answering "what did we find about X?" is perfectly relevant. The same report answering "what's the current status of X?" is suspect. The LLM knows the difference — but only if it can see the age.
+
+**3. Explicit stale marker (`stale_at TIMESTAMPTZ`)**
+
+A column the agent or a maintenance process can set to flag records as "this might be outdated." Not deleted, not wrong — just flagged. Search could include stale records with lower ranking, or the LLM could see the stale flag and decide.
+
+This is more complex than options 1-2 and mostly useful if you want the agent to actively curate: "I know this is outdated, flag it." Whether that's worth the added surface area vs. just letting recency ranking handle it is an open question.
+
+**4. Age-gated cleanup (roadmap, not now)**
+
+A periodic task that reviews records older than N days, flags obviously stale ones, and surfaces borderline ones for human review. This is a maintenance task, not a feature — closer to "spring cleaning" than "garbage collection." Worth exploring when the DB is large enough that organic ranking alone doesn't cut it, but not worth building until that's actually the case.
+
+**What we're NOT building:**
+
+- Automatic contradiction detection on write ("you're writing X but Y already exists")
+- Semantic dedup on the write path ("this is 95% similar to record Z")
+- Knowledge graph versioning ("record A supersedes B which supersedes C")
+
+These are solutions to problems we don't have yet, and each one adds write-path complexity that compounds. If we need them later, we'll know — because retrieval quality will visibly degrade and the simple options won't fix it.
+
 ---
 
 # 🧭 Architecture at a Glance
