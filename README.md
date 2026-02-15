@@ -151,19 +151,6 @@ This is more complex than options 1-2 and mostly useful if you want the agent to
 
 A periodic task that reviews records older than N days, flags obviously stale ones, and surfaces borderline ones for human review. This is a maintenance task, not a feature — closer to "spring cleaning" than "garbage collection." Worth exploring when the DB is large enough that organic ranking alone doesn't cut it, but not worth building until that's actually the case.
 
-**Access tracking: metadata, not ranking**
-
-`access_count` and `last_accessed` columns exist in the schema. They're incremented when a record is fetched via `memory_get` (the deliberate follow-up read, not the search listing). This is passive bookkeeping — it tells you which records are actually being used, which have never been accessed, and when something was last relevant.
-
-Critically, access frequency is **not** fed into the search ranking. The intuition that "frequently accessed = more valuable" breaks down because it creates a feedback loop: a record that ranks high for structural reasons (strong keyword overlap, embedding proximity) gets accessed, which would boost its rank, which gets it accessed again. The record doesn't have to be *useful* — it just has to keep appearing. Access-as-ranking-signal amplifies existing biases instead of correcting them.
-
-Access data is useful for:
-- Operational insight (which records actually get used?)
-- Cleanup candidates (records with `access_count = 0` after months)
-- Retention policy (`stalePurgeDays` uses `last_accessed` to identify truly abandoned records)
-
-It's not useful for: ranking, boosting, or any form of "popular records surface higher."
-
 **What we're NOT building:**
 
 - Automatic contradiction detection on write ("you're writing X but Y already exists")
