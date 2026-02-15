@@ -81,6 +81,50 @@ curl -fsSL https://raw.githubusercontent.com/openclaw/shadowdb/main/setup.sh | b
 
 ---
 
+# ⚖️ The Constraint Paradox
+
+## Markdown files were limited. Those limits were features.
+
+A 200-line `MEMORY.md` couldn't have 2,000 duplicate entries. You couldn't write a fact without seeing the other facts right next to it. Staleness was visible because the entire file fit on a screen. When the file got unwieldy, the friction forced curation — you trimmed, consolidated, rewrote. The constraints *were* the quality control.
+
+ShadowDB removes those constraints. That's the point — semantic search over thousands of records beats grep through a flat file. But removing constraints has consequences that aren't obvious until you're deep in it:
+
+| Markdown files (constrained) | Database (unconstrained) |
+|------------------------------|--------------------------|
+| Can't duplicate — you'd see it | Duplicates are trivial and invisible |
+| Staleness is visible — small file, you notice | Staleness is invisible — nobody scrolls 10K rows |
+| Size forces curation — unwieldy = trim | `INSERT` is free — table grows silently |
+| Everything is context — you read the whole file | Records are isolated — no ambient awareness |
+| No orphans — if it's in the file, it's active | Orphaned/contradicted/stale data accumulates |
+
+The trap is building a more powerful system, then spending all your engineering budget on guardrails for the power you added. Retention policies, dedup passes, contradiction detection, knowledge graph management, semantic similarity checks on write — each one solves a real problem, but each one only exists *because the simpler system couldn't have that problem*.
+
+**If the guardrails become more complex than the feature, you've lost the trade.**
+
+### Where we draw the line
+
+ShadowDB's write tools are designed to feel like editing a document, not managing a database. The agent writes facts. Sometimes it replaces old facts. Sometimes it removes facts. That's it. We resist the pull toward building a knowledge lifecycle management system inside a memory plugin.
+
+Concretely:
+
+1. **Write tools stay simple.** `memory_write`, `memory_update`, `memory_delete`, `memory_undelete`. No knowledge graphs, no automatic contradiction detection, no semantic dedup on the write path. Complexity in the write path means complexity in every agent interaction.
+
+2. **Retention is the only automated cleanup.** Soft-deleted records expire after a configurable window. That's the one piece of automation we allow, because it's set-and-forget with no runtime decisions. Everything else is a conscious human or agent action.
+
+3. **Data quality is a curation problem, not an infrastructure problem.** If the DB accumulates cruft, the answer is periodic cleanup (manual or scripted), not more features in the write tools. A dedup pass is a maintenance task you run, not a capability you build into the system.
+
+4. **`superseded_by` and `contradicted` exist in the schema.** They're the right model for knowledge lifecycle when you need them. But the write tools don't force you into using them. They're available for explicit use — not automated, not required. If you want to mark a record as superseded when writing its replacement, you can. If you don't, the old record just stays in search results alongside the new one, and that's usually fine.
+
+5. **Accept some mess.** A database with 10K records and 5% cruft that serves fast, grounded retrieval is better than a pristine 200-line file that wastes context on every turn and can't scale. Perfect data quality is not the goal. Good-enough retrieval is.
+
+### The import lesson
+
+The current database has ~30% duplicate records from multiple import passes that didn't deduplicate. This is exactly the class of problem that couldn't happen with markdown files — you'd never paste the same content into `MEMORY.md` three times. It happened because `INSERT INTO` doesn't check if the content already exists, and import scripts ran multiple times.
+
+This is a data hygiene problem, not a schema problem. The fix is a one-time dedup pass, not a uniqueness constraint on content (which would break legitimate records that share prefixes). Going forward, the write tools include the data but don't prevent the operator from running the same import twice. That's a process problem, and process problems get process fixes.
+
+---
+
 # 🧭 Architecture at a Glance
 
 <details>
