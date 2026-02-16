@@ -106,7 +106,12 @@ const memoryShadowdbPlugin = {
     const embeddingCfg = resolveEmbeddingConfig(pluginCfg);
     const tableName = pluginCfg.table || "memories";
     const maxResultsDefault = pluginCfg.search?.maxResults ?? 6;
-    const minScoreDefault = pluginCfg.search?.minScore ?? 0.15;
+    // RRF scores are much smaller than raw similarity scores.
+    // With k=60 and weights summing to ~1.35, the theoretical max RRF score
+    // for a rank-1 result across all signals is ~0.022. A threshold of 0.15
+    // would filter out everything. Default 0.005 = "appeared in at least one
+    // signal with reasonable rank."
+    const minScoreDefault = pluginCfg.search?.minScore ?? 0.005;
     const vectorWeight = pluginCfg.search?.vectorWeight ?? 0.7;
     const textWeight = pluginCfg.search?.textWeight ?? 0.3;
     const recencyWeight = pluginCfg.search?.recencyWeight ?? 0.15;

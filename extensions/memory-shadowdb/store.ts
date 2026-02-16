@@ -143,9 +143,9 @@ export abstract class MemoryStore {
 
     // Run all search legs in parallel — backends return [] for unsupported signals
     const [vectorHits, ftsHits, fuzzyHits] = await Promise.all([
-      this.vectorSearch(query, embedding, oversample),
-      this.textSearch(query, oversample),
-      this.fuzzySearch(query, oversample),
+      this.vectorSearch(query, embedding, oversample).catch(() => [] as RankedHit[]),
+      this.textSearch(query, oversample).catch(() => [] as RankedHit[]),
+      this.fuzzySearch(query, oversample).catch(() => [] as RankedHit[]),
     ]);
 
     // Merge via RRF
@@ -224,8 +224,8 @@ export abstract class MemoryStore {
 
     // Sort by RRF score descending, apply threshold, return top N
     return allEntries
-      .filter((e) => e.rrfScore > Math.max(minScore, 0.001))
       .sort((a, b) => b.rrfScore - a.rrfScore)
+      .filter((e) => e.rrfScore > Math.max(minScore, 0.001))
       .slice(0, maxResults)
       .map((e) => ({ ...e.hit, rrfScore: e.rrfScore }));
   }

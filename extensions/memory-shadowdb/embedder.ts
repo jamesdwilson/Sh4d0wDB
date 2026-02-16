@@ -109,9 +109,15 @@ export class EmbeddingClient {
    * @returns Embedding vector (validated to match expected dimensions)
    * @throws Error if provider fails or dimensions don't match
    */
-  async embed(text: string): Promise<number[]> {
+  async embed(text: string, _purpose: "query" | "document" = "query"): Promise<number[]> {
     let embedding: number[];
 
+    // NOTE: Task prefix (search_query:/search_document: for nomic-embed-text)
+    // is intentionally NOT applied here. Existing embeddings in the DB were
+    // generated without prefixes. Adding prefixes to queries only would degrade
+    // similarity vs unprefixed document embeddings. To enable prefixes:
+    // 1. Update this to pass this.resolveTaskPrefix(purpose)
+    // 2. Re-embed all existing documents with "document" purpose
     switch (this.provider) {
       case "ollama":
         embedding = await this.embedOllama(text);
@@ -152,14 +158,30 @@ export class EmbeddingClient {
    * @returns Embedding vector from Ollama
    * @throws Error if HTTP request fails or response is invalid
    */
-  private async embedOllama(text: string): Promise<number[]> {
+  /**
+   * Resolve task prefix for models that use them (e.g., nomic-embed-text).
+   * Returns undefined for models that don't need prefixes.
+   */
+  private resolveTaskPrefix(purpose: "query" | "document"): string | undefined {
+    const model = this.model.toLowerCase();
+    // nomic-embed-text uses "search_query: " and "search_document: " prefixes
+    if (model.includes("nomic")) {
+      return purpose === "query" ? "search_query: " : "search_document: ";
+    }
+    return undefined;
+  }
+
+  private async embedOllama(text: string, taskPrefix?: string): Promise<number[]> {
     // SECURITY: Truncate input to prevent DoS via large text
     const truncated = text.slice(0, 8000);
+    // nomic-embed-text uses task prefixes: "search_query: " for queries,
+    // "search_document: " for documents. Other models ignore unknown prefixes.
+    const prompt = taskPrefix ? `${taskPrefix}${truncated}` : truncated;
     
     const response = await fetch(`${this.ollamaUrl.replace(/\/$/, "")}/api/embeddings`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...this.headers },
-      body: JSON.stringify({ model: this.model, prompt: truncated }),
+      body: JSON.stringify({ model: this.model, prompt }),
     });
     
     if (!response.ok) {
