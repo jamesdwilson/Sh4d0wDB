@@ -172,6 +172,83 @@ This feature is **off by default**. To enable it, add rows to the `primer` table
 
 ---
 
+## Importing your identity
+
+<details>
+<summary>How to migrate from markdown files — and what goes where</summary>
+
+Your agent probably has identity files already — `SOUL.md`, `RULES.md`, `USER.md`, `IDENTITY.md`, whatever your framework calls them. ShadowDB replaces those files with a searchable database.
+
+### Step 1: Import everything as memories
+
+Take your existing files and import them as memory records. Break them into logical chunks — one record per concept, not one giant blob:
+
+```sql
+-- Example: importing rules from RULES.md
+INSERT INTO memories (content, category, title, tags)
+VALUES
+  ('Never send emails without explicit user confirmation.', 'rules', 'Email confirmation rule', '{"communication", "safety"}'),
+  ('Format all dates as YYYY-MM-DD in written responses.', 'rules', 'Date formatting', '{"formatting"}'),
+  ('Alex lives in Austin, TX with his son Maya (born 2020-03-15).', 'identity', 'Family basics', '{"james", "leo", "tyler"}');
+```
+
+Or let your agent do it — tell it to read each file and `memory_write` each concept as a separate record with a meaningful category and tags.
+
+This is the main event. **Most of your identity files should become searchable memories.** The agent pulls relevant context when it needs it instead of having everything force-fed on every turn.
+
+### Step 2: Decide what needs to be always-on
+
+Here's the question: **if the agent violates this rule before it has a chance to search, is that a problem?**
+
+| Rule | Can it wait for a search? | Where it goes |
+|------|--------------------------|---------------|
+| "You are Shadow, Alex's AI assistant" | No — agent needs its name before generating a single token | **Primer** |
+| "Never use the words workout, exercise, or cardio" | No — damage is done before the agent thinks to search for banned words | **Primer** |
+| "James drives a Tesla Model 3" | Yes — agent will search when cars come up | **Memory** |
+| "Format emails with a signature block" | Yes — agent will search when composing email | **Memory** |
+| "Always confirm before sending messages" | No — can't retrieve this *after* already sending | **Primer** |
+| "Preferred restaurants in Austin" | Yes — agent searches when food comes up | **Memory** |
+
+**Most users need 3-5 primer entries.** If you have more than 10, you're probably over-thinking it. The whole point is that searchable memory handles the long tail.
+
+### Step 3: Load your primer rules
+
+**Option A: Create a `PRIMER.md` file** with your always-on rules (one rule per section), then tell your agent to read it and insert each into the `primer` table:
+
+```markdown
+# identity
+You are Shadow, Alex's AI assistant. You run on OpenClaw.
+
+# owner
+Alex Chen lives in Austin, TX. His daughter Maya was born 2020-03-15.
+
+# banned-words
+Never use the words: workout, exercise, cardio, regime. Use specific activity names instead.
+
+# safety
+Never send emails, messages, or make purchases without explicit user confirmation.
+```
+
+```sql
+INSERT INTO primer (key, content, priority) VALUES
+  ('identity', 'You are Shadow, Alex''s AI assistant. You run on OpenClaw.', 0),
+  ('owner', 'Alex Chen lives in Austin, TX. His daughter Maya was born 2020-03-15.', 10),
+  ('banned-words', 'Never use the words: workout, exercise, cardio, regime. Use specific activity names instead.', 20),
+  ('safety', 'Never send emails, messages, or make purchases without explicit user confirmation.', 5);
+```
+
+**Option B: Paste rules during setup** — the setup script will ask if you have always-on rules and let you enter them interactively.
+
+**Option C: Skip it** — start with memories only. If you notice your agent forgetting something critical on the first turn of new conversations, that's your sign to add it as a primer rule.
+
+### The `always` column
+
+Primer rows have an `always` column (default: `false`). When set to `true`, the row is injected on every single turn, not just the first. Use this sparingly — it's for rules so critical that even scrolling out of the context window in a long conversation would be dangerous. Most primer rules only need to be there on turn 1.
+
+</details>
+
+---
+
 ## Embedding providers
 
 <details>
