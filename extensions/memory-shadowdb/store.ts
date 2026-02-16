@@ -544,9 +544,9 @@ export abstract class MemoryStore {
   }): string {
     const maxChars = 700;
     const header = [
-      row.category ? `[${row.category}]` : null,
+      row.category || null,
       row.created_at ? formatRelativeAge(row.created_at) : null,
-    ].filter(Boolean).join(" | ");
+    ].filter(Boolean).join(" ");
 
     const prefix = header ? `${header}\n` : "";
     const body = (row.content || "").slice(0, maxChars - prefix.length);
@@ -739,23 +739,23 @@ export function formatRelativeAge(timestamp: string | Date): string {
   if (isNaN(date.getTime())) return "";
 
   const diffMs = Date.now() - date.getTime();
-  if (diffMs < 0) return "just now";
+  if (diffMs < 0) return "now";
 
   const minutes = Math.floor(diffMs / 60_000);
-  if (minutes < 60) return `${Math.max(1, minutes)}m ago`;
+  if (minutes < 60) return `${Math.max(1, minutes)}m`;
 
   const hours = Math.floor(diffMs / 3_600_000);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return `${hours}h`;
 
   const days = Math.floor(diffMs / 86_400_000);
-  if (days < 14) return `${days}d ago`;
+  if (days < 14) return `${days}d`;
 
   const weeks = Math.floor(days / 7);
-  if (weeks < 9) return `${weeks}w ago`;
+  if (weeks < 9) return `${weeks}w`;
 
   const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo ago`;
+  if (months < 12) return `${months}mo`;
 
   const years = Math.floor(days / 365);
-  return `${years}y ago`;
+  return `${years}y`;
 }
