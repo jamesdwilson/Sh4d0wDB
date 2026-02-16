@@ -379,9 +379,9 @@ This feature is **off by default**. To enable it, add rows to the `primer` table
 ## How your identity works
 
 <details>
-<summary>How to migrate from markdown files — and what goes where</summary>
+<summary>Setup handles this automatically — here's what happens under the hood</summary>
 
-Your agent probably has identity files already — `SOUL.md`, `RULES.md`, `USER.md`, `IDENTITY.md`, whatever your framework calls them. ShadowDB replaces those files with a searchable database.
+Your agent probably has identity files already — `SOUL.md`, `RULES.md`, `USER.md`, `IDENTITY.md`, whatever your framework calls them. ShadowDB turns those into a searchable database during setup. You don't have to do anything.
 
 ### Your markdown files are imported automatically
 
