@@ -201,7 +201,7 @@ Recency is intentionally low — it's a tiebreaker, not a dominant signal.
 
 All benchmarks measured on a MacBook Pro M3 Max against a real production knowledge base (6,800+ records, 768-dim embeddings). "OpenClaw Builtin" refers to the default memory plugin (flat `.md` files + SQLite embedding search). ShadowDB numbers are from the live system.
 
-> **What this table measures:** gateway-level search and retrieval — what happens at the data layer before the model sees results. An LLM can reason through typos or infer meaning once data is in context, but these benchmarks measure what the *retrieval system* can do to find the right data in the first place.
+> **What this compares:** how your agent finds information. With flat files, everything gets loaded into every prompt and the model digs through it — you pay for the tokens *and* the model wastes attention sorting through irrelevant context. With ShadowDB, the database finds what's relevant first. The model only sees what matters.
 
 ### Speed
 
