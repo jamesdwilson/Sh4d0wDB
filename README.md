@@ -227,6 +227,42 @@ Key settings:
 
 ---
 
+## Roadmap brainstorm
+
+<details>
+<summary>Ideas under consideration — nothing committed</summary>
+
+### Reactive rule injection
+
+Right now, ShadowDB injects context *before* the model runs (startup injection). But what about catching things in the model's *output*?
+
+**The idea:** after the LLM generates a reply, embed it, search the `rules` category, and surface any matching rules — so the agent self-corrects before the message reaches the user.
+
+OpenClaw already has the hooks for this:
+
+- **`message_sending`** — fires before a reply is delivered. Can modify content or cancel it. Embed the outgoing text, vector-search rules, and if something relevant surfaces (e.g. "always confirm before sending emails"), inject it as context for the next turn or trigger a reflection pass.
+
+- **`before_tool_call`** — fires before the agent executes any tool. If the model tries to call `message` or `gog` to send an email, we search rules, find "confirm before sending emails", and return `{ block: true, blockReason: "Rule: confirm with user first" }`. The model sees the block and asks for confirmation instead.
+
+**Two layers:**
+- `before_tool_call` = hard gate on actions (sending, deleting, etc.)
+- `message_sending` = soft nudge on replies (tone, persona, guardrails)
+
+**Example:** User says "send that email to Bob." Model starts composing. `before_tool_call` fires, embeds the context, finds the rule "never send emails without explicit user confirmation." Tool call is blocked with that reason. Model asks "Want me to go ahead and send that?" instead.
+
+This turns ShadowDB rules from static preamble into a live guardrail system — rules surface only when relevant, triggered by what the model is actually *doing*, not what the user asked.
+
+### Other ideas
+- Batch embedding backfill CLI for migrating unembedded records
+- Multi-agent startup scoping (different rules per agent ID)
+- Schema migration versioning
+- `clawhub publish` / `openclaw plugins install` distribution
+- SQLite + MySQL backend testing with real workloads
+
+</details>
+
+---
+
 ## License
 
 MIT
