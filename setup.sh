@@ -77,6 +77,7 @@ usage() {
 
   Flags:
     --backend <type>    Database backend: postgres, sqlite, or mysql
+    --uninstall         Remove ShadowDB (plugin files + config entry)
     --dry-run           Preview without making changes
     --yes               Skip confirmation prompts
     --help, -h          Show this help
@@ -85,11 +86,14 @@ EOF
   exit 0
 }
 
+DO_UNINSTALL=false
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --backend)   BACKEND="$2";     shift 2 ;;
     --dry-run)   DRY_RUN=true;     shift   ;;
     --yes|-y)    AUTO_YES=true;    shift   ;;
+    --uninstall) DO_UNINSTALL=true; shift  ;;
     --help|-h)   usage ;;
     *) echo "  Unknown option: $1"; usage ;;
   esac
@@ -119,6 +123,160 @@ confirm() {
     *)     echo ""; info "Skipped."; return 1 ;;
   esac
 }
+
+
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║                                                                            ║
+# ║                              UNINSTALL                                     ║
+# ║                                                                            ║
+# ║   Removes plugin files, unwires from OpenClaw config, optionally drops     ║
+# ║   the database. Mirrors `openclaw uninstall` style.                        ║
+# ║                                                                            ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+
+if $DO_UNINSTALL; then
+  echo ""
+  echo "  ╔══════════════════════════════════════════════════════╗"
+  echo "  ║                                                      ║"
+  echo "  ║          🧠  ShadowDB Uninstall  🧠                 ║"
+  echo "  ║                                                      ║"
+  echo "  ╚══════════════════════════════════════════════════════╝"
+  echo ""
+
+  OPENCLAW_CONFIG="${HOME}/.openclaw/openclaw.json"
+
+  # Show what will be removed
+  echo -e "  ${BOLD}This will remove:${NC}"
+  echo ""
+  echo -e "  ${RED}✗${NC}  Plugin files:  ${BOLD}${PLUGIN_DIR}${NC}"
+  [[ -f "$OPENCLAW_CONFIG" ]] && \
+  echo -e "  ${RED}✗${NC}  Config entry:  plugins.entries.memory-shadowdb"
+  echo ""
+
+  echo -e "  ${BOLD}This will NOT remove:${NC}"
+  echo ""
+  echo -e "  ${GREEN}✓${NC}  Your database and all memory records (kept safe)"
+  echo -e "  ${GREEN}✓${NC}  OpenClaw itself"
+  echo ""
+
+  if ! confirm "Uninstall ShadowDB?"; then
+    info "Aborted. Nothing was changed."
+    exit 0
+  fi
+
+  echo ""
+
+  # 1. Remove plugin from OpenClaw config
+  if [[ -f "$OPENCLAW_CONFIG" ]]; then
+    if ! $DRY_RUN; then
+      node -e "
+const fs = require('fs');
+const cfg = JSON.parse(fs.readFileSync('$OPENCLAW_CONFIG', 'utf8'));
+
+// Remove plugin entry
+if (cfg.plugins?.entries?.['memory-shadowdb']) {
+  delete cfg.plugins.entries['memory-shadowdb'];
+  console.log('  ✓  Removed plugins.entries.memory-shadowdb');
+}
+
+// Remove from load paths
+if (cfg.plugins?.load?.paths) {
+  const before = cfg.plugins.load.paths.length;
+  cfg.plugins.load.paths = cfg.plugins.load.paths.filter(p => !p.includes('memory-shadowdb'));
+  if (cfg.plugins.load.paths.length < before) {
+    console.log('  ✓  Removed from plugins.load.paths');
+  }
+}
+
+// Clear memory slot if it points to us
+if (cfg.plugins?.slots?.memory === 'memory-shadowdb') {
+  delete cfg.plugins.slots.memory;
+  console.log('  ✓  Cleared plugins.slots.memory');
+}
+
+fs.writeFileSync('$OPENCLAW_CONFIG', JSON.stringify(cfg, null, 2) + '\n');
+"
+    else
+      ok "[DRY RUN] Would remove memory-shadowdb from OpenClaw config"
+    fi
+  fi
+
+  # 2. Remove plugin files
+  if [[ -d "$PLUGIN_DIR" ]]; then
+    if ! $DRY_RUN; then
+      rm -rf "$PLUGIN_DIR"
+      ok "Removed ${PLUGIN_DIR}"
+    else
+      ok "[DRY RUN] Would remove ${PLUGIN_DIR}"
+    fi
+  else
+    info "Plugin directory not found — already removed?"
+  fi
+
+  # 3. Offer to drop database
+  echo ""
+  echo -e "  ${BOLD}Optional: remove the database?${NC}"
+  echo ""
+  echo -e "  Your memory records are still in the database."
+  echo -e "  Keep them if you might reinstall later."
+  echo ""
+
+  if confirm "Drop the database too? (irreversible)"; then
+    # Detect backend from existing config or ask
+    EXISTING_BACKEND=$(node -e "
+      try {
+        const cfg = JSON.parse(require('fs').readFileSync('$OPENCLAW_CONFIG','utf8'));
+        process.stdout.write(cfg.plugins?.entries?.['memory-shadowdb']?.config?.backend || '');
+      } catch {}
+    " 2>/dev/null || true)
+
+    if [[ "$EXISTING_BACKEND" == "sqlite" ]]; then
+      SQLITE_PATH="${HOME}/.shadowdb/memory.db"
+      if [[ -f "$SQLITE_PATH" ]]; then
+        if ! $DRY_RUN; then
+          rm -f "$SQLITE_PATH"
+          ok "Removed SQLite database: ${SQLITE_PATH}"
+        else
+          ok "[DRY RUN] Would remove ${SQLITE_PATH}"
+        fi
+      fi
+    elif [[ "$EXISTING_BACKEND" == "postgres" ]] || command -v dropdb &>/dev/null; then
+      if ! $DRY_RUN; then
+        if dropdb "$DB_NAME" 2>/dev/null; then
+          ok "Dropped PostgreSQL database: ${DB_NAME}"
+        else
+          warn "Could not drop database '${DB_NAME}' — you may need to do this manually"
+        fi
+      else
+        ok "[DRY RUN] Would drop database '${DB_NAME}'"
+      fi
+    else
+      info "Remove your database manually when ready."
+    fi
+  else
+    ok "Database kept — your records are safe"
+  fi
+
+  # 4. Restart gateway
+  echo ""
+  if command -v openclaw &>/dev/null && ! $DRY_RUN; then
+    info "Restarting OpenClaw gateway..."
+    openclaw gateway restart 2>/dev/null && ok "Gateway restarted" || true
+  fi
+
+  echo ""
+  echo "  ╔══════════════════════════════════════════════════════╗"
+  echo "  ║                                                      ║"
+  echo "  ║            🧠  Uninstall Complete  🧠                ║"
+  echo "  ║                                                      ║"
+  echo "  ║   Reinstall anytime:                                 ║"
+  echo "  ║   curl -fsSL .../setup.sh | bash                     ║"
+  echo "  ║                                                      ║"
+  echo "  ╚══════════════════════════════════════════════════════╝"
+  echo ""
+
+  exit 0
+fi
 
 
 # ╔══════════════════════════════════════════════════════════════════════════════╗
