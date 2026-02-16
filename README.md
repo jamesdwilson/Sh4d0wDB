@@ -34,6 +34,8 @@
 
 Gives your agent a persistent memory it can search, write, update, and delete — instead of flat markdown files that get shoved into every prompt. Works with Postgres (recommended), SQLite, or MySQL.
 
+**Why this matters:** Most agent frameworks inject your agent's entire identity — personality, rules, preferences, everything — into every single API call. That's ~9,000 bytes of static text the model already read, re-sent every turn, wasting tokens and pushing out conversation history. ShadowDB replaces all of that with an 11-byte database instruction. The agent searches for what it needs, when it needs it. Everything else stays in the database, not the prompt.
+
 | Tool | Does |
 |------|------|
 | `memory_search` | Find relevant records (semantic + keyword + fuzzy) |
