@@ -258,6 +258,13 @@ export class PostgresStore extends MemoryStore {
     );
   }
 
+  protected async fetchExpiredRecords(days: number) {
+    const result = await this.getPool().query(
+      `SELECT id, content, category, title, deleted_at FROM ${this.config.table} WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '${days} days'`,
+    );
+    return result.rows;
+  }
+
   protected async purgeExpiredRecords(days: number): Promise<number> {
     const result = await this.getPool().query(
       `DELETE FROM ${this.config.table} WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '${days} days' RETURNING id`,

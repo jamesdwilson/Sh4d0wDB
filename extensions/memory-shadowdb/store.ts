@@ -20,6 +20,10 @@
  */
 
 import { createHash } from "node:crypto";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import type { SearchResult, WriteResult } from "./types.js";
 import type { EmbeddingClient } from "./embedder.js";
 
@@ -432,16 +436,74 @@ export abstract class MemoryStore {
   /**
    * Run retention purge — permanently remove expired soft-deleted records.
    * This is the ONLY code path that permanently deletes data.
+   *
+   * Before deleting, exports all expired records to a JSON file and moves
+   * it to the system trash (or a recovery folder). Nothing is ever lost
+   * without a recoverable copy existing first.
    */
   async runRetentionPurge(): Promise<{ softDeletePurged: number }> {
     let purged = 0;
     if (this.config.purgeAfterDays > 0) {
-      purged = await this.purgeExpiredRecords(this.config.purgeAfterDays);
+      // Step 1: Fetch the records we're about to purge
+      const expired = await this.fetchExpiredRecords(this.config.purgeAfterDays);
+
+      if (expired.length > 0) {
+        // Step 2: Export to a dated JSON file
+        const dateStr = new Date().toISOString().slice(0, 10);
+        const filename = `ShadowDB-Expired-${dateStr}.json`;
+        const exportDir = join(homedir(), ".openclaw", "expired");
+        mkdirSync(exportDir, { recursive: true });
+        const exportPath = join(exportDir, filename);
+
+        writeFileSync(exportPath, JSON.stringify({
+          exportedAt: new Date().toISOString(),
+          purgeAfterDays: this.config.purgeAfterDays,
+          recordCount: expired.length,
+          records: expired,
+        }, null, 2) + "\n");
+
+        this.logger.info(
+          `memory-shadowdb: exported ${expired.length} expired record(s) to ${exportPath}`,
+        );
+
+        // Step 3: Move the export file to system trash
+        this.moveToTrash(exportPath);
+
+        // Step 4: Now safe to delete from database
+        purged = await this.purgeExpiredRecords(this.config.purgeAfterDays);
+      }
     }
     this.logger.info(
       `memory-shadowdb: retention sweep — purged ${purged} soft-deleted (>${this.config.purgeAfterDays}d)`,
     );
     return { softDeletePurged: purged };
+  }
+
+  /**
+   * Move a file to system trash. Tries platform-native trash commands,
+   * falls back to leaving the file in place (still recoverable).
+   */
+  private moveToTrash(filePath: string): void {
+    const trashCommands = [
+      ["trash", filePath],           // macOS
+      ["gio", "trash", filePath],    // Linux (GNOME/freedesktop)
+      ["trash-put", filePath],       // Linux (trash-cli)
+    ];
+
+    for (const cmd of trashCommands) {
+      try {
+        execSync(cmd.join(" "), { stdio: "ignore" });
+        this.logger.info(`memory-shadowdb: moved ${filePath} to system trash`);
+        return;
+      } catch {
+        // Command not available or failed — try next
+      }
+    }
+
+    // No trash command available — leave in recovery folder (still safe)
+    this.logger.info(
+      `memory-shadowdb: no system trash available — expired records saved at ${filePath}`,
+    );
   }
 
   // ==========================================================================
@@ -554,6 +616,15 @@ export abstract class MemoryStore {
 
   /** Clear deleted_at on a record. */
   protected abstract restoreRecord(id: number): Promise<void>;
+
+  /** Fetch records where deleted_at is older than N days (before purging). */
+  protected abstract fetchExpiredRecords(days: number): Promise<Array<{
+    id: number;
+    content: string;
+    category: string | null;
+    title: string | null;
+    deleted_at: string | Date;
+  }>>;
 
   /** Delete records where deleted_at is older than N days. Return count. */
   protected abstract purgeExpiredRecords(days: number): Promise<number>;

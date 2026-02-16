@@ -367,6 +367,12 @@ export class SQLiteStore extends MemoryStore {
     ).run(id);
   }
 
+  protected async fetchExpiredRecords(days: number) {
+    return this.db.prepare(
+      `SELECT id, content, category, title, deleted_at FROM ${this.config.table} WHERE deleted_at IS NOT NULL AND deleted_at < datetime('now', '-${days} days')`,
+    ).all() as Array<{ id: number; content: string; category: string | null; title: string | null; deleted_at: string }>;
+  }
+
   protected async purgeExpiredRecords(days: number): Promise<number> {
     const result = this.db.prepare(
       `DELETE FROM ${this.config.table} WHERE deleted_at IS NOT NULL AND deleted_at < datetime('now', '-${days} days')`,

@@ -337,6 +337,14 @@ export class MySQLStore extends MemoryStore {
     );
   }
 
+  protected async fetchExpiredRecords(days: number) {
+    const rows = await this.query(
+      `SELECT id, content, category, title, deleted_at FROM ${this.config.table} WHERE deleted_at IS NOT NULL AND deleted_at < DATE_SUB(NOW(), INTERVAL ? DAY)`,
+      [days],
+    );
+    return rows as Array<{ id: number; content: string; category: string | null; title: string | null; deleted_at: Date }>;
+  }
+
   protected async purgeExpiredRecords(days: number): Promise<number> {
     const result = await this.exec(
       `DELETE FROM ${this.config.table} WHERE deleted_at IS NOT NULL AND deleted_at < DATE_SUB(NOW(), INTERVAL ? DAY)`,

@@ -153,7 +153,7 @@ ShadowDB gives the agent two pieces of information and lets it decide:
 
 - **Recency as a tiebreaker** — newer records get a small ranking boost (weight: `0.15`), but a relevant old record still beats a vaguely relevant new one.
 
-Deletes are always reversible for 30 days. After that, automatic cleanup removes them permanently. There is no hard-delete tool — the agent can never permanently destroy data. Only time can.
+Deletes are always reversible for 30 days. After that, automatic cleanup kicks in — but even then, expired records are exported to a JSON file and moved to your system trash before being removed from the database. There is no hard-delete tool — the agent can never permanently destroy data. Only time can, and even time leaves a receipt.
 
 <details>
 <summary>Why not something more complex?</summary>
