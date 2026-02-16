@@ -105,6 +105,8 @@ This removes the plugin files and config entry, restarts OpenClaw, and you're ba
 
 Your original `openclaw.json` is also saved at `openclaw.json.pre-shadowdb-backup` if you prefer to restore it manually.
 
+> **Design principle:** ShadowDB will never delete a file, drop a database, or remove anything that can't be put back. Not because we forgot — because we specifically chose not to. The uninstall flag removes plugin code and config entries. That's it. Your data stays unless *you* decide to delete it.
+
 **Or tell your agent:**
 
 > Uninstall ShadowDB: `curl -fsSL https://raw.githubusercontent.com/jamesdwilson/Sh4d0wDB/main/setup.sh | bash -s -- --uninstall`
