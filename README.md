@@ -12,6 +12,19 @@
 <br/>Replaces markdown files with a real database your agent can search and write to.
 
 [![Install](https://img.shields.io/badge/install-one--command-0ea5e9?style=for-the-badge)](#install)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](#install)
+[![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](#install)
+[![MySQL](https://img.shields.io/badge/MySQL-4479A1?style=for-the-badge&logo=mysql&logoColor=white)](#install)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=for-the-badge)](#contributing)
+
+<br/>
+
+[![FTS Latency](https://img.shields.io/badge/FTS_latency-55ms-ff6b6b?style=flat-square)](#performance-shadowdb-vs-stock-markdown)
+[![Hybrid Search](https://img.shields.io/badge/hybrid_search-230ms-ff6b6b?style=flat-square)](#performance-shadowdb-vs-stock-markdown)
+[![Token Reduction](https://img.shields.io/badge/token_waste-99.87%25_less-10b981?style=flat-square)](#performance-shadowdb-vs-stock-markdown)
+[![Annual Savings](https://img.shields.io/badge/saves-$1%2C074%2Fyr_(Opus)-10b981?style=flat-square)](#performance-shadowdb-vs-stock-markdown)
+[![Context Overhead](https://img.shields.io/badge/system_prompt-3_tokens-a78bfa?style=flat-square)](#performance-shadowdb-vs-stock-markdown)
 
 </div>
 
