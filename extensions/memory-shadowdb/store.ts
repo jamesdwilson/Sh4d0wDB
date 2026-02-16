@@ -6,7 +6,7 @@
  *
  * - Reciprocal Rank Fusion (RRF) merge of search signals
  * - Primer context assembly (priority ordering, char budgeting, digest)
- * - Relative age formatting ("5d ago")
+ * - Compact snippet formatting (category + date + content)
  * - Snippet and full-record formatting
  * - Input validation and sanitization for writes
  *
@@ -532,7 +532,7 @@ export abstract class MemoryStore {
 
   /**
    * Format a search result snippet.
-   * Compact: [category] | 3d ago\n{content truncated to 700 chars}
+   * Compact: category 2026-02-16\n{content truncated to 700 chars}
    */
   protected formatSnippet(row: {
     id: number;
@@ -545,9 +545,8 @@ export abstract class MemoryStore {
     const maxChars = 700;
     const header = [
       row.category || null,
-      row.created_at ? formatRelativeAge(row.created_at) : null,
+      row.created_at ? formatDate(row.created_at) : null,
     ].filter(Boolean).join(" ");
-
     const prefix = header ? `${header}\n` : "";
     const body = (row.content || "").slice(0, maxChars - prefix.length);
     return `${prefix}${body}`.trim();
@@ -731,31 +730,11 @@ export function sanitizeTags(tags: unknown): string[] {
 }
 
 /**
- * Format a timestamp as a compact relative age string.
- * Examples: "2h ago", "3d ago", "2w ago", "3mo ago", "1y ago"
+ * Format a timestamp as a compact absolute date (YYYY-MM-DD).
+ * Absolute dates don't go stale in caches or compaction.
  */
-export function formatRelativeAge(timestamp: string | Date): string {
+function formatDate(timestamp: string | Date): string {
   const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
   if (isNaN(date.getTime())) return "";
-
-  const diffMs = Date.now() - date.getTime();
-  if (diffMs < 0) return "now";
-
-  const minutes = Math.floor(diffMs / 60_000);
-  if (minutes < 60) return `${Math.max(1, minutes)}m`;
-
-  const hours = Math.floor(diffMs / 3_600_000);
-  if (hours < 24) return `${hours}h`;
-
-  const days = Math.floor(diffMs / 86_400_000);
-  if (days < 14) return `${days}d`;
-
-  const weeks = Math.floor(days / 7);
-  if (weeks < 9) return `${weeks}w`;
-
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo`;
-
-  const years = Math.floor(days / 365);
-  return `${years}y`;
+  return date.toISOString().slice(0, 10);
 }
