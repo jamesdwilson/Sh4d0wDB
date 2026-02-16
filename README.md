@@ -163,24 +163,24 @@ Recency is intentionally low — it's a tiebreaker, not a dominant signal.
 <details>
 <summary>Benchmarks, token economics, and why flat files have a ceiling</summary>
 
-All benchmarks measured on a MacBook Pro M3 Max against a real production knowledge base (6,800+ records, 768-dim embeddings). Stock MD numbers reflect a typical agent with populated bootstrap files (~9.2KB across 8 files). ShadowDB numbers are from the live system.
+All benchmarks measured on a MacBook Pro M3 Max against a real production knowledge base (6,800+ records, 768-dim embeddings). "OpenClaw Builtin" refers to the default memory plugin (flat `.md` files + SQLite embedding search). ShadowDB numbers are from the live system.
 
 ### Speed
 
-| Operation | Stock MD | ShadowDB (Postgres) | Winner |
+| Operation | OpenClaw Builtin | ShadowDB (Postgres) | Winner |
 |-----------|---------|---------------------|--------|
 | Load identity + knowledge | 45ms (read 8 files from disk) | 0ms (primer already in prompt) | **ShadowDB** — identity is in the prompt, not loaded per turn |
-| Keyword search ("Watson") | 200–500ms (builtin embedding scan) | **55ms** FTS | **ShadowDB 4–9×** faster |
-| Semantic search ("Watson's military service") | 200–500ms (embedding similarity only) | **230ms** (FTS + vector + trigram + RRF) | **ShadowDB** — same speed, better results |
+| Keyword search ("Watson") | ❌ Not supported (embedding-only) | **55ms** FTS | **ShadowDB** — from impossible to 55ms |
+| Semantic search ("Watson's military service") | 200–500ms (embedding similarity only) | **230ms** (FTS + vector + trigram + RRF) | **ShadowDB** — same speed, multi-signal results |
 | Fuzzy/substring search ("Watsn") | ❌ Not supported | **60ms** trigram | **ShadowDB** — from impossible to 60ms |
 | Search cold start | 1–3s (load embedding model) | **55ms** (FTS always hot, PG always running) | **ShadowDB 5–55×** faster |
 | Sub-agent identity load | ∞ (impossible — filtered out) | **<1ms** (primer injection) | **ShadowDB** — from impossible to instant |
 
-Stock MD doesn't "search" in the traditional sense — it dumps the entire MEMORY.md into the prompt and hopes the model finds what it needs. ShadowDB's FTS path (55ms) is pure PostgreSQL with no embedding overhead. The hybrid path (230ms) adds Ollama embedding generation (85ms) + pgvector cosine search + trigram fallback, all fused with RRF.
+The builtin memory plugin uses embedding similarity as its only search strategy — if the embedding misses, you get nothing. It has no keyword search, no fuzzy matching, no fallback. ShadowDB's FTS path (55ms) is pure PostgreSQL with no embedding overhead. The hybrid path (230ms) adds Ollama embedding generation (85ms) + pgvector cosine search + trigram fallback, all fused with RRF.
 
 ### Ceiling
 
-| Dimension | Stock MD | ShadowDB |
+| Dimension | OpenClaw Builtin | ShadowDB |
 |-----------|---------|----------|
 | **Max knowledge base size** | ~500 items before MEMORY.md hits the 20K char truncation limit. After that, the framework drops the middle of the file. At ~5,000 items, it won't fit in context at all. | **No limit.** PostgreSQL handles billions of rows with HNSW + GIN indexes. 6,800+ records today, architecturally sound to billions. |
 | **Max identity complexity** | ~3,000 bytes in SOUL.md before it eats into your context budget. The richer the identity, the dumber the agent. | **No limit.** Primer table delivers identity once per session. Add 50 rows of personality nuance — costs 0 bytes on turns 2+. |
@@ -190,11 +190,11 @@ Stock MD doesn't "search" in the traditional sense — it dumps the entire MEMOR
 | **Context budget ceiling** | Fixed. Every turn pays the full MD tax. A 200-turn conversation pays 200 × 2,300 tokens = **460,000 tokens** on static files the model already read. | **Near-zero per turn.** 200 turns × 3 tokens = **600 tokens** total. |
 | **Growth trajectory** | 📉 **Inverse.** As knowledge grows, files bloat → context fills → compaction prunes history → agent gets dumber. More knowledge = less capability. | 📈 **Linear.** As knowledge grows, search gets richer → agent gets smarter. PG indexes scale logarithmically. |
 
-The fundamental difference: **stock MD has a ceiling that gets lower as your agent gets smarter. ShadowDB has no ceiling.**
+The fundamental difference: **OpenClaw builtin has a ceiling that gets lower as your agent gets smarter. ShadowDB has no ceiling.**
 
 ```mermaid
 xychart-beta
-    title "Token Waste: Stock MD vs ShadowDB (cumulative, 200-turn conversation)"
+    title "Token Waste: OpenClaw Builtin vs ShadowDB (cumulative, 200-turn conversation)"
     x-axis "Conversation Turn" [1, 25, 50, 75, 100, 125, 150, 175, 200]
     y-axis "Cumulative Wasted Tokens" 0 --> 500000
     bar [2300, 57500, 115000, 172500, 230000, 287500, 345000, 402500, 460000]
@@ -206,13 +206,13 @@ xychart-beta
     title "Knowledge vs Capability"
     x-axis "Knowledge Base Size (records)" [100, 500, 1000, 5000, 10000, 50000]
     y-axis "Agent Capability %" 0 --> 120
-    line "Stock MD" [100, 90, 70, 30, 5, 0]
+    line "OpenClaw Builtin" [100, 90, 70, 30, 5, 0]
     line "ShadowDB" [80, 90, 95, 100, 105, 110]
 ```
 
 ### The full comparison
 
-| Metric | Stock MD (Builtin) | ShadowDB Postgres | ShadowDB SQLite | ShadowDB MySQL | Unit |
+| Metric | OpenClaw Builtin (Builtin) | ShadowDB Postgres | ShadowDB SQLite | ShadowDB MySQL | Unit |
 |--------|-------------------|-------------------|----------------:|---------------:|------|
 | **Context Overhead** | | | | | |
 | Static prompt per turn | 9,198 | 11 | 11 | 11 | bytes |
@@ -278,7 +278,7 @@ xychart-beta
 
 ### The bottom line
 
-| | Stock MD | ShadowDB (any backend) |
+| | OpenClaw Builtin | ShadowDB (any backend) |
 |--|----------|----------------------|
 | **Annual token waste on static context** | **~71.8M tokens** | **~92K tokens** |
 | **Annual cost of that waste (Opus pricing)** | **~$1,076** | **~$1.38** |
@@ -290,14 +290,14 @@ xychart-beta
 
 LLM inference has a real energy cost. Every token processed burns GPU cycles, memory bandwidth, cooling. Wasting tokens on redundant static context burns real energy.
 
-| Metric | Stock MD | ShadowDB | Savings |
+| Metric | OpenClaw Builtin | ShadowDB | Savings |
 |--------|---------|----------|---------|
 | **Wasted tokens/year** | ~71.8M | ~92K | **71.7M tokens not processed** |
 | **GPU-hours wasted/year** | ~7.2 hrs | ~0.009 hrs | **99.87% reduction** |
 | **Estimated CO₂** | ~2.9 kg CO₂ | ~0.004 kg CO₂ | **~2.9 kg CO₂ saved/year** |
 | **Per agent equivalent** | 🚗 11 km driven | 🚗 0.014 km driven | One less car trip to the store |
 
-These numbers are per agent. Scale to 1,000 agents and stock MD wastes **71.8 billion tokens/year** — roughly **2,900 kg CO₂**, equivalent to a round-trip flight from NYC to LA.
+These numbers are per agent. Scale to 1,000 agents and OpenClaw builtin wastes **71.8 billion tokens/year** — roughly **2,900 kg CO₂**, equivalent to a round-trip flight from NYC to LA.
 
 </details>
 
