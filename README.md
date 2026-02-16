@@ -394,6 +394,8 @@ Edit the file and re-run setup anytime to update.
 
 **Option C: Skip it entirely.** Start with searchable memories only. If you notice your agent forgetting something critical on the first turn of new conversations, that's your sign to add a primer rule — create the file, re-run setup, or insert with SQL directly.
 
+> 📁 **Example files:** See [`examples/PRIMER.md`](examples/PRIMER.md) and [`examples/ALWAYS.md`](examples/ALWAYS.md) for realistic templates you can copy and edit.
+
 ### The `always` column — and `ALWAYS.md`
 
 Primer rows have an `always` column (default: `false`). When set to `true`, the row is injected on **every single turn**, not just the first. Use this sparingly — it's for rules so critical that even scrolling out of the context window in a long conversation would be dangerous. Most primer rules only need to be there on turn 1.
