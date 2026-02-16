@@ -34,30 +34,15 @@ Gives your agent a Postgres-backed memory it can search, write, update, and dele
 
 ## Install
 
-### Quick start
-
 ```bash
-git clone https://github.com/jamesdwilson/Sh4d0wDB.git ~/projects/ShadowDB
-cd ~/projects/ShadowDB && ./setup.sh
+git clone https://github.com/jamesdwilson/Sh4d0wDB.git ~/projects/ShadowDB && ~/projects/ShadowDB/setup.sh
 ```
 
-The script walks you through everything — database, schema, importing your existing memory files, wiring the plugin. It backs up your files first and you can undo the whole thing with one command.
+That's it. The script handles everything — Postgres, schema, importing your existing memory files, npm dependencies, wiring the plugin into OpenClaw, and restarting the gateway. It backs up your files and config first; you can undo the whole thing with one command.
 
-### Or tell your agent to do it
+**Or tell your agent:**
 
-Paste this into your OpenClaw chat:
-
-> Install the ShadowDB memory plugin. Clone https://github.com/jamesdwilson/Sh4d0wDB to ~/projects/ShadowDB, then run `./setup.sh` and follow the output. After that, wire it into my OpenClaw config: add the plugin path to `plugins.load.paths`, set `plugins.slots.memory` to `memory-shadowdb`, and add an entry under `plugins.entries.memory-shadowdb` with Ollama embeddings (nomic-embed-text, 768 dims), writes enabled, and recencyWeight 0.15. Use `config.patch` to apply it and restart the gateway.
-
-### Verify
-
-Ask your agent *"search memory for test"* — if the result says `provider: "shadowdb"`, you're set.
-
-Or from the terminal:
-
-```bash
-openclaw doctor --non-interactive | grep shadowdb
-```
+> Clone https://github.com/jamesdwilson/Sh4d0wDB to ~/projects/ShadowDB and run `./setup.sh`.
 
 ---
 

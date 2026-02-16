@@ -258,7 +258,7 @@ blank
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 1 of 7 — Backing up your files"
+header "Step 1 of 9 — Backing up your files"
 
 if [[ ! -d "$WORKSPACE" ]]; then
   warn "Workspace directory not found: $WORKSPACE"
@@ -319,7 +319,7 @@ fi
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 2 of 7 — Checking prerequisites"
+header "Step 2 of 9 — Checking prerequisites"
 
 MISSING=0
 
@@ -438,7 +438,7 @@ blank
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 3 of 7 — Creating database"
+header "Step 3 of 9 — Creating database"
 
 if [[ "$BACKEND" == "postgres" ]]; then
 
@@ -548,7 +548,7 @@ fi
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 4 of 7 — Importing your .md files"
+header "Step 4 of 9 — Importing your .md files"
 
 if [[ -d "$WORKSPACE" ]] && [[ $MD_COUNT -gt 0 ]]; then
 
@@ -611,7 +611,7 @@ blank
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 5 of 7 — Checking for RULES_REINFORCE.md"
+header "Step 5 of 9 — Checking for RULES_REINFORCE.md"
 
 REINFORCE_FILE="${WORKSPACE}/RULES_REINFORCE.md"
 
@@ -684,7 +684,7 @@ blank
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 6 of 7 — Replacing workspace .md files"
+header "Step 6 of 9 — Replacing workspace .md files"
 
 if [[ -d "$WORKSPACE" ]] && [[ $MD_COUNT -gt 0 ]]; then
 
@@ -717,86 +717,207 @@ blank
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                                                                            │
-# │   STEP 7 of 7:  VERIFY IT WORKS                                           │
-# │                                                                            │
-# │   We run a quick test search to make sure the full pipeline works:         │
-# │                                                                            │
-# │     query  →  database  →  search  →  ranked results                       │
-# │                                                                            │
-# │   If the tables exist and have rows, the database is ready.                │
-# │   The native OpenClaw plugin handles all search from here.                 │
+# │   STEP 7 of 9:  INSTALL PLUGIN DEPENDENCIES                               │
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 7 of 7 — Verifying installation"
+header "Step 7 of 9 — Installing plugin dependencies"
 
-if ! $DRY_RUN; then
+PLUGIN_DIR="${SCRIPT_DIR}/extensions/memory-shadowdb"
 
-  if [[ "$BACKEND" == "postgres" ]]; then
-    ROW_COUNT=$(psql -qtAX "$DB_NAME" -c "SELECT count(*) FROM memories;" 2>/dev/null || echo "0")
-    STARTUP_COUNT=$(psql -qtAX "$DB_NAME" -c "SELECT count(*) FROM startup;" 2>/dev/null || echo "0")
+if [[ -d "$PLUGIN_DIR" ]]; then
+  if [[ -f "$PLUGIN_DIR/package.json" ]]; then
+    info "Installing npm dependencies for memory-shadowdb..."
 
-    ok "Database verified:"
-    detail "memories table: ${ROW_COUNT} records"
-    detail "startup table:  ${STARTUP_COUNT} entries"
-
-    if [[ "$ROW_COUNT" -eq 0 && "$STARTUP_COUNT" -eq 0 ]]; then
-      blank
-      info "Tables are empty — that's normal for a fresh install."
-      detail "Your agent will populate them via memory_write."
+    if ! $DRY_RUN; then
+      (cd "$PLUGIN_DIR" && npm install --production 2>&1 | tail -3)
+      ok "Plugin dependencies installed"
+    else
+      ok "[DRY RUN] Would run npm install in $PLUGIN_DIR"
     fi
   else
-    ok "Database created — verify by restarting OpenClaw."
+    warn "No package.json found in plugin directory"
   fi
-
-  blank
-  info "Next: wire the plugin into OpenClaw and restart the gateway."
-  detail "Run: openclaw doctor --non-interactive | grep shadowdb"
-
 else
-  ok "[DRY RUN] Would verify table row counts"
+  warn "Plugin directory not found: $PLUGIN_DIR"
+  detail "Expected at: extensions/memory-shadowdb/"
 fi
 
 blank
 
 
-header "Writing config"
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                                                                            │
+# │   STEP 8 of 9:  WIRE PLUGIN INTO OPENCLAW                                 │
+# │                                                                            │
+# │   Patches ~/.openclaw/openclaw.json to:                                    │
+# │     - Add the plugin path to plugins.load.paths                            │
+# │     - Set plugins.slots.memory to memory-shadowdb                          │
+# │     - Add plugins.entries.memory-shadowdb with default config              │
+# │                                                                            │
+# │   Uses python3 (already a prerequisite) to safely merge into               │
+# │   the existing config without clobbering anything.                         │
+# │                                                                            │
+# └────────────────────────────────────────────────────────────────────────────┘
 
-if [[ -f "$CONFIG_FILE" ]]; then
-  ok "Config already exists at ${CONFIG_FILE}"
-  detail "Leaving it as-is. Edit manually if you need to change settings."
+header "Step 8 of 9 — Wiring plugin into OpenClaw"
+
+OPENCLAW_CONFIG="${HOME}/.openclaw/openclaw.json"
+PLUGIN_ABS_PATH="$(cd "$PLUGIN_DIR" 2>/dev/null && pwd)"
+
+if [[ ! -f "$OPENCLAW_CONFIG" ]]; then
+  warn "OpenClaw config not found at $OPENCLAW_CONFIG"
+  detail "Is OpenClaw installed? Run: npx openclaw@latest"
+  detail "You can wire the plugin manually later."
+  blank
 else
-  info "Creating config:  ${BOLD}${CONFIG_FILE}${NC}"
+
+  # Check if already wired
+  if python3 -c "
+import json, sys
+cfg = json.load(open('$OPENCLAW_CONFIG'))
+entries = cfg.get('plugins', {}).get('entries', {})
+if 'memory-shadowdb' in entries:
+    sys.exit(0)
+sys.exit(1)
+" 2>/dev/null; then
+    ok "Plugin already wired in OpenClaw config — skipping"
+    blank
+  else
+    info "Patching ${BOLD}${OPENCLAW_CONFIG}${NC}"
+    detail "Adding: plugins.load.paths, plugins.slots.memory, plugins.entries.memory-shadowdb"
+    blank
+
+    if ! $DRY_RUN; then
+
+      # Back up config first
+      cp "$OPENCLAW_CONFIG" "${OPENCLAW_CONFIG}.pre-shadowdb-backup"
+      ok "Config backed up to ${OPENCLAW_CONFIG}.pre-shadowdb-backup"
+
+      python3 << PYEOF
+import json, sys
+
+config_path = "$OPENCLAW_CONFIG"
+plugin_path = "$PLUGIN_ABS_PATH"
+
+with open(config_path) as f:
+    cfg = json.load(f)
+
+# Ensure plugins section exists
+plugins = cfg.setdefault("plugins", {})
+
+# Add load path (deduplicated)
+load = plugins.setdefault("load", {})
+paths = load.setdefault("paths", [])
+if plugin_path not in paths:
+    paths.append(plugin_path)
+
+# Set memory slot
+slots = plugins.setdefault("slots", {})
+slots["memory"] = "memory-shadowdb"
+
+# Add plugin entry with default config
+entries = plugins.setdefault("entries", {})
+if "memory-shadowdb" not in entries:
+    entries["memory-shadowdb"] = {
+        "enabled": True,
+        "config": {
+            "embedding": {
+                "provider": "ollama",
+                "model": "nomic-embed-text",
+                "dimensions": 768,
+                "ollamaUrl": "http://localhost:11434"
+            },
+            "table": "memories",
+            "search": {
+                "maxResults": 6,
+                "minScore": 0.15,
+                "vectorWeight": 0.7,
+                "textWeight": 0.3,
+                "recencyWeight": 0.15
+            },
+            "writes": {
+                "enabled": True,
+                "autoEmbed": True,
+                "retention": {
+                    "purgeAfterDays": 30
+                }
+            }
+        }
+    }
+
+with open(config_path, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+
+print("  ✓  OpenClaw config patched successfully")
+PYEOF
+
+    else
+      ok "[DRY RUN] Would patch OpenClaw config"
+    fi
+
+    blank
+  fi
+fi
+
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                                                                            │
+# │   STEP 9 of 9:  RESTART GATEWAY & VERIFY                                  │
+# │                                                                            │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+header "Step 9 of 9 — Restarting gateway & verifying"
+
+if ! $DRY_RUN; then
+
+  # Try to restart gateway
+  if command -v openclaw &>/dev/null; then
+    info "Restarting OpenClaw gateway..."
+
+    if openclaw gateway restart 2>/dev/null; then
+      ok "Gateway restarted"
+      blank
+
+      # Give it a moment to come up
+      sleep 3
+
+      # Verify plugin loaded
+      DOCTOR_OUT=$(openclaw doctor --non-interactive 2>&1 || true)
+
+      if echo "$DOCTOR_OUT" | grep -q "memory-shadowdb"; then
+        ok "Plugin loaded and verified!"
+        blank
+        echo "$DOCTOR_OUT" | grep "memory-shadowdb" | sed 's/^/     /'
+      else
+        warn "Gateway restarted but plugin not detected yet."
+        detail "Try: openclaw doctor --non-interactive | grep shadowdb"
+      fi
+    else
+      warn "Could not restart gateway automatically."
+      detail "Run manually: openclaw gateway restart"
+    fi
+  else
+    warn "openclaw CLI not found in PATH."
+    detail "Start the gateway manually, then verify with:"
+    detail "  openclaw doctor --non-interactive | grep shadowdb"
+  fi
+
   blank
 
+  # Show DB stats
   if [[ "$BACKEND" == "postgres" ]]; then
-    CONFIG_CONTENT='{
-  "backend": "postgres",
-  "postgres": {
-    "database": "'"$DB_NAME"'",
-    "embedding_url": "http://localhost:11434/api/embeddings",
-    "embedding_model": "nomic-embed-text"
-  }
-}'
-    detail "For cloud PostgreSQL, add connection_string to ~/.shadowdb.json:"
-    detail '  "connection_string": "postgresql://user:pass@host:5432/db?sslmode=require"'
-  else
-    CONFIG_CONTENT='{
-  "backend": "sqlite",
-  "sqlite": {
-    "db_path": "~/.shadowdb/shadow.db",
-    "embedding_url": "http://localhost:11434/api/embeddings",
-    "embedding_model": "nomic-embed-text"
-  }
-}'
+    ROW_COUNT=$(psql -qtAX "$DB_NAME" -c "SELECT count(*) FROM memories;" 2>/dev/null || echo "0")
+    STARTUP_COUNT=$(psql -qtAX "$DB_NAME" -c "SELECT count(*) FROM startup;" 2>/dev/null || echo "0")
+
+    ok "Database:"
+    detail "memories: ${ROW_COUNT} records"
+    detail "startup:  ${STARTUP_COUNT} entries"
   fi
 
-  if ! $DRY_RUN; then
-    echo "$CONFIG_CONTENT" > "$CONFIG_FILE"
-    ok "Config written to ${CONFIG_FILE}"
-  else
-    ok "[DRY RUN] Would write config to ${CONFIG_FILE}"
-  fi
+else
+  ok "[DRY RUN] Would restart gateway and verify plugin"
 fi
 
 blank
@@ -816,21 +937,19 @@ echo "  ║                                                                  ║
 echo "  ╚══════════════════════════════════════════════════════════════════╝"
 echo ""
 echo ""
-echo "  Your database is ready. Next steps:"
+echo "  Your agent now has: memory_search, memory_get, memory_write,"
+echo "  memory_update, memory_delete, and memory_undelete."
 echo ""
-echo "     1. Wire the plugin into OpenClaw (setup.sh handled the DB part)"
-echo "     2. Restart:  ${BOLD}openclaw gateway restart${NC}"
-echo "     3. Verify:   ${BOLD}openclaw doctor --non-interactive | grep shadowdb${NC}"
-echo ""
-echo "  Your agent now has memory_search, memory_write, and friends."
+echo "  Ask your agent:  ${BOLD}\"search memory for test\"${NC}"
 echo ""
 echo ""
 echo "  ┌──────────────────────────────────────────────────────────────────┐"
 echo "  │                                                                  │"
-echo "  │   📦  Your originals are backed up at:                           │"
-echo "  │       ${BACKUP_DIR}/"
+echo "  │   📦  Backups:                                                   │"
+echo "  │       Workspace: ${BACKUP_DIR}/"
+echo "  │       Config:    ${OPENCLAW_CONFIG}.pre-shadowdb-backup"
 echo "  │                                                                  │"
-echo "  │   🔄  Restore anytime:                                           │"
+echo "  │   🔄  Restore workspace anytime:                                 │"
 echo "  │       cp ~/OpenClaw-Workspace-Backup-*/*.md \\                   │"
 echo "  │          ${WORKSPACE}/                              │"
 echo "  │                                                                  │"
@@ -839,5 +958,5 @@ echo "  │       ./setup.sh                                                 │
 echo "  │                                                                  │"
 echo "  └──────────────────────────────────────────────────────────────────┘"
 echo ""
-echo "  📖  Docs:  https://github.com/openclaw/shadowdb"
+echo "  📖  Docs:  https://github.com/jamesdwilson/Sh4d0wDB"
 echo ""
