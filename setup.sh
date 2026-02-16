@@ -17,11 +17,7 @@
 #
 #   FLAGS:
 #
-#     --dir <path>          Where to clone/find ShadowDB
-#                           (default: ~/projects/ShadowDB)
-#
-#     --backend <type>      Database backend: postgres or sqlite
-#                           (default: postgres)
+#     --backend <type>      Database backend: postgres, sqlite, or mysql
 #
 #     --dry-run             Preview everything without making changes
 #
@@ -33,9 +29,8 @@
 
 set -euo pipefail
 
-REPO_URL="https://github.com/jamesdwilson/Sh4d0wDB.git"
-INSTALL_DIR="${SHADOWDB_DIR:-$HOME/projects/ShadowDB}"
-WORKSPACE="${HOME}/.openclaw/workspace"
+RAW_BASE="https://raw.githubusercontent.com/jamesdwilson/Sh4d0wDB/main"
+PLUGIN_DIR="${HOME}/.openclaw/plugins/memory-shadowdb"
 BACKEND="postgres"
 DB_NAME="shadow"
 DRY_RUN=false
@@ -78,11 +73,10 @@ usage() {
     curl -fsSL https://raw.githubusercontent.com/jamesdwilson/Sh4d0wDB/main/setup.sh | bash
 
   Update:
-    Same command. Pulls latest code, updates deps, restarts gateway.
+    Same command. Downloads latest files, updates deps, restarts gateway.
 
   Flags:
-    --dir <path>        Where to clone ShadowDB (default: ~/projects/ShadowDB)
-    --backend <type>    Database backend: postgres or sqlite (default: postgres)
+    --backend <type>    Database backend: postgres, sqlite, or mysql
     --dry-run           Preview without making changes
     --yes               Skip confirmation prompts
     --help, -h          Show this help
@@ -93,7 +87,6 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --dir)       INSTALL_DIR="$2"; shift 2 ;;
     --backend)   BACKEND="$2";     shift 2 ;;
     --dry-run)   DRY_RUN=true;     shift   ;;
     --yes|-y)    AUTO_YES=true;    shift   ;;
@@ -237,7 +230,7 @@ else
   blank
 fi
 
-info "Install dir: ${BOLD}${INSTALL_DIR}${NC}"
+info "Plugin dir:  ${BOLD}${PLUGIN_DIR}${NC}"
 info "Backend:     ${BOLD}${BACKEND}${NC}"
 
 blank
@@ -245,46 +238,46 @@ blank
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                                                                            │
-# │   STEP 1 of 6:  CLONE OR UPDATE REPO                                      │
+# │   STEP 1 of 6:  DOWNLOAD PLUGIN FILES                                     │
 # │                                                                            │
-# │   Fresh install: git clone into INSTALL_DIR                                │
-# │   Update: git pull to get latest code                                      │
+# │   Downloads only the files needed for the chosen backend.                  │
+# │   No git clone — just the TypeScript source + config.                      │
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 1 of 6 — Getting ShadowDB"
+header "Step 1 of 6 — Downloading ShadowDB"
 
 IS_UPDATE=false
-
-if [[ -d "$INSTALL_DIR/.git" ]]; then
+if [[ -d "$PLUGIN_DIR" ]] && [[ -f "$PLUGIN_DIR/store.ts" ]]; then
   IS_UPDATE=true
-  info "Existing install found — updating..."
-
-  if ! $DRY_RUN; then
-    (cd "$INSTALL_DIR" && git pull --ff-only 2>&1 | tail -3)
-    ok "Updated to latest"
-  else
-    ok "[DRY RUN] Would git pull in $INSTALL_DIR"
-  fi
-
-elif [[ -d "$INSTALL_DIR" ]]; then
-  # Directory exists but isn't a git repo
-  fail "$INSTALL_DIR exists but isn't a git repo. Remove it or use --dir <other-path>."
-
+  info "Existing install found — updating files..."
 else
-  info "Cloning ShadowDB..."
-
-  if ! $DRY_RUN; then
-    mkdir -p "$(dirname "$INSTALL_DIR")"
-    git clone "$REPO_URL" "$INSTALL_DIR" 2>&1 | tail -3
-    ok "Cloned to ${INSTALL_DIR}"
-  else
-    ok "[DRY RUN] Would clone to $INSTALL_DIR"
-  fi
+  info "Installing to ${BOLD}${PLUGIN_DIR}${NC}"
 fi
 
-# Now we know where everything is
-SCRIPT_DIR="$INSTALL_DIR"
+if ! $DRY_RUN; then
+  mkdir -p "$PLUGIN_DIR"
+
+  # Shared files (every backend needs these)
+  SHARED_FILES="store.ts index.ts embedder.ts config.ts types.ts openclaw.plugin.json package.json"
+
+  for f in $SHARED_FILES; do
+    curl -fsSL "${RAW_BASE}/extensions/memory-shadowdb/${f}" -o "${PLUGIN_DIR}/${f}"
+  done
+  ok "Downloaded core files (${SHARED_FILES// /, })"
+
+  # Backend-specific file (only the one they chose)
+  curl -fsSL "${RAW_BASE}/extensions/memory-shadowdb/${BACKEND}.ts" -o "${PLUGIN_DIR}/${BACKEND}.ts"
+  ok "Downloaded ${BACKEND}.ts"
+
+  # Schema file (Postgres only — SQLite/MySQL auto-create tables)
+  if [[ "$BACKEND" == "postgres" ]]; then
+    curl -fsSL "${RAW_BASE}/schema.sql" -o "${PLUGIN_DIR}/schema.sql"
+    ok "Downloaded schema.sql"
+  fi
+else
+  ok "[DRY RUN] Would download plugin files to $PLUGIN_DIR"
+fi
 
 blank
 
@@ -455,10 +448,10 @@ if [[ "$BACKEND" == "postgres" ]]; then
 
   blank
 
-  if [[ -f "$SCRIPT_DIR/schema.sql" ]]; then
+  if [[ -f "$PLUGIN_DIR/schema.sql" ]]; then
     info "Applying schema..."
     if ! $DRY_RUN; then
-      psql "$DB_NAME" -f "$SCRIPT_DIR/schema.sql" 2>/dev/null
+      psql "$DB_NAME" -f "$PLUGIN_DIR/schema.sql" 2>/dev/null
       ok "Schema applied (CREATE IF NOT EXISTS — safe to re-run)"
     else
       ok "[DRY RUN] Would apply schema.sql"
@@ -549,7 +542,7 @@ fi
 
 header "Step 4 of 6 — Installing plugin dependencies"
 
-PLUGIN_DIR="${SCRIPT_DIR}/extensions/memory-shadowdb"
+# PLUGIN_DIR already set at top of script
 
 if [[ -d "$PLUGIN_DIR" ]]; then
   if [[ -f "$PLUGIN_DIR/package.json" ]]; then
