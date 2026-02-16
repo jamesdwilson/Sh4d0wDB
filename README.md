@@ -73,7 +73,7 @@ ShadowDB doesn't delete, overwrite, or modify any of your original files. Here's
 | Downloaded plugin files | `~/.openclaw/plugins/memory-shadowdb/` | ✅ Deleted on uninstall |
 | Added a config entry | `plugins.entries.memory-shadowdb` in `openclaw.json` | ✅ Removed on uninstall |
 | Set the memory slot | `plugins.slots.memory` in `openclaw.json` | ✅ Cleared on uninstall |
-| **Backed up your config first** | `~/OpenClaw-Before-ShadowDB-{date}/openclaw.json` | Your original config, untouched |
+| **Backed up your config first** | `~/OpenClaw-Before-ShadowDB-[install date]/openclaw.json` | Your original config, untouched |
 | Created a database | `shadow` (Postgres) or `shadow.db` (SQLite) | ✅ Kept on uninstall (your data is yours) |
 | Imported workspace `.md` files as memories | Rows in the `memories` table | ✅ Kept on uninstall — originals untouched |
 | Imported `PRIMER.md` / `ALWAYS.md` | Rows in the `primer` table | ✅ Kept on uninstall — originals untouched |
@@ -99,7 +99,7 @@ curl -fsSL https://raw.githubusercontent.com/jamesdwilson/Sh4d0wDB/main/setup.sh
 
 This removes the plugin files and config entry, restarts OpenClaw, and you're back to your original setup. Your database and all its records are kept — we don't destroy data, ever. If you reinstall later, everything will still be there.
 
-Your original `openclaw.json` is saved at `~/OpenClaw-Before-ShadowDB-{date}/openclaw.json` — easy to find, impossible to miss.
+Your original `openclaw.json` is saved at `~/OpenClaw-Before-ShadowDB-[install date]/openclaw.json` — easy to find, impossible to miss.
 
 > **Design principle:** ShadowDB will never delete a file, drop a database, or remove anything that can't be put back. Not because we forgot — because we specifically chose not to. The uninstall flag removes plugin code and config entries. That's it. Your data stays unless *you* decide to delete it.
 
