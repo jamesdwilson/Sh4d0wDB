@@ -19,7 +19,7 @@
 
 ## What does it do?
 
-Gives your agent a Postgres-backed memory it can search, write, update, and delete — instead of flat markdown files that get shoved into every prompt.
+Gives your agent a persistent memory it can search, write, update, and delete — instead of flat markdown files that get shoved into every prompt. Works with Postgres (recommended) or SQLite.
 
 | Tool | Does |
 |------|------|
@@ -38,7 +38,7 @@ Gives your agent a Postgres-backed memory it can search, write, update, and dele
 curl -fsSL https://raw.githubusercontent.com/jamesdwilson/Sh4d0wDB/main/setup.sh | bash
 ```
 
-That's it. The script clones the repo, sets up Postgres, installs dependencies, wires the plugin into OpenClaw, and restarts the gateway. Run the same command again to update.
+That's it. The script clones the repo, sets up the database, installs dependencies, wires the plugin into OpenClaw, and restarts the gateway. Run the same command again to update.
 
 **Or tell your agent:**
 
@@ -78,16 +78,20 @@ The principle: if the guardrails are more complex than the feature, you've lost 
 ## How search works
 
 <details>
-<summary>Four signals, merged via Reciprocal Rank Fusion</summary>
+<summary>Hybrid ranking with multiple signals</summary>
 
-| Signal | Default weight | What it measures |
-|--------|---------------|-----------------|
-| Vector similarity | `0.7` | Semantic meaning (embeddings) |
-| Full-text search | `0.3` | Keyword/phrase matches |
-| Trigram similarity | `0.2` (fixed) | Fuzzy/typo-tolerant matching |
-| Recency | `0.15` | Newer records boosted slightly |
+Every search combines multiple signals to find the best matches. What's available depends on your backend:
 
-All weights are configurable. Recency is intentionally low — it's a tiebreaker, not a dominant signal.
+| Signal | Postgres | SQLite | What it measures |
+|--------|----------|--------|-----------------|
+| Vector similarity | ✓ (weight: `0.7`) | planned | Semantic meaning via embeddings |
+| Full-text search | ✓ (weight: `0.3`) | ✓ | Keyword/phrase matches |
+| Trigram similarity | ✓ (weight: `0.2`) | — | Fuzzy/typo-tolerant matching |
+| Recency boost | ✓ (weight: `0.15`) | ✓ | Newer records boosted slightly |
+
+With Postgres, signals are merged via Reciprocal Rank Fusion (RRF) — each signal produces a ranked list, and RRF combines them without needing score normalization. All weights are configurable.
+
+Recency is intentionally low — it's a tiebreaker, not a dominant signal.
 
 </details>
 
@@ -131,37 +135,30 @@ This replaces `SOUL.md`, `IDENTITY.md`, `TOOLS.md`, etc. Keep empty stubs so Ope
 <details>
 <summary>Two tables — that's it</summary>
 
-**`memories`** — the knowledge base:
+**`memories`** — the knowledge base. Core columns are the same across backends:
 
-```sql
-CREATE TABLE memories (
-  id          BIGSERIAL PRIMARY KEY,
-  content     TEXT NOT NULL,
-  title       TEXT,
-  category    TEXT DEFAULT 'general',
-  record_type TEXT DEFAULT 'fact',
-  tags        TEXT[],
-  embedding   VECTOR(768),
-  fts         TSVECTOR GENERATED ALWAYS AS (...) STORED,
-  created_at  TIMESTAMPTZ DEFAULT now(),
-  updated_at  TIMESTAMPTZ DEFAULT now(),
-  deleted_at  TIMESTAMPTZ
-);
-```
+| Column | Type | Purpose |
+|--------|------|---------|
+| `id` | auto-increment | Primary key |
+| `content` | text | The actual memory |
+| `title` | text | Human-readable label |
+| `category` | text | Grouping (default: `general`) |
+| `tags` | array/text | Searchable tags |
+| `embedding` | vector | Semantic search (Postgres w/ pgvector) |
+| `created_at` | timestamp | When it was created |
+| `updated_at` | timestamp | Last modification |
+| `deleted_at` | timestamp | Soft-delete marker (null = active) |
 
 **`startup`** — identity/rules injected before agent runs:
 
-```sql
-CREATE TABLE startup (
-  key        TEXT PRIMARY KEY,
-  content    TEXT NOT NULL,
-  priority   INTEGER DEFAULT 50,
-  reinforce  BOOLEAN DEFAULT false,
-  updated_at TIMESTAMPTZ DEFAULT now()
-);
-```
+| Column | Type | Purpose |
+|--------|------|---------|
+| `key` | text | Unique identifier (primary key) |
+| `content` | text | The rule or identity text |
+| `priority` | integer | Injection order (lower = first) |
+| `reinforce` | boolean | Include in every query, not just startup |
 
-Full schema with indexes: [`schema.sql`](schema.sql)
+Full schema with indexes: [`schema.sql`](schema.sql) (Postgres version)
 
 </details>
 
@@ -205,6 +202,7 @@ Key settings:
 
 **Postgres connection issues?**
 - Confirm `vector` and `pg_trgm` extensions: `psql shadow -c '\dx'`
+- Check the database exists: `psql -l | grep shadow`
 
 </details>
 
