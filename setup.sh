@@ -225,13 +225,13 @@ MISSING=0
 #
 #   Required. The `m` search CLI and all backend adapters are Python.
 
-if command -v python3 &>/dev/null; then
-  ok "python3 found"
-  detail "$(python3 --version 2>&1)"
+if command -v node &>/dev/null; then
+  ok "node found"
+  detail "$(node --version 2>&1)"
 else
-  warn "python3 not found"
-  detail "Install: brew install python3   (macOS)"
-  detail "         apt install python3     (Ubuntu/Debian)"
+  warn "node not found — required for OpenClaw and this plugin"
+  detail "Install: brew install node   (macOS)"
+  detail "         apt install nodejs   (Ubuntu/Debian)"
   MISSING=1
 fi
 
@@ -465,7 +465,7 @@ blank
 # │     - Set plugins.slots.memory to memory-shadowdb                          │
 # │     - Add plugins.entries.memory-shadowdb with default config              │
 # │                                                                            │
-# │   Uses python3 (already a prerequisite) to safely merge into               │
+# │   Uses node (already required for OpenClaw) to safely merge into           │
 # │   the existing config without clobbering anything.                         │
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
@@ -483,15 +483,34 @@ if [[ ! -f "$OPENCLAW_CONFIG" ]]; then
 else
 
   # Check if already wired
-  if python3 -c "
-import json, sys
-cfg = json.load(open('$OPENCLAW_CONFIG'))
-entries = cfg.get('plugins', {}).get('entries', {})
-if 'memory-shadowdb' in entries:
-    sys.exit(0)
-sys.exit(1)
+  if node -e "
+const cfg = JSON.parse(require('fs').readFileSync('$OPENCLAW_CONFIG','utf8'));
+process.exit(cfg.plugins?.entries?.['memory-shadowdb'] ? 0 : 1);
 " 2>/dev/null; then
     ok "Plugin already wired in OpenClaw config — skipping"
+
+    if $IS_UPDATE; then
+      # On update, refresh the load path in case the install dir moved
+      info "Verifying plugin path is current..."
+      if ! $DRY_RUN; then
+        node -e "
+const fs = require('fs');
+const cfg = JSON.parse(fs.readFileSync('$OPENCLAW_CONFIG','utf8'));
+const paths = cfg.plugins?.load?.paths || [];
+const want = '$PLUGIN_ABS_PATH';
+if (!paths.includes(want)) {
+  cfg.plugins = cfg.plugins || {};
+  cfg.plugins.load = cfg.plugins.load || {};
+  cfg.plugins.load.paths = [...paths.filter(p => !p.includes('memory-shadowdb')), want];
+  fs.writeFileSync('$OPENCLAW_CONFIG', JSON.stringify(cfg, null, 2) + '\n');
+  console.log('  ✓  Updated plugin path');
+} else {
+  console.log('  ✓  Plugin path is current');
+}
+"
+      fi
+    fi
+
     blank
   else
     info "Patching ${BOLD}${OPENCLAW_CONFIG}${NC}"
@@ -504,64 +523,55 @@ sys.exit(1)
       cp "$OPENCLAW_CONFIG" "${OPENCLAW_CONFIG}.pre-shadowdb-backup"
       ok "Config backed up to ${OPENCLAW_CONFIG}.pre-shadowdb-backup"
 
-      python3 << PYEOF
-import json, sys
+      node -e "
+const fs = require('fs');
+const cfg = JSON.parse(fs.readFileSync('$OPENCLAW_CONFIG', 'utf8'));
+const pluginPath = '$PLUGIN_ABS_PATH';
 
-config_path = "$OPENCLAW_CONFIG"
-plugin_path = "$PLUGIN_ABS_PATH"
+// Ensure plugins section
+cfg.plugins = cfg.plugins || {};
+cfg.plugins.load = cfg.plugins.load || {};
+cfg.plugins.load.paths = cfg.plugins.load.paths || [];
+if (!cfg.plugins.load.paths.includes(pluginPath)) {
+  cfg.plugins.load.paths.push(pluginPath);
+}
 
-with open(config_path) as f:
-    cfg = json.load(f)
+// Set memory slot
+cfg.plugins.slots = cfg.plugins.slots || {};
+cfg.plugins.slots.memory = 'memory-shadowdb';
 
-# Ensure plugins section exists
-plugins = cfg.setdefault("plugins", {})
-
-# Add load path (deduplicated)
-load = plugins.setdefault("load", {})
-paths = load.setdefault("paths", [])
-if plugin_path not in paths:
-    paths.append(plugin_path)
-
-# Set memory slot
-slots = plugins.setdefault("slots", {})
-slots["memory"] = "memory-shadowdb"
-
-# Add plugin entry with default config
-entries = plugins.setdefault("entries", {})
-if "memory-shadowdb" not in entries:
-    entries["memory-shadowdb"] = {
-        "enabled": True,
-        "config": {
-            "embedding": {
-                "provider": "ollama",
-                "model": "nomic-embed-text",
-                "dimensions": 768,
-                "ollamaUrl": "http://localhost:11434"
-            },
-            "table": "memories",
-            "search": {
-                "maxResults": 6,
-                "minScore": 0.15,
-                "vectorWeight": 0.7,
-                "textWeight": 0.3,
-                "recencyWeight": 0.15
-            },
-            "writes": {
-                "enabled": True,
-                "autoEmbed": True,
-                "retention": {
-                    "purgeAfterDays": 30
-                }
-            }
-        }
+// Add plugin entry
+cfg.plugins.entries = cfg.plugins.entries || {};
+if (!cfg.plugins.entries['memory-shadowdb']) {
+  cfg.plugins.entries['memory-shadowdb'] = {
+    enabled: true,
+    config: {
+      embedding: {
+        provider: 'ollama',
+        model: 'nomic-embed-text',
+        dimensions: 768,
+        ollamaUrl: 'http://localhost:11434'
+      },
+      table: 'memories',
+      search: {
+        maxResults: 6,
+        minScore: 0.15,
+        vectorWeight: 0.7,
+        textWeight: 0.3,
+        recencyWeight: 0.15
+      },
+      writes: {
+        enabled: true,
+        autoEmbed: true,
+        retention: { purgeAfterDays: 30 }
+      }
     }
+  };
+}
 
-with open(config_path, "w") as f:
-    json.dump(cfg, f, indent=2)
-    f.write("\n")
-
-print("  ✓  OpenClaw config patched successfully")
-PYEOF
+fs.writeFileSync('$OPENCLAW_CONFIG', JSON.stringify(cfg, null, 2) + '\n');
+console.log('  ✓  OpenClaw config patched successfully');
+"
 
     else
       ok "[DRY RUN] Would patch OpenClaw config"
