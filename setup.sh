@@ -851,8 +851,9 @@ fi
 # └────────────────────────────────────────────────────────────────────────────┘
 
 # Helper: insert a primer rule (backend-aware upsert)
+#   $1=key  $2=content  $3=priority  $4=always (0 or 1, default 0)
 insert_primer_rule() {
-  local key="$1" content="$2" priority="$3"
+  local key="$1" content="$2" priority="$3" always="${4:-0}"
 
   # Escape single quotes for SQL
   local esc_key="${key//\'/\'\'}"
@@ -860,26 +861,29 @@ insert_primer_rule() {
 
   case "$BACKEND" in
     postgres)
-      psql "$DB_NAME" -c "INSERT INTO primer (key, content, priority) VALUES ('${esc_key}', '${esc_content}', ${priority}) ON CONFLICT (key) DO UPDATE SET content = EXCLUDED.content, priority = EXCLUDED.priority;" 2>/dev/null
+      psql "$DB_NAME" -c "INSERT INTO primer (key, content, priority, \"always\") VALUES ('${esc_key}', '${esc_content}', ${priority}, $([ "$always" = "1" ] && echo "TRUE" || echo "FALSE")) ON CONFLICT (key) DO UPDATE SET content = EXCLUDED.content, priority = EXCLUDED.priority, \"always\" = EXCLUDED.\"always\";" 2>/dev/null
       ;;
     sqlite)
-      sqlite3 "$CONN_STRING" "INSERT OR REPLACE INTO primer (key, content, priority) VALUES ('${esc_key}', '${esc_content}', ${priority});" 2>/dev/null
+      sqlite3 "$CONN_STRING" "INSERT OR REPLACE INTO primer (key, content, priority, \"always\") VALUES ('${esc_key}', '${esc_content}', ${priority}, ${always});" 2>/dev/null
       ;;
     mysql)
-      mysql -e "INSERT INTO primer (\`key\`, content, priority) VALUES ('${esc_key}', '${esc_content}', ${priority}) ON DUPLICATE KEY UPDATE content=VALUES(content), priority=VALUES(priority);" "$DB_NAME" 2>/dev/null
+      mysql -e "INSERT INTO primer (\`key\`, content, priority, \`always\`) VALUES ('${esc_key}', '${esc_content}', ${priority}, ${always}) ON DUPLICATE KEY UPDATE content=VALUES(content), priority=VALUES(priority), \`always\`=VALUES(\`always\`);" "$DB_NAME" 2>/dev/null
       ;;
   esac
 }
 
-# Helper: parse PRIMER.md and insert each section
+# Helper: parse a markdown file and insert each # section as a primer rule
+#   $1=file  $2=always flag (0 or 1)
 #   Format: # heading lines become keys, body becomes content
 #   Priority assigned by order of appearance (0, 10, 20, ...)
 import_primer_file() {
-  local file="$1"
+  local file="$1" always="${2:-0}"
   local current_key=""
   local current_content=""
   local priority=0
   local count=0
+  local always_label=""
+  [[ "$always" == "1" ]] && always_label=" [always]"
 
   while IFS= read -r line || [[ -n "$line" ]]; do
     if [[ "$line" =~ ^#[[:space:]]+(.*) ]]; then
@@ -888,8 +892,8 @@ import_primer_file() {
         # Trim leading/trailing whitespace from content
         current_content="$(echo "$current_content" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
         if [[ -n "$current_content" ]]; then
-          insert_primer_rule "$current_key" "$current_content" "$priority"
-          ok "  ${current_key} (priority ${priority})"
+          insert_primer_rule "$current_key" "$current_content" "$priority" "$always"
+          ok "  ${current_key} (priority ${priority})${always_label}"
           priority=$((priority + 10))
           count=$((count + 1))
         fi
@@ -914,8 +918,8 @@ ${line}"
   if [[ -n "$current_key" && -n "$current_content" ]]; then
     current_content="$(echo "$current_content" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
     if [[ -n "$current_content" ]]; then
-      insert_primer_rule "$current_key" "$current_content" "$priority"
-      ok "  ${current_key} (priority ${priority})"
+      insert_primer_rule "$current_key" "$current_content" "$priority" "$always"
+      ok "  ${current_key} (priority ${priority})${always_label}"
       count=$((count + 1))
     fi
   fi
@@ -926,8 +930,9 @@ ${line}"
 # Only run primer setup on fresh installs (not updates) and not dry-run
 if ! $IS_UPDATE && ! $DRY_RUN; then
 
-  # Look for PRIMER.md in likely locations
+  # Look for PRIMER.md and ALWAYS.md in likely locations
   PRIMER_FILE=""
+  ALWAYS_FILE=""
   OPENCLAW_WORKSPACE="${HOME}/.openclaw/workspace"
 
   for candidate in \
@@ -941,24 +946,64 @@ if ! $IS_UPDATE && ! $DRY_RUN; then
     fi
   done
 
+  for candidate in \
+    "${OPENCLAW_WORKSPACE}/ALWAYS.md" \
+    "${OPENCLAW_WORKSPACE}/always.md" \
+    "./ALWAYS.md" \
+    "./always.md"; do
+    if [[ -f "$candidate" ]]; then
+      ALWAYS_FILE="$candidate"
+      break
+    fi
+  done
+
+  FOUND_FILES=false
+
+  # ── Import PRIMER.md (injected on first turn) ────────────────────────
   if [[ -n "$PRIMER_FILE" ]]; then
-    # ── Auto-import from file ─────────────────────────────────────────
+    FOUND_FILES=true
     blank
     info "Found primer file: ${BOLD}${PRIMER_FILE}${NC}"
-    detail "Parsing sections (# heading = key, body = rule text)..."
+    detail "Parsing sections (# heading = key, body = rule text)"
+    detail "These rules are injected on the first turn of each session."
     echo ""
 
-    IMPORTED=$(import_primer_file "$PRIMER_FILE")
+    IMPORTED=$(import_primer_file "$PRIMER_FILE" 0)
 
     if [[ "$IMPORTED" -gt 0 ]]; then
       blank
       ok "Imported ${IMPORTED} primer rule(s) from ${PRIMER_FILE}"
-      detail "These will be injected before the agent's first thought each session."
-      detail "Edit the file and re-run setup to update."
     else
       warn "No sections found in ${PRIMER_FILE}"
       detail "Expected format: # heading on its own line, content below it"
     fi
+    blank
+  fi
+
+  # ── Import ALWAYS.md (injected every turn) ────────────────────────────
+  if [[ -n "$ALWAYS_FILE" ]]; then
+    FOUND_FILES=true
+    blank
+    info "Found always-on file: ${BOLD}${ALWAYS_FILE}${NC}"
+    detail "Parsing sections (# heading = key, body = rule text)"
+    detail "These rules are injected on ${BOLD}every turn${NC}, not just the first."
+    echo ""
+
+    IMPORTED_ALWAYS=$(import_primer_file "$ALWAYS_FILE" 1)
+
+    if [[ "$IMPORTED_ALWAYS" -gt 0 ]]; then
+      blank
+      ok "Imported ${IMPORTED_ALWAYS} always-on rule(s) from ${ALWAYS_FILE}"
+      detail "⚠️  These cost tokens every turn. Keep them short and critical."
+    else
+      warn "No sections found in ${ALWAYS_FILE}"
+      detail "Expected format: # heading on its own line, content below it"
+    fi
+    blank
+  fi
+
+  if $FOUND_FILES; then
+    detail "Edit the files and re-run setup to update."
     blank
 
   elif ! $AUTO_YES; then
@@ -980,7 +1025,7 @@ if ! $IS_UPDATE && ! $DRY_RUN; then
     echo "  │   The test: if violating this rule before the agent thinks to    │"
     echo "  │   search would cause damage, it's a primer rule.                 │"
     echo "  │                                                                  │"
-    echo "  │   💡  Or create ~/.openclaw/workspace/PRIMER.md and re-run.      │"
+    echo "  │   💡  Or create PRIMER.md / ALWAYS.md in workspace and re-run.  │"
     echo "  │                                                                  │"
     echo "  └──────────────────────────────────────────────────────────────────┘"
     echo ""
@@ -1032,7 +1077,8 @@ if ! $IS_UPDATE && ! $DRY_RUN; then
       blank
     else
       detail "No problem — you can add primer rules anytime:"
-      detail "  • Create ~/.openclaw/workspace/PRIMER.md and re-run setup"
+      detail "  • Create PRIMER.md (first turn) or ALWAYS.md (every turn)"
+      detail "    in ~/.openclaw/workspace/ and re-run setup"
       detail "  • Insert with SQL directly"
       detail "  • Ask your agent to do it"
       detail "See: https://github.com/jamesdwilson/Sh4d0wDB#importing-your-identity"

@@ -394,9 +394,38 @@ Edit the file and re-run setup anytime to update.
 
 **Option C: Skip it entirely.** Start with searchable memories only. If you notice your agent forgetting something critical on the first turn of new conversations, that's your sign to add a primer rule — create the file, re-run setup, or insert with SQL directly.
 
-### The `always` column
+### The `always` column — and `ALWAYS.md`
 
-Primer rows have an `always` column (default: `false`). When set to `true`, the row is injected on every single turn, not just the first. Use this sparingly — it's for rules so critical that even scrolling out of the context window in a long conversation would be dangerous. Most primer rules only need to be there on turn 1.
+Primer rows have an `always` column (default: `false`). When set to `true`, the row is injected on **every single turn**, not just the first. Use this sparingly — it's for rules so critical that even scrolling out of the context window in a long conversation would be dangerous. Most primer rules only need to be there on turn 1.
+
+To set rules as always-on, create `~/.openclaw/workspace/ALWAYS.md` with the same `# heading` format:
+
+```markdown
+# banned-words
+Never use the words: workout, exercise, cardio, regime. Use specific activity names.
+
+# confirmation-gate
+Never send emails, messages, or make purchases without explicit user confirmation.
+```
+
+The setup script detects both files and tells you what it's doing:
+
+```
+  ℹ  Found primer file: ~/.openclaw/workspace/PRIMER.md
+     These rules are injected on the first turn of each session.
+  ✓  identity (priority 0)
+  ✓  owner (priority 10)
+  ✓  Imported 2 primer rule(s)
+
+  ℹ  Found always-on file: ~/.openclaw/workspace/ALWAYS.md
+     These rules are injected on every turn, not just the first.
+  ✓  banned-words (priority 0) [always]
+  ✓  confirmation-gate (priority 10) [always]
+  ✓  Imported 2 always-on rule(s)
+     ⚠️  These cost tokens every turn. Keep them short and critical.
+```
+
+If a rule exists in both files, the last one imported wins (ALWAYS.md overwrites PRIMER.md for the same key).
 
 </details>
 
