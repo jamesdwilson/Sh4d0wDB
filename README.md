@@ -337,13 +337,13 @@ This feature is **off by default**. To enable it, add rows to the `primer` table
 
 Your agent probably has identity files already — `SOUL.md`, `RULES.md`, `USER.md`, `IDENTITY.md`, whatever your framework calls them. ShadowDB replaces those files with a searchable database.
 
-### Step 1: Import everything as memories
+### Your markdown files are imported automatically
 
-**Setup handles this automatically.** If it finds workspace markdown files (`MEMORY.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `RULES.md`, `BOOTSTRAP.md`, `KNOWLEDGE.md`), it splits each `# section` into a separate memory record with a meaningful category and tags. In headless/non-interactive mode it does this silently.
+Setup scans for workspace markdown files (`MEMORY.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `RULES.md`, `BOOTSTRAP.md`, `KNOWLEDGE.md`) and splits each `# section` into a separate memory record with a meaningful category and tags. In headless mode it does this silently. No manual work needed.
 
-You can also ask your agent to `memory_write` concepts manually, or import with SQL. The point is: **most of your identity files should become searchable memories** — the agent pulls relevant context when it needs it instead of having everything force-fed on every turn.
+The result: your identity files become searchable memories. The agent pulls relevant context when it needs it instead of having everything force-fed on every turn.
 
-### Step 2: Decide what needs to be always-on
+### The only real decision: what needs to be always-on?
 
 Here's the question: **if the agent violates this rule before it has a chance to search, is that a problem?**
 
@@ -358,9 +358,9 @@ Here's the question: **if the agent violates this rule before it has a chance to
 
 **Most users need 3-5 primer entries.** If you have more than 10, you're probably over-thinking it. The whole point is that searchable memory handles the long tail.
 
-### Step 3: Load your primer rules
+### Loading primer rules
 
-**Option A: Create a `PRIMER.md` file.** The setup script auto-detects it and imports every section:
+**Option A: Create a `PRIMER.md` file** before running setup. The script auto-detects it and imports every section:
 
 ```markdown
 # identity
