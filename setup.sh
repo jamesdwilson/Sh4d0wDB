@@ -258,7 +258,7 @@ blank
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 1 of 9 — Backing up your files"
+header "Step 1 of 6 — Backing up your files"
 
 if [[ ! -d "$WORKSPACE" ]]; then
   warn "Workspace directory not found: $WORKSPACE"
@@ -319,7 +319,7 @@ fi
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 2 of 9 — Checking prerequisites"
+header "Step 2 of 6 — Checking prerequisites"
 
 MISSING=0
 
@@ -438,7 +438,7 @@ blank
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 3 of 9 — Creating database"
+header "Step 3 of 6 — Creating database"
 
 if [[ "$BACKEND" == "postgres" ]]; then
 
@@ -529,199 +529,11 @@ fi
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                                                                            │
-# │   STEP 4 of 7:  IMPORT YOUR .md FILES                                     │
-# │                                                                            │
-# │   This reads your workspace .md files and imports them into the database.  │
-# │                                                                            │
-# │   Here's where each file goes:                                             │
-# │                                                                            │
-# │     SOUL.md, IDENTITY.md  →  startup table  (agent identity)               │
-# │     USER.md               →  memories table  (category: personal)          │
-# │     MEMORY.md             →  memories table  (category: general)           │
-# │     BOOTSTRAP.md          →  memories table  (category: ops)               │
-# │     TOOLS.md              →  skipped  (framework manages this)             │
-# │     AGENTS.md             →  skipped  (you'll replace this with 11 bytes)  │
-# │     HEARTBEAT.md          →  skipped  (framework manages this)             │
-# │     everything else       →  memories table  (auto-categorized)            │
-# │                                                                            │
-# │   Your original files are NOT modified. We only READ them.                 │
+# │   STEP 4 of 6:  INSTALL PLUGIN DEPENDENCIES                               │
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 4 of 9 — Importing your .md files"
-
-if [[ -d "$WORKSPACE" ]] && [[ $MD_COUNT -gt 0 ]]; then
-
-  info "Importing from: ${BOLD}${WORKSPACE}${NC}"
-  blank
-
-  if [[ -f "$SCRIPT_DIR/import-md" ]]; then
-
-    if confirm "Import ${MD_COUNT} .md files into the database?"; then
-      blank
-
-      if ! $DRY_RUN; then
-        "$SCRIPT_DIR/import-md" "$WORKSPACE" --backend "$BACKEND"
-      else
-        "$SCRIPT_DIR/import-md" "$WORKSPACE" --backend "$BACKEND" --dry-run
-      fi
-
-      blank
-      ok "Import complete"
-    fi
-
-  else
-    warn "import-md script not found in $SCRIPT_DIR"
-    detail "You can import files manually later — see README.md"
-  fi
-
-else
-  if [[ ! -d "$WORKSPACE" ]]; then
-    info "Workspace directory doesn't exist yet — skipping import"
-  else
-    info "No .md files to import — skipping"
-  fi
-fi
-
-blank
-
-
-# ┌────────────────────────────────────────────────────────────────────────────┐
-# │                                                                            │
-# │   STEP 5 of 7:  IMPORT RULES_REINFORCE.md (if it exists)                  │
-# │                                                                            │
-# │   Convention: if your workspace contains RULES_REINFORCE.md, those rules   │
-# │   are imported as always-on startup rows (reinforce=true). These rules     │
-# │   appear in EVERY m query result — not just the first call in a session.   │
-# │                                                                            │
-# │   Why: critical rules (safety gates, communication policies) fail under    │
-# │   context pressure. Reinforced rules arrive as fresh tool output in the    │
-# │   high-attention zone (end of context), not habituated system prompt       │
-# │   content at position 0. See: Lost in the Middle (Liu et al., 2023).      │
-# │                                                                            │
-# │   Format:                                                                  │
-# │     # Rule Name                                                            │
-# │     Rule content on following lines.                                       │
-# │                                                                            │
-# │     # Another Rule                                                         │
-# │     More content here.                                                     │
-# │                                                                            │
-# │   Each # heading becomes a startup key. Content below becomes the rule.    │
-# │   No file = no reinforcement = no questions asked.                         │
-# │                                                                            │
-# └────────────────────────────────────────────────────────────────────────────┘
-
-header "Step 5 of 9 — Checking for RULES_REINFORCE.md"
-
-REINFORCE_FILE="${WORKSPACE}/RULES_REINFORCE.md"
-
-if [[ -f "$REINFORCE_FILE" ]]; then
-  RULE_COUNT=$(grep -c '^# ' "$REINFORCE_FILE" 2>/dev/null || echo "0")
-  info "Found ${BOLD}RULES_REINFORCE.md${NC} with ${BOLD}${RULE_COUNT} rules${NC}"
-  detail "These rules will appear in EVERY m query result (reinforced)."
-  blank
-
-  if ! $DRY_RUN; then
-    # Parse: each # heading = key, content below = rule text
-    current_key=""
-    current_content=""
-
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      if [[ "$line" =~ ^#\  ]]; then
-        # Save previous rule if exists
-        if [[ -n "$current_key" && -n "$current_content" ]]; then
-          key_slug=$(echo "$current_key" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd 'a-z0-9_')
-          escaped_content=$(echo "$current_content" | sed "s/'/''/g")
-          if [[ "$BACKEND" == "postgres" ]]; then
-            psql "$DB_NAME" -c "INSERT INTO startup (key, content, priority, reinforce) VALUES ('${key_slug}', '${escaped_content}', 10, true) ON CONFLICT (key) DO UPDATE SET content='${escaped_content}', reinforce=true;" 2>/dev/null
-          elif [[ "$BACKEND" == "sqlite" ]]; then
-            sqlite3 "$DB_PATH" "INSERT OR REPLACE INTO startup (key, content, priority, reinforce) VALUES ('${key_slug}', '${escaped_content}', 10, true);" 2>/dev/null
-          fi
-          ok "  Reinforced: ${current_key}"
-        fi
-        current_key="${line#\# }"
-        current_content=""
-      else
-        [[ -n "$line" ]] && current_content="${current_content:+$current_content\n}${line}"
-      fi
-    done < "$REINFORCE_FILE"
-
-    # Save last rule
-    if [[ -n "$current_key" && -n "$current_content" ]]; then
-      key_slug=$(echo "$current_key" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd 'a-z0-9_')
-      escaped_content=$(echo "$current_content" | sed "s/'/''/g")
-      if [[ "$BACKEND" == "postgres" ]]; then
-        psql "$DB_NAME" -c "INSERT INTO startup (key, content, priority, reinforce) VALUES ('${key_slug}', '${escaped_content}', 10, true) ON CONFLICT (key) DO UPDATE SET content='${escaped_content}', reinforce=true;" 2>/dev/null
-      elif [[ "$BACKEND" == "sqlite" ]]; then
-        sqlite3 "$DB_PATH" "INSERT OR REPLACE INTO startup (key, content, priority, reinforce) VALUES ('${key_slug}', '${escaped_content}', 10, true);" 2>/dev/null
-      fi
-      ok "  Reinforced: ${current_key}"
-    fi
-
-    blank
-    ok "Reinforced rules imported"
-  else
-    ok "[DRY RUN] Would import ${RULE_COUNT} reinforced rules"
-  fi
-else
-  info "No RULES_REINFORCE.md found — skipping"
-  detail "To add reinforced rules later, create RULES_REINFORCE.md and re-run setup."
-fi
-
-blank
-
-
-# ┌────────────────────────────────────────────────────────────────────────────┐
-# │                                                                            │
-# │   STEP 6 of 7:  REPLACE WORKSPACE .md FILES                               │
-# │                                                                            │
-# │   Now that everything is in the database, we empty the workspace .md       │
-# │   files and write AGENTS.md with the 11-byte database instruction.         │
-# │                                                                            │
-# │   Files are emptied (not deleted) so the framework doesn't complain        │
-# │   about missing files. AGENTS.md gets the instruction that makes           │
-# │   everything work.                                                         │
-# │                                                                            │
-# └────────────────────────────────────────────────────────────────────────────┘
-
-header "Step 6 of 9 — Replacing workspace .md files"
-
-if [[ -d "$WORKSPACE" ]] && [[ $MD_COUNT -gt 0 ]]; then
-
-  info "Emptying .md files in ${BOLD}${WORKSPACE}${NC}"
-  detail "Files are emptied, not deleted — framework won't complain."
-  blank
-
-  if ! $DRY_RUN; then
-    # Empty all .md files except AGENTS.md (we'll write that next)
-    find "$WORKSPACE" -maxdepth 1 -name "*.md" -type f ! -name "AGENTS.md" | while read -r f; do
-      echo -n > "$f"
-      ok "  Emptied: $(basename "$f")"
-    done
-
-    blank
-
-    # Write AGENTS.md with the 11-byte instruction
-    echo "DB: m query" > "${WORKSPACE}/AGENTS.md"
-    ok "Wrote AGENTS.md:  ${BOLD}DB: m query${NC}  (11 bytes)"
-  else
-    ok "[DRY RUN] Would empty ${MD_COUNT} files and write AGENTS.md"
-  fi
-
-else
-  info "No workspace files to replace — skipping"
-fi
-
-blank
-
-
-# ┌────────────────────────────────────────────────────────────────────────────┐
-# │                                                                            │
-# │   STEP 7 of 9:  INSTALL PLUGIN DEPENDENCIES                               │
-# │                                                                            │
-# └────────────────────────────────────────────────────────────────────────────┘
-
-header "Step 7 of 9 — Installing plugin dependencies"
+header "Step 4 of 6 — Installing plugin dependencies"
 
 PLUGIN_DIR="${SCRIPT_DIR}/extensions/memory-shadowdb"
 
@@ -760,7 +572,7 @@ blank
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 8 of 9 — Wiring plugin into OpenClaw"
+header "Step 5 of 6 — Wiring plugin into OpenClaw"
 
 OPENCLAW_CONFIG="${HOME}/.openclaw/openclaw.json"
 PLUGIN_ABS_PATH="$(cd "$PLUGIN_DIR" 2>/dev/null && pwd)"
@@ -868,7 +680,7 @@ fi
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 9 of 9 — Restarting gateway & verifying"
+header "Step 6 of 6 — Restarting gateway & verifying"
 
 if ! $DRY_RUN; then
 
