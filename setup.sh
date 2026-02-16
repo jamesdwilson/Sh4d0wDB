@@ -767,9 +767,12 @@ if (!paths.includes(want)) {
 
     if ! $DRY_RUN; then
 
-      # Back up config first
-      cp "$OPENCLAW_CONFIG" "${OPENCLAW_CONFIG}.pre-shadowdb-backup"
-      ok "Config backed up to ${OPENCLAW_CONFIG}.pre-shadowdb-backup"
+      # Back up config first — to a clear, findable location
+      BACKUP_DIR="${HOME}/OpenClaw-Before-ShadowDB-$(date +%Y-%m-%d)"
+      mkdir -p "$BACKUP_DIR"
+      cp "$OPENCLAW_CONFIG" "$BACKUP_DIR/openclaw.json"
+      ok "Config backed up to ${BACKUP_DIR}/openclaw.json"
+      info "If anything goes wrong, your original config is safe there."
 
       node -e "
 const fs = require('fs');
@@ -1336,7 +1339,7 @@ echo ""
 echo ""
 echo "  ┌──────────────────────────────────────────────────────────────────┐"
 echo "  │                                                                  │"
-echo "  │   📦  Config backup: ${OPENCLAW_CONFIG}.pre-shadowdb-backup"
+echo "  │   📦  Config backup: ~/OpenClaw-Before-ShadowDB-$(date +%Y-%m-%d)/"
 echo "  │                                                                  │"
 echo "  │   🔁  Update anytime (same install command):                     │"
 echo "  │       curl -fsSL https://raw.githubusercontent.com/              │"
