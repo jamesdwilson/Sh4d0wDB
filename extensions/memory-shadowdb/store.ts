@@ -266,7 +266,7 @@ export abstract class MemoryStore {
     const trimmedMax = Math.max(0, maxChars);
     const truncated = trimmedMax > 0 && fullText.length > trimmedMax;
     const text = truncated
-      ? `${fullText.slice(0, trimmedMax)}\n\n[...startup context truncated...]`
+      ? `${truncateCleanly(fullText, trimmedMax)}\n\n[...startup context truncated...]`
       : fullText;
 
     return { text, digest, totalChars: fullText.length, rowCount: sections.length, truncated };
@@ -584,6 +584,48 @@ export abstract class MemoryStore {
 // ============================================================================
 // Shared Helpers
 // ============================================================================
+
+/**
+ * Truncate text at a clean boundary (section > paragraph > sentence > word).
+ * Walks backward from maxChars to find the best break point.
+ * Falls back to hard cut only if no break found in the last 200 chars.
+ */
+function truncateCleanly(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+
+  const slice = text.slice(0, maxChars);
+
+  // Try to break at a section boundary (## heading)
+  const lastSection = slice.lastIndexOf("\n## ");
+  if (lastSection > maxChars - 500 && lastSection > 0) {
+    return slice.slice(0, lastSection).trimEnd();
+  }
+
+  // Try to break at a paragraph boundary (double newline)
+  const lastPara = slice.lastIndexOf("\n\n");
+  if (lastPara > maxChars - 300 && lastPara > 0) {
+    return slice.slice(0, lastPara).trimEnd();
+  }
+
+  // Try to break at a sentence boundary (. or \n followed by content)
+  const lastSentence = Math.max(
+    slice.lastIndexOf(". "),
+    slice.lastIndexOf(".\n"),
+    slice.lastIndexOf("\n"),
+  );
+  if (lastSentence > maxChars - 200 && lastSentence > 0) {
+    return slice.slice(0, lastSentence + 1).trimEnd();
+  }
+
+  // Try to break at a word boundary (space)
+  const lastSpace = slice.lastIndexOf(" ");
+  if (lastSpace > maxChars - 100 && lastSpace > 0) {
+    return slice.slice(0, lastSpace).trimEnd();
+  }
+
+  // Hard cut — no clean break found
+  return slice;
+}
 
 /** Validate content: required, non-empty, bounded length. */
 function validateContent(raw: unknown): string {
