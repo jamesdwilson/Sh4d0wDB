@@ -213,51 +213,10 @@ fs.writeFileSync('$OPENCLAW_CONFIG', JSON.stringify(cfg, null, 2) + '\n');
     info "Plugin directory not found — already removed?"
   fi
 
-  # 3. Offer to drop database
   echo ""
-  echo -e "  ${BOLD}Optional: remove the database?${NC}"
-  echo ""
-  echo -e "  Your memory records are still in the database."
-  echo -e "  Keep them if you might reinstall later."
-  echo ""
+  ok "Your database and all memory records are untouched."
 
-  if confirm "Drop the database too? (irreversible)"; then
-    # Detect backend from existing config or ask
-    EXISTING_BACKEND=$(node -e "
-      try {
-        const cfg = JSON.parse(require('fs').readFileSync('$OPENCLAW_CONFIG','utf8'));
-        process.stdout.write(cfg.plugins?.entries?.['memory-shadowdb']?.config?.backend || '');
-      } catch {}
-    " 2>/dev/null || true)
-
-    if [[ "$EXISTING_BACKEND" == "sqlite" ]]; then
-      SQLITE_PATH="${HOME}/.shadowdb/memory.db"
-      if [[ -f "$SQLITE_PATH" ]]; then
-        if ! $DRY_RUN; then
-          rm -f "$SQLITE_PATH"
-          ok "Removed SQLite database: ${SQLITE_PATH}"
-        else
-          ok "[DRY RUN] Would remove ${SQLITE_PATH}"
-        fi
-      fi
-    elif [[ "$EXISTING_BACKEND" == "postgres" ]] || command -v dropdb &>/dev/null; then
-      if ! $DRY_RUN; then
-        if dropdb "$DB_NAME" 2>/dev/null; then
-          ok "Dropped PostgreSQL database: ${DB_NAME}"
-        else
-          warn "Could not drop database '${DB_NAME}' — you may need to do this manually"
-        fi
-      else
-        ok "[DRY RUN] Would drop database '${DB_NAME}'"
-      fi
-    else
-      info "Remove your database manually when ready."
-    fi
-  else
-    ok "Database kept — your records are safe"
-  fi
-
-  # 4. Restart gateway
+  # 3. Restart gateway
   echo ""
   if command -v openclaw &>/dev/null && ! $DRY_RUN; then
     info "Restarting OpenClaw gateway..."
