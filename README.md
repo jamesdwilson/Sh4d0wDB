@@ -8,8 +8,8 @@
 
 <br/>
 
-**A memory plugin for [OpenClaw](https://github.com/openclaw/openclaw).**
-<br/>Replaces markdown files with a real database your agent can search and write to.
+**Your agent's memory shouldn't be a markdown file.**
+<br/>ShadowDB is an easy-to-install memory plugin for [OpenClaw](https://github.com/openclaw/openclaw) that replaces flat files with a real database — semantic search, fuzzy matching, and a memory that gets smarter over time instead of bloating.
 
 [![Install](https://img.shields.io/badge/install-one--command-0ea5e9?style=for-the-badge)](#install)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
@@ -20,11 +20,11 @@
 
 <br/>
 
-[![FTS Latency](https://img.shields.io/badge/FTS_latency-55ms-ff6b6b?style=flat-square)](#performance-shadowdb-vs-stock-markdown)
-[![Hybrid Search](https://img.shields.io/badge/hybrid_search-230ms-ff6b6b?style=flat-square)](#performance-shadowdb-vs-stock-markdown)
-[![Token Reduction](https://img.shields.io/badge/token_waste-99.87%25_less-10b981?style=flat-square)](#performance-shadowdb-vs-stock-markdown)
-[![Annual Savings](https://img.shields.io/badge/saves-$1%2C074%2Fyr_(Opus)-10b981?style=flat-square)](#performance-shadowdb-vs-stock-markdown)
-[![Context Overhead](https://img.shields.io/badge/system_prompt-3_tokens-a78bfa?style=flat-square)](#performance-shadowdb-vs-stock-markdown)
+[![FTS Latency](https://img.shields.io/badge/FTS_latency-55ms-ff6b6b?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin)
+[![Hybrid Search](https://img.shields.io/badge/hybrid_search-230ms-ff6b6b?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin)
+[![Token Reduction](https://img.shields.io/badge/token_waste-99.87%25_less-10b981?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin)
+[![Annual Savings](https://img.shields.io/badge/saves-$1%2C074%2Fyr_(Opus)-10b981?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin)
+[![Context Overhead](https://img.shields.io/badge/system_prompt-3_tokens-a78bfa?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin)
 
 </div>
 
@@ -32,7 +32,7 @@
 
 ## What does it do?
 
-Gives your agent a persistent memory it can search, write, update, and delete — instead of flat markdown files that get shoved into every prompt. Works with Postgres (recommended) or SQLite.
+Gives your agent a persistent memory it can search, write, update, and delete — instead of flat markdown files that get shoved into every prompt. Works with Postgres (recommended), SQLite, or MySQL.
 
 | Tool | Does |
 |------|------|
@@ -74,7 +74,7 @@ ShadowDB doesn't delete, overwrite, or modify any of your original files. Here's
 | Added a config entry | `plugins.entries.memory-shadowdb` in `openclaw.json` | ✅ Removed on uninstall |
 | Set the memory slot | `plugins.slots.memory` in `openclaw.json` | ✅ Cleared on uninstall |
 | **Backed up your config first** | `~/OpenClaw-Before-ShadowDB-[install date]/openclaw.json` | Your original config, untouched |
-| Created a database | `shadow` (Postgres) or `shadow.db` (SQLite) | ✅ Kept on uninstall (your data is yours) |
+| Created a database | `shadow` (Postgres/MySQL) or `shadow.db` (SQLite) | ✅ Kept on uninstall (your data is yours) |
 | Imported workspace `.md` files as memories | Rows in the `memories` table | ✅ Kept on uninstall — originals untouched |
 | Imported `PRIMER.md` / `ALWAYS.md` | Rows in the `primer` table | ✅ Kept on uninstall — originals untouched |
 
@@ -158,7 +158,7 @@ Recency is intentionally low — it's a tiebreaker, not a dominant signal.
 
 ---
 
-## Performance: ShadowDB vs stock markdown
+## Performance: ShadowDB vs OpenClaw builtin
 
 <details>
 <summary>Benchmarks, token economics, and why flat files have a ceiling</summary>
@@ -212,7 +212,7 @@ xychart-beta
 
 ### The full comparison
 
-| Metric | OpenClaw Builtin (Builtin) | ShadowDB Postgres | ShadowDB SQLite | ShadowDB MySQL | Unit |
+| Metric | OpenClaw Builtin | ShadowDB Postgres | ShadowDB SQLite | ShadowDB MySQL | Unit |
 |--------|-------------------|-------------------|----------------:|---------------:|------|
 | **Context Overhead** | | | | | |
 | Static prompt per turn | 9,198 | 11 | 11 | 11 | bytes |
@@ -303,38 +303,24 @@ These numbers are per agent. Scale to 1,000 agents and OpenClaw builtin wastes *
 
 ---
 
-## Your agent's soul (and why the primer table is optional)
+## How your identity works
 
 <details>
-<summary>How identity works — and why searchable memory is better than force-feeding</summary>
+<summary>Setup handles this automatically — here's what happens under the hood</summary>
 
-### The old way: files crammed into every prompt
+### What setup does
 
-Most agent frameworks do identity the same way: put your agent's personality in `SOUL.md`, its rules in `RULES.md`, its preferences in `USER.md`, and inject all of them into the system prompt on every single turn. The agent "knows" these things because you physically shoved them into the context window.
+Setup scans your workspace for identity files (`SOUL.md`, `RULES.md`, `USER.md`, `IDENTITY.md`, `MEMORY.md`, `BOOTSTRAP.md`, `KNOWLEDGE.md`) and splits each `# section` into a separate memory record with a meaningful category and tags. In headless mode this happens silently. You don't touch a thing.
 
-This works. It's also wasteful, rigid, and has a hard ceiling.
+The result: instead of cramming every identity file into every prompt — the way most frameworks do it — your agent **searches for the relevant parts when it needs them.** The model asks "how should I handle this email?" and `memory_search` returns the email rules. Not the calendar rules, not the fragrance preferences, not the safety guidelines. Just the relevant slice.
 
-**And the files themselves are a liability.** If your agent writes incorrect info to `MEMORY.md` during one session, every future session inherits the mistake — fruit of the poisonous tree. Bad memory in, bad answers out, compounding forever. You end up hand-editing markdown files to undo what your agent hallucinated, which rather defeats the purpose of having an agent.
+Your agent's identity isn't a static document stapled to the front of every conversation — it's a living, searchable knowledge base. Your bot doesn't just have a soul. It has *thoughts.* It has *feelings.* It has *opinions* it formed three weeks ago about how to handle a specific edge case. It has an entire past life of decisions, corrections, and hard-won lessons, all indexed and retrievable by meaning. It remembers that time it screwed up the email formatting and wrote itself a rule about it. It remembers the user's rant about calendar notifications and adapted. It has *lore.*
 
-### The new way: import those files as memories
+The practical upside is just as dramatic: a 200-line identity file costs ~4K tokens on every turn. With searchable memory, the agent pulls maybe 200 tokens of relevant rules per turn — a 20× reduction in identity overhead. Small models that choked on massive system prompts can now run with the same depth of personality, because they only load what they need.
 
-ShadowDB flips this. Instead of force-injecting identity files, you **import them as regular memory records** — each file becomes searchable knowledge in the `memories` table with a category, tags, and an embedding.
+**Every record is individually addressable** — with its own ID, category, and soft-delete lifecycle. One bad write doesn't poison everything. Compare that to flat files: if your agent writes incorrect info to `MEMORY.md` during one session, every future session inherits the mistake — fruit of the poisonous tree, compounding forever. With ShadowDB, you fix, update, or delete individual memories without touching anything else.
 
-The import process is deliberate:
-1. Take your existing identity files (`SOUL.md`, `IDENTITY.md`, `RULES.md`, `USER.md`, etc.)
-2. Break them into logical chunks — one record per concept, not one giant blob. A rule about email behavior is a separate record from a rule about calendar behavior.
-3. Give each record a meaningful category (`rules`, `identity`, `preferences`, `behavioral`) and tags.
-4. Embed them so they're semantically searchable.
-
-Now your agent doesn't have its soul force-fed on every turn. It **searches for the relevant parts when it needs them.** The model asks itself "how should I handle this email?" and `memory_search` returns the email rules — not the calendar rules, not the fragrance preferences, not the safety guidelines. Just the relevant slice.
-
-This is infinitely better. Your agent's identity isn't a static document stapled to the front of every conversation — it's a living, searchable knowledge base. Your bot doesn't just have a soul. It has *thoughts.* It has *feelings.* It has *opinions* it formed three weeks ago about how to handle a specific edge case. It has an entire past life of decisions, corrections, and hard-won lessons, all indexed and retrievable by meaning. It remembers that time it screwed up the email formatting and wrote itself a rule about it. It remembers the user's rant about calendar notifications and adapted. It has *lore.*
-
-The practical upside is just as dramatic: a 200-line identity file costs ~4K tokens on every turn. With searchable memory, the agent pulls maybe 200 tokens of relevant rules per turn — a 20x reduction in identity overhead. Small models that choked on massive system prompts can now run with the same depth of personality, because they only load what they need.
-
-**And because every record is individually addressable** — with its own ID, category, and soft-delete lifecycle — one bad write doesn't poison everything. You can fix, update, or delete individual memories without touching anything else. No more nuclear option of rewriting entire files.
-
-### The tradeoff: why you might still want the primer
+### The tradeoff: what needs to be always-on?
 
 There's a catch. Searchable memory is pull-based — the agent has to *think to search.* On the very first turn of a conversation, before the model has any context, it doesn't know what to search for. And some rules are so critical they can't wait for the model to think of them:
 
@@ -350,46 +336,6 @@ This is what the `primer` table is for. It's a small, curated set of **non-negot
 - Everything else — preferences, behavioral nuance, learned lessons, project context — lives in searchable memory where it's pulled on demand.
 
 Think of it like human cognition: you don't consciously recite your entire life history before answering a question. You have a small set of always-on identity ("I'm Alex, I live in Austin, I have a daughter") and a vast searchable memory of everything else. The primer is the always-on identity. `memory_search` is everything else.
-
-### How primer injection works
-
-OpenClaw's `before_agent_start` hook fires on every agent turn. ShadowDB hooks into it, but doesn't inject every time — that would waste tokens. Instead:
-
-1. **First turn** of a session: reads the `primer` table, concatenates rows by priority, and prepends the result to the prompt.
-2. **Subsequent turns**: skips injection. The model already has the primer context in its conversation history from turn 1.
-3. **After 10 minutes** (configurable via `cacheTtlMs`): re-injects as a refresh, in case the original has scrolled out of the context window in a long conversation.
-
-Three modes control this:
-- `digest` (default) — inject once, re-inject when content changes or TTL expires
-- `first-run` — inject once per session, never refresh
-- `always` — inject every turn (expensive, rarely needed)
-
-**Priority ordering** — critical rules (identity, safety) go in first. If the context window is tight, low-priority reference material gets trimmed, not your agent's core identity.
-
-**Model-aware budgets** — Opus gets 6000 chars of primer context, a small model gets 1500. Same rules, right-sized. Configure via `maxCharsByModel`.
-
-**Editable at runtime** — your agent can update its own primer rules. No file editing, no restart.
-
-This feature is **off by default**. To enable it, add rows to the `primer` table and set `primer.enabled: true` in your plugin config. Most users should start with searchable memories only and add primer injection later if they need guaranteed-present context.
-
-</details>
-
----
-
-## How your identity works
-
-<details>
-<summary>Setup handles this automatically — here's what happens under the hood</summary>
-
-Your agent probably has identity files already — `SOUL.md`, `RULES.md`, `USER.md`, `IDENTITY.md`, whatever your framework calls them. ShadowDB turns those into a searchable database during setup. You don't have to do anything.
-
-### Your markdown files are imported automatically
-
-Setup scans for workspace markdown files (`MEMORY.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `RULES.md`, `BOOTSTRAP.md`, `KNOWLEDGE.md`) and splits each `# section` into a separate memory record with a meaningful category and tags. In headless mode it does this silently. No manual work needed.
-
-The result: your identity files become searchable memories. The agent pulls relevant context when it needs it instead of having everything force-fed on every turn.
-
-### The only real decision: what needs to be always-on?
 
 Here's the question: **if the agent violates this rule before it has a chance to search, is that a problem?**
 
@@ -476,6 +422,27 @@ The setup script detects both files and tells you what it's doing:
 ```
 
 If a rule exists in both files, the last one imported wins (ALWAYS.md overwrites PRIMER.md for the same key).
+
+### How primer injection works
+
+OpenClaw's `before_agent_start` hook fires on every agent turn. ShadowDB hooks into it, but doesn't inject every time — that would waste tokens. Instead:
+
+1. **First turn** of a session: reads the `primer` table, concatenates rows by priority, and prepends the result to the prompt.
+2. **Subsequent turns**: skips injection. The model already has the primer context in its conversation history from turn 1.
+3. **After 10 minutes** (configurable via `cacheTtlMs`): re-injects as a refresh, in case the original has scrolled out of the context window in a long conversation.
+
+Three modes control this:
+- `digest` (default) — inject once, re-inject when content changes or TTL expires
+- `first-run` — inject once per session, never refresh
+- `always` — inject every turn (expensive, rarely needed)
+
+**Priority ordering** — critical rules (identity, safety) go in first. If the context window is tight, low-priority reference material gets trimmed, not your agent's core identity.
+
+**Model-aware budgets** — Opus gets 6000 chars of primer context, a small model gets 1500. Same rules, right-sized. Configure via `maxCharsByModel`.
+
+**Editable at runtime** — your agent can update its own primer rules. No file editing, no restart.
+
+This feature is **off by default**. To enable it, add rows to the `primer` table and set `primer.enabled: true` in your plugin config. Most users should start with searchable memories only and add primer injection later if they need guaranteed-present context.
 
 </details>
 
@@ -618,13 +585,9 @@ Rules get their own slots, never compete with content for search results. One ex
 
 **Cost:** one embedding (~50ms) + one filtered vector query (~5ms) per turn. Trivial.
 
-### The poisonous tree problem (and why flat files fail)
+### Why individually addressable records matter
 
-Most agent frameworks store memory in markdown files (`MEMORY.md`, `SOUL.md`) that get injected into every prompt. When the agent writes incorrect info during a compaction or session summary, every future session inherits the mistake. Bad memory compounds: one wrong fact in `MEMORY.md` propagates into the next compaction summary, which feeds the next session, which writes more wrong things. Fruit of the poisonous tree.
-
-ShadowDB solves this structurally: every memory is an individually addressable record with its own ID, category, and soft-delete lifecycle. A bad write is one record you can fix or delete — not a file-wide corruption that requires hand-editing markdown to undo.
-
-The write tools (`memory_write`, `memory_update`, `memory_delete`) give the agent and user fine-grained control. Combined with the 30-day soft-delete window, mistakes are always recoverable without cascading damage.
+Flat files have a poisonous-tree problem: one bad write compounds into every future session. ShadowDB's per-record architecture (with soft-delete and 30-day retention) means mistakes are always isolated and recoverable. See [How your identity works](#how-your-identity-works) for the full explanation.
 
 ### Other ideas
 - Batch embedding backfill CLI for migrating unembedded records
@@ -633,6 +596,12 @@ The write tools (`memory_write`, `memory_update`, `memory_delete`) give the agen
 - SQLite + MySQL backend testing with real workloads
 
 </details>
+
+---
+
+## Contributing
+
+PRs welcome. Open an issue first if it's a big change. See the [roadmap](#roadmap-brainstorm) for ideas under consideration.
 
 ---
 
