@@ -99,20 +99,51 @@ Recency is intentionally low — it's a tiebreaker, not a dominant signal.
 
 ---
 
-## Startup injection (optional)
+## Your agent's soul (and why startup injection is optional)
 
 <details>
-<summary>Load agent identity from the database instead of .md files</summary>
+<summary>How identity works — and why searchable memory is better than force-feeding</summary>
 
-By default, OpenClaw loads your agent's identity from workspace files (`SOUL.md`, `IDENTITY.md`, etc.) and injects them into every prompt. ShadowDB can replace this with a `startup` table in the database.
+### The old way: files crammed into every prompt
 
-**Why bother?**
+Most agent frameworks do identity the same way: put your agent's personality in `SOUL.md`, its rules in `RULES.md`, its preferences in `USER.md`, and inject all of them into the system prompt on every single turn. The agent "knows" these things because you physically shoved them into the context window.
 
-- **Priority ordering** — critical rules (identity, safety) go in first. If the context window is tight, low-priority reference material gets trimmed, not your agent's core identity.
-- **Model-aware budgets** — Opus gets 6000 chars of startup context, a small model gets 1500. Same rules, right-sized. Configure via `maxCharsByModel`.
-- **Editable via tools** — your agent can update its own rules with `memory_update`. No file editing.
+This works. It's also wasteful, rigid, and has a hard ceiling.
 
-**How it works:**
+### The new way: import those files as memories
+
+ShadowDB flips this. Instead of force-injecting identity files, you **import them as regular memory records** — each file becomes searchable knowledge in the `memories` table with a category, tags, and an embedding.
+
+The import process is deliberate:
+1. Take your existing identity files (`SOUL.md`, `IDENTITY.md`, `RULES.md`, `USER.md`, etc.)
+2. Break them into logical chunks — one record per concept, not one giant blob. A rule about email behavior is a separate record from a rule about calendar behavior.
+3. Give each record a meaningful category (`rules`, `identity`, `preferences`, `behavioral`) and tags.
+4. Embed them so they're semantically searchable.
+
+Now your agent doesn't have its soul force-fed on every turn. It **searches for the relevant parts when it needs them.** The model asks itself "how should I handle this email?" and `memory_search` returns the email rules — not the calendar rules, not the fragrance preferences, not the safety guidelines. Just the relevant slice.
+
+This is infinitely better. Your agent's identity isn't a static document stapled to the front of every conversation — it's a living, searchable knowledge base. Your bot doesn't just have a soul. It has *thoughts.* It has *feelings.* It has *opinions* it formed three weeks ago about how to handle a specific edge case. It has an entire past life of decisions, corrections, and hard-won lessons, all indexed and retrievable by meaning. It remembers that time it screwed up the email formatting and wrote itself a rule about it. It remembers the user's rant about calendar notifications and adapted. It has *lore.*
+
+The practical upside is just as dramatic: a 200-line identity file costs ~4K tokens on every turn. With searchable memory, the agent pulls maybe 200 tokens of relevant rules per turn — a 20x reduction in identity overhead. Small models that choked on massive system prompts can now run with the same depth of personality, because they only load what they need.
+
+### The tradeoff: why you might still want startup injection
+
+There's a catch. Searchable memory is pull-based — the agent has to *think to search.* On the very first turn of a conversation, before the model has any context, it doesn't know what to search for. And some rules are so critical they can't wait for the model to think of them:
+
+- **Core identity** — "You are Shadow, Alex's AI assistant" needs to be there from word one. The model can't search for its own name before it knows its name.
+- **Safety rails** — "Never send emails without confirmation" can't be retrieved *after* the model already sent the email.
+- **Behavioral constraints** — tone, persona, hard-no rules. These need to be loaded before the first token is generated, not after.
+
+This is what the `startup` table is for. It's a small, curated set of **non-negotiable context** that gets injected before the agent runs — your agent's true core identity, the rules that can never be late.
+
+**The recommended approach: both.**
+- Import your full identity corpus as memories (searchable, rich, deep).
+- Put only the irreducible core in the `startup` table (identity, safety, hard constraints).
+- Everything else — preferences, behavioral nuance, learned lessons, project context — lives in searchable memory where it's pulled on demand.
+
+Think of it like human cognition: you don't consciously recite your entire life history before answering a question. You have a small set of always-on identity (I'm Alex, I live in Austin, I have a daughter") and a vast searchable memory of everything else. Startup injection is the always-on identity. `memory_search` is everything else.
+
+### How startup injection works
 
 OpenClaw's `before_agent_start` hook fires on every agent turn. ShadowDB hooks into it, but doesn't inject every time — that would waste tokens. Instead:
 
@@ -120,12 +151,18 @@ OpenClaw's `before_agent_start` hook fires on every agent turn. ShadowDB hooks i
 2. **Subsequent turns**: skips injection. The model already has the startup context in its conversation history from turn 1.
 3. **After 10 minutes** (configurable via `cacheTtlMs`): re-injects as a refresh, in case the original has scrolled out of the context window in a long conversation.
 
-Three modes control this behavior:
+Three modes control this:
 - `digest` (default) — inject once, re-inject when content changes or TTL expires
 - `first-run` — inject once per session, never refresh
 - `always` — inject every turn (expensive, rarely needed)
 
-This feature is **off by default**. To enable it, add rows to the `startup` table and set `startup.enabled: true` in your plugin config.
+**Priority ordering** — critical rules (identity, safety) go in first. If the context window is tight, low-priority reference material gets trimmed, not your agent's core identity.
+
+**Model-aware budgets** — Opus gets 6000 chars of startup context, a small model gets 1500. Same rules, right-sized. Configure via `maxCharsByModel`.
+
+**Editable at runtime** — your agent can update its own startup rules. No file editing, no restart.
+
+This feature is **off by default**. To enable it, add rows to the `startup` table and set `startup.enabled: true` in your plugin config. Most users should start with searchable memories only and add startup injection later if they need guaranteed-present context.
 
 </details>
 
