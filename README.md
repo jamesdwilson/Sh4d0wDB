@@ -30,88 +30,34 @@ Gives your agent a Postgres-backed memory it can search, write, update, and dele
 | `memory_delete` | Soft-delete (reversible for 30 days) |
 | `memory_undelete` | Undo a delete |
 
-That's it. Your agent uses these like any other tool.
-
 ---
 
 ## Install
 
-### Option A: Tell your agent to do it
+### Quick start
+
+```bash
+git clone https://github.com/jamesdwilson/Sh4d0wDB.git ~/projects/ShadowDB
+cd ~/projects/ShadowDB && ./setup.sh
+```
+
+The script walks you through everything — database, schema, importing your existing memory files, wiring the plugin. It backs up your files first and you can undo the whole thing with one command.
+
+### Or tell your agent to do it
 
 Paste this into your OpenClaw chat:
 
-> Install the ShadowDB memory plugin from https://github.com/jamesdwilson/Sh4d0wDB. It's an OpenClaw memory plugin at `extensions/memory-shadowdb/`. Clone the repo, add it to my config under `plugins.load.paths`, set `plugins.slots.memory` to `memory-shadowdb`, and configure it with Ollama embeddings (nomic-embed-text, 768 dimensions). I need a Postgres database called `shadow` with the pgvector and pg_trgm extensions. Run the schema from `schema.sql`. Enable writes.
-
-### Option B: Do it yourself
-
-```bash
-# 1. Clone
-git clone https://github.com/jamesdwilson/Sh4d0wDB.git ~/projects/ShadowDB
-
-# 2. Set up Postgres
-createdb shadow
-psql shadow -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;"
-psql shadow < ~/projects/ShadowDB/schema.sql
-
-# 3. Install dependencies
-cd ~/projects/ShadowDB/extensions/memory-shadowdb && npm install
-
-# 4. Add to your OpenClaw config (~/.openclaw/openclaw.json)
-```
-
-Add this to your `openclaw.json`:
-
-```jsonc
-{
-  "plugins": {
-    "load": {
-      "paths": ["~/projects/ShadowDB/extensions/memory-shadowdb"]
-    },
-    "slots": {
-      "memory": "memory-shadowdb"
-    },
-    "entries": {
-      "memory-shadowdb": {
-        "enabled": true,
-        "config": {
-          "embedding": {
-            "provider": "ollama",
-            "model": "nomic-embed-text",
-            "dimensions": 768
-          },
-          "table": "memories",
-          "search": {
-            "maxResults": 6,
-            "minScore": 0.15,
-            "vectorWeight": 0.7,
-            "textWeight": 0.3,
-            "recencyWeight": 0.15
-          },
-          "writes": {
-            "enabled": true,
-            "autoEmbed": true,
-            "retention": { "purgeAfterDays": 30 }
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-```bash
-# 5. Restart OpenClaw
-openclaw gateway restart
-```
+> Install the ShadowDB memory plugin. Clone https://github.com/jamesdwilson/Sh4d0wDB to ~/projects/ShadowDB, then run `./setup.sh` and follow the output. After that, wire it into my OpenClaw config: add the plugin path to `plugins.load.paths`, set `plugins.slots.memory` to `memory-shadowdb`, and add an entry under `plugins.entries.memory-shadowdb` with Ollama embeddings (nomic-embed-text, 768 dims), writes enabled, and recencyWeight 0.15. Use `config.patch` to apply it and restart the gateway.
 
 ### Verify
 
+Ask your agent *"search memory for test"* — if the result says `provider: "shadowdb"`, you're set.
+
+Or from the terminal:
+
 ```bash
 openclaw doctor --non-interactive | grep shadowdb
-# Should show: memory-shadowdb: registered (...)
 ```
-
-Or just ask your agent: *"search memory for test"* — if the result says `provider: "shadowdb"`, you're good.
 
 ---
 
@@ -121,15 +67,14 @@ Records don't expire. A phone number from 3 months ago is still a phone number. 
 
 ShadowDB gives the agent two pieces of information and lets it decide:
 
-- **Age in snippets** — search results show `[project] | 5d ago` instead of a raw timestamp. The agent reads "5 days ago" the same way you would — no date math required. (Models are notoriously bad at computing "how many days between Feb 10 and Feb 15" — pre-computing the age removes that failure mode entirely.)
-- **Recency as a tiebreaker** — newer records get a small ranking boost (default weight: `0.15`), but a highly relevant old record still beats a vaguely relevant new one.
+- **Age in snippets** — search results show `[project] | 5d ago` instead of a raw timestamp. The agent reads "5 days ago" the same way you would. This matters because models are bad at date math — ask one to compute "how many days between Feb 10 and Feb 15" and it'll confidently say 3 or 6. Pre-computing the age removes that failure mode.
+
+- **Recency as a tiebreaker** — newer records get a small ranking boost (weight: `0.15`), but a relevant old record still beats a vaguely relevant new one.
 
 Deletes are always reversible for 30 days. After that, automatic cleanup removes them permanently. There is no hard-delete tool — the agent can never permanently destroy data. Only time can.
 
 <details>
 <summary>Why not something more complex?</summary>
-
-We considered and rejected a bunch of fancier approaches:
 
 | Idea | Why we skipped it |
 |------|-------------------|
@@ -140,66 +85,6 @@ We considered and rejected a bunch of fancier approaches:
 | Dedup on write | Blocks legitimate updates and related-but-different facts |
 
 The principle: if the guardrails are more complex than the feature, you've lost the trade.
-
-</details>
-
----
-
-## Config reference
-
-<details>
-<summary>Full config with all options</summary>
-
-```jsonc
-// openclaw.json → plugins.entries.memory-shadowdb.config
-{
-  // Postgres table name (default: "memories")
-  "table": "memories",
-
-  // Direct connection string (optional — falls back to ~/.shadowdb.json)
-  "connectionString": "postgresql://user:pass@localhost:5432/shadow",
-
-  // Embedding provider
-  "embedding": {
-    "provider": "ollama",          // ollama | openai | openai-compatible | voyage | gemini | command
-    "model": "nomic-embed-text",
-    "dimensions": 768,
-    "ollamaUrl": "http://localhost:11434"
-  },
-
-  // Search tuning
-  "search": {
-    "maxResults": 6,
-    "minScore": 0.15,
-    "vectorWeight": 0.7,           // semantic similarity weight
-    "textWeight": 0.3,             // keyword match weight
-    "recencyWeight": 0.15          // newer = slight boost (tiebreaker only)
-  },
-
-  // Write operations (disabled by default)
-  "writes": {
-    "enabled": true,
-    "autoEmbed": true,             // auto-generate embeddings on write
-    "retention": {
-      "purgeAfterDays": 30         // permanently remove soft-deletes after N days (0 = never)
-    }
-  },
-
-  // Startup identity injection (replaces SOUL.md, IDENTITY.md, etc.)
-  "startup": {
-    "enabled": true,
-    "mode": "digest",              // always | first-run | digest
-    "maxChars": 6000,
-    "cacheTtlMs": 600000,
-    "maxCharsByModel": {           // model substring → char budget (first match wins)
-      "opus": 6000,
-      "sonnet": 5000,
-      "mistral-small": 2500,
-      "ministral-8b": 1500
-    }
-  }
-}
-```
 
 </details>
 
@@ -230,9 +115,27 @@ All weights are configurable. Recency is intentionally low — it's a tiebreaker
 
 ShadowDB can inject identity and rules from a `startup` table before each agent run. Records are prioritized (P0 = critical, P3 = reference) and concatenated until a character budget is hit.
 
-Smaller models get less context via `maxCharsByModel` — substring matching against the model name, first match wins, falls back to `maxChars`.
+Smaller models get less context via `maxCharsByModel` — substring matching against the model name, first match wins.
 
 This replaces `SOUL.md`, `IDENTITY.md`, `TOOLS.md`, etc. Keep empty stubs so OpenClaw doesn't complain, but the content comes from the database.
+
+</details>
+
+---
+
+## Embedding providers
+
+<details>
+<summary>6 supported providers</summary>
+
+| Provider | Notes |
+|----------|-------|
+| Ollama | Local, no API key needed (default) |
+| OpenAI | Requires API key |
+| OpenAI-compatible | Any compatible endpoint |
+| Voyage | Requires API key |
+| Gemini | Requires API key |
+| External command | Any CLI that outputs vectors |
 
 </details>
 
@@ -241,9 +144,9 @@ This replaces `SOUL.md`, `IDENTITY.md`, `TOOLS.md`, etc. Keep empty stubs so Ope
 ## Schema
 
 <details>
-<summary>Two tables</summary>
+<summary>Two tables — that's it</summary>
 
-**`memories`** — the knowledge base (11 columns, 8 indexes):
+**`memories`** — the knowledge base:
 
 ```sql
 CREATE TABLE memories (
@@ -254,7 +157,7 @@ CREATE TABLE memories (
   record_type TEXT DEFAULT 'fact',
   tags        TEXT[],
   embedding   VECTOR(768),
-  fts         TSVECTOR GENERATED ALWAYS AS (to_tsvector('english', coalesce(title,'') || ' ' || content)) STORED,
+  fts         TSVECTOR GENERATED ALWAYS AS (...) STORED,
   created_at  TIMESTAMPTZ DEFAULT now(),
   updated_at  TIMESTAMPTZ DEFAULT now(),
   deleted_at  TIMESTAMPTZ
@@ -279,21 +182,19 @@ Full schema with indexes: [`schema.sql`](schema.sql)
 
 ---
 
-## Embedding providers
+## Config reference
 
 <details>
-<summary>6 supported providers</summary>
+<summary>All available settings</summary>
 
-| Provider | Config key | Notes |
-|----------|-----------|-------|
-| Ollama | `ollama` | Local, no API key needed |
-| OpenAI | `openai` | Requires API key |
-| OpenAI-compatible | `openai-compatible` | Any compatible endpoint |
-| Voyage | `voyage` | Requires API key |
-| Gemini | `gemini` | Requires API key |
-| External command | `command` | Any CLI that outputs vectors |
+The setup script configures everything for you. If you need to tweak settings later, they live in your `openclaw.json` under `plugins.entries.memory-shadowdb.config`. See the [plugin manifest](extensions/memory-shadowdb/openclaw.plugin.json) for the full schema with descriptions.
 
-Dimension mismatches between provider and DB column are caught on startup.
+Key settings:
+- **`search.recencyWeight`** — how much to boost newer records (default: `0.15`, higher = more recency bias)
+- **`writes.enabled`** — turn on write tools (default: `false`)
+- **`writes.retention.purgeAfterDays`** — how long soft-deleted records survive (default: `30`, `0` = forever)
+- **`startup.maxCharsByModel`** — per-model context budgets (substring match on model name)
+- **`embedding.provider`** — which embedding backend to use
 
 </details>
 
@@ -311,26 +212,16 @@ Dimension mismatches between provider and DB column are caught on startup.
 
 **Search not returning results?**
 - Verify `provider: "shadowdb"` in search results
-- Check the plugin is wired to the memory slot
+- Check the plugin is wired: `plugins.slots.memory: "memory-shadowdb"`
 
 **Embedding errors?**
-- Check provider is running (Ollama: `ollama list`)
-- Verify dimensions match DB column (768 for nomic-embed-text)
+- Check Ollama is running: `ollama list`
+- Verify dimensions match (768 for nomic-embed-text)
 
 **Postgres connection issues?**
-- Confirm `vector` and `pg_trgm` extensions installed
-- Check connection string or `~/.shadowdb.json`
+- Confirm `vector` and `pg_trgm` extensions: `psql shadow -c '\dx'`
 
 </details>
-
----
-
-## Roadmap
-
-- [ ] Batch embedding backfill CLI
-- [ ] Schema migration versioning
-- [ ] Multi-agent startup scoping
-- [ ] `clawhub` / `openclaw plugins install` support
 
 ---
 
