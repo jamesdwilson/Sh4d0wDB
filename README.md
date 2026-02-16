@@ -35,14 +35,14 @@ Gives your agent a Postgres-backed memory it can search, write, update, and dele
 ## Install
 
 ```bash
-git clone https://github.com/jamesdwilson/Sh4d0wDB.git ~/projects/ShadowDB && ~/projects/ShadowDB/setup.sh
+curl -fsSL https://raw.githubusercontent.com/jamesdwilson/Sh4d0wDB/main/setup.sh | bash
 ```
 
-That's it. The script handles everything — Postgres, schema, importing your existing memory files, npm dependencies, wiring the plugin into OpenClaw, and restarting the gateway. It backs up your files and config first; you can undo the whole thing with one command.
+That's it. The script clones the repo, sets up Postgres, installs dependencies, wires the plugin into OpenClaw, and restarts the gateway. Run the same command again to update.
 
 **Or tell your agent:**
 
-> Clone https://github.com/jamesdwilson/Sh4d0wDB to ~/projects/ShadowDB and run `./setup.sh`.
+> Run `curl -fsSL https://raw.githubusercontent.com/jamesdwilson/Sh4d0wDB/main/setup.sh | bash`
 
 ---
 

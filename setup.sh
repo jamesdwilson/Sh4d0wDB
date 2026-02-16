@@ -3,94 +3,44 @@
 # ║                                                                            ║
 # ║                          ShadowDB — Setup                                  ║
 # ║                                                                            ║
-# ║   Replace 9,198 bytes of static markdown bloat with an 11-byte database    ║
-# ║   instruction. Your agent gets smarter with every record.                  ║
+# ║   Install or update ShadowDB, the database-backed memory plugin for       ║
+# ║   OpenClaw. One command does everything.                                   ║
 # ║                                                                            ║
-# ║   ONE COMMAND:                                                             ║
-# ║     git clone https://github.com/openclaw/shadowdb && cd shadowdb          ║
-# ║     ./setup.sh                                                             ║
+# ║   INSTALL:                                                                 ║
+# ║     curl -fsSL https://raw.githubusercontent.com/jamesdwilson/             ║
+# ║       Sh4d0wDB/main/setup.sh | bash                                       ║
 # ║                                                                            ║
-# ║   Re-runnable. Safe. Backs up first, always.                               ║
+# ║   UPDATE:                                                                  ║
+# ║     Same command. Re-runnable. Pulls latest, updates deps, restarts.       ║
 # ║                                                                            ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 #
-#
-#   WHAT THIS SCRIPT DOES (step by step, with your permission):
-#
-#     1.  Backs up ALL your workspace .md files (always first, always safe)
-#     2.  Checks that your system has the tools it needs
-#     3.  Creates the ShadowDB database (skips if it already exists)
-#     4.  Imports your .md files into the database
-#     5.  Imports RULES_REINFORCE.md as always-on rules (if it exists)
-#     6.  Empties workspace .md files and writes AGENTS.md
-#     7.  Verifies everything works with a test search
-#
-#
-#   ⚠️  THIS SCRIPT WILL EMPTY .md FILES IN YOUR WORKSPACE ROOT.
-#
-#     After importing your files into the database, the script replaces
-#     workspace .md files with empty files (so the framework doesn't
-#     complain about missing files) and writes AGENTS.md with the
-#     11-byte database instruction.
-#
-#     Your originals are ALWAYS backed up first. Restore anytime:
-#       cp ~/OpenClaw-Workspace-Backup-*/*.md ~/.openclaw/workspace/
-#
-#
-#   WHAT THIS SCRIPT WILL NEVER DO:
-#
-#     ✗  Touch anything before backing up your files
-#     ✗  Install software without telling you exactly what and why
-#     ✗  Continue if something fails — it stops and tells you what went wrong
-#
-#
-#   YOUR BACKUP IS SACRED:
-#
-#     Before touching anything, we copy your files to:
-#
-#       ~/OpenClaw-Workspace-Backup-2025-02-13/
-#
-#     If ANYTHING goes wrong — during setup, a week later, whenever — you
-#     can restore your originals with one command:
-#
-#       cp ~/OpenClaw-Workspace-Backup-*/*.md ~/.openclaw/workspace/
-#
-#     Done. You're back to exactly where you started. No harm, no foul.
-#
-#
 #   FLAGS:
 #
-#     --workspace <dir>     Where your .md files live
-#                           (default: ~/.openclaw/workspace)
+#     --dir <path>          Where to clone/find ShadowDB
+#                           (default: ~/projects/ShadowDB)
 #
-#     --backend <type>      Database to use: postgres or sqlite
+#     --backend <type>      Database backend: postgres or sqlite
 #                           (default: postgres)
 #
 #     --dry-run             Preview everything without making changes
 #
-#     --yes                 Skip confirmation prompts (for automation)
+#     --yes                 Skip confirmation prompts
 #
 #     --help                Show this help
-#
 #
 # ════════════════════════════════════════════════════════════════════════════════
 
 set -euo pipefail
 
-
-# ┌────────────────────────────────────────────────────────────────────────────┐
-# │                              CONFIGURATION                                │
-# └────────────────────────────────────────────────────────────────────────────┘
-
+REPO_URL="https://github.com/jamesdwilson/Sh4d0wDB.git"
+INSTALL_DIR="${SHADOWDB_DIR:-$HOME/projects/ShadowDB}"
 WORKSPACE="${HOME}/.openclaw/workspace"
 BACKEND="postgres"
 DB_NAME="shadow"
 DRY_RUN=false
 AUTO_YES=false
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${SHADOWDB_CONFIG:-$HOME/.shadowdb.json}"
 TODAY=$(date +%Y-%m-%d)
-BACKUP_DIR="${HOME}/OpenClaw-Workspace-Backup-${TODAY}"
 
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
@@ -124,26 +74,18 @@ usage() {
   ShadowDB Setup
   ═══════════════
 
-  Usage:
+  Install:
+    curl -fsSL https://raw.githubusercontent.com/jamesdwilson/Sh4d0wDB/main/setup.sh | bash
 
-    ./setup.sh                                   # defaults (postgres, ~/.openclaw/workspace)
-    ./setup.sh --workspace ~/my-agent            # custom workspace
-    ./setup.sh --backend sqlite                  # use SQLite (no server needed)
-    ./setup.sh --backend postgres                # use PostgreSQL (best search)
-    ./setup.sh --backend mysql                   # use MySQL / MariaDB
-    ./setup.sh --dry-run                         # preview without changes
-    ./setup.sh --yes                             # skip prompts (CI/automation)
+  Update:
+    Same command. Pulls latest code, updates deps, restarts gateway.
 
   Flags:
-
-    --workspace <dir>   Where your .md files live (default: ~/.openclaw/workspace)
-    --backend <type>    Database backend: postgres, sqlite, or mysql (default: postgres)
-    --dry-run           Show what would happen without making any changes
-    --yes               Auto-confirm all prompts
+    --dir <path>        Where to clone ShadowDB (default: ~/projects/ShadowDB)
+    --backend <type>    Database backend: postgres or sqlite (default: postgres)
+    --dry-run           Preview without making changes
+    --yes               Skip confirmation prompts
     --help, -h          Show this help
-
-  Re-runnable: safe to run again. Backs up first, skips existing database,
-  re-imports files and RULES_REINFORCE.md if they changed.
 
 EOF
   exit 0
@@ -151,16 +93,14 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --workspace) WORKSPACE="$2"; shift 2 ;;
-    --backend)   BACKEND="$2";   shift 2 ;;
-    --dry-run)   DRY_RUN=true;   shift   ;;
-    --yes|-y)    AUTO_YES=true;  shift   ;;
+    --dir)       INSTALL_DIR="$2"; shift 2 ;;
+    --backend)   BACKEND="$2";     shift 2 ;;
+    --dry-run)   DRY_RUN=true;     shift   ;;
+    --yes|-y)    AUTO_YES=true;    shift   ;;
     --help|-h)   usage ;;
     *) echo "  Unknown option: $1"; usage ;;
   esac
 done
-
-WORKSPACE="${WORKSPACE%/}"
 
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
@@ -201,15 +141,14 @@ echo "  ╔═══════════════════════
 echo "  ║                                                      ║"
 echo "  ║             🧠  ShadowDB Setup  🧠                  ║"
 echo "  ║                                                      ║"
-echo "  ║   Replace .md file bloat with a database brain.      ║"
-echo "  ║   Your files are backed up first. Undo anytime.      ║"
+echo "  ║   Database-backed memory for OpenClaw.               ║"
+echo "  ║   Install or update — same command, always safe.     ║"
 echo "  ║                                                      ║"
 echo "  ╚══════════════════════════════════════════════════════╝"
 echo ""
 
-info "Backend:    ${BOLD}${BACKEND}${NC}"
-info "Workspace:  ${BOLD}${WORKSPACE}${NC}"
-info "Backup to:  ${BOLD}${BACKUP_DIR}/${NC}"
+info "Install dir: ${BOLD}${INSTALL_DIR}${NC}"
+info "Backend:     ${BOLD}${BACKEND}${NC}"
 
 if $DRY_RUN; then
   blank
@@ -218,23 +157,7 @@ fi
 
 blank
 
-echo -e "  ${RED}${BOLD}┌──────────────────────────────────────────────────────────────┐${NC}"
-echo -e "  ${RED}${BOLD}│                                                              │${NC}"
-echo -e "  ${RED}${BOLD}│   ⚠️   WARNING: This will empty .md files in your workspace  │${NC}"
-echo -e "  ${RED}${BOLD}│                                                              │${NC}"
-echo -e "  ${RED}${BOLD}│   After importing your files into the database, this script  │${NC}"
-echo -e "  ${RED}${BOLD}│   will REPLACE workspace .md files with empty files and      │${NC}"
-echo -e "  ${RED}${BOLD}│   write AGENTS.md with the 11-byte database instruction.     │${NC}"
-echo -e "  ${RED}${BOLD}│                                                              │${NC}"
-echo -e "  ${RED}${BOLD}│   Your originals are backed up FIRST.  Restore anytime:      │${NC}"
-echo -e "  ${RED}${BOLD}│     cp ~/OpenClaw-Workspace-Backup-*/*.md \\                  │${NC}"
-echo -e "  ${RED}${BOLD}│        ${WORKSPACE}/                             │${NC}"
-echo -e "  ${RED}${BOLD}│                                                              │${NC}"
-echo -e "  ${RED}${BOLD}└──────────────────────────────────────────────────────────────┘${NC}"
-
-blank
-
-if ! confirm "Continue with setup?"; then
+if ! confirm "Continue?"; then
   info "Aborted. Nothing was changed."
   exit 0
 fi
@@ -244,78 +167,53 @@ blank
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                                                                            │
-# │   STEP 1 of 7:  BACK UP YOUR FILES                                        │
+# │   STEP 1 of 6:  CLONE OR UPDATE REPO                                      │
 # │                                                                            │
-# │   ALWAYS FIRST. Before anything else touches your system, we copy ALL      │
-# │   your .md files to a safe location. If anything goes wrong at any         │
-# │   point — now or months from now — you restore with one command.           │
-# │                                                                            │
-# │   Backup location:                                                         │
-# │     ~/OpenClaw-Workspace-Backup-2025-02-13/                                │
-# │                                                                            │
-# │   Restore command:                                                         │
-# │     cp ~/OpenClaw-Workspace-Backup-*/*.md ~/.openclaw/workspace/           │
+# │   Fresh install: git clone into INSTALL_DIR                                │
+# │   Update: git pull to get latest code                                      │
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 1 of 6 — Backing up your files"
+header "Step 1 of 6 — Getting ShadowDB"
 
-if [[ ! -d "$WORKSPACE" ]]; then
-  warn "Workspace directory not found: $WORKSPACE"
-  detail "We'll skip the backup and import. You can create it later."
-  blank
-  MD_COUNT=0
-else
-  MD_COUNT=$(find "$WORKSPACE" -maxdepth 1 -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
+IS_UPDATE=false
 
-  if [[ $MD_COUNT -eq 0 ]]; then
-    info "No .md files found in $WORKSPACE"
-    detail "Nothing to back up — this might be a fresh workspace."
-    blank
+if [[ -d "$INSTALL_DIR/.git" ]]; then
+  IS_UPDATE=true
+  info "Existing install found — updating..."
+
+  if ! $DRY_RUN; then
+    (cd "$INSTALL_DIR" && git pull --ff-only 2>&1 | tail -3)
+    ok "Updated to latest"
   else
-    info "Found ${BOLD}${MD_COUNT} .md files${NC} to back up:"
-    blank
+    ok "[DRY RUN] Would git pull in $INSTALL_DIR"
+  fi
 
-    find "$WORKSPACE" -maxdepth 1 -name "*.md" -type f | sort | while read -r f; do
-      size=$(wc -c < "$f" | tr -d ' ')
-      name=$(basename "$f")
-      printf "     %-30s  %s bytes\n" "$name" "$size"
-    done
+elif [[ -d "$INSTALL_DIR" ]]; then
+  # Directory exists but isn't a git repo
+  fail "$INSTALL_DIR exists but isn't a git repo. Remove it or use --dir <other-path>."
 
-    blank
-    info "Backup destination:  ${BOLD}${BACKUP_DIR}/${NC}"
-    blank
+else
+  info "Cloning ShadowDB..."
 
-    if ! $DRY_RUN; then
-      mkdir -p "$BACKUP_DIR"
-      cp "$WORKSPACE"/*.md "$BACKUP_DIR/"
-      ok "Backed up ${MD_COUNT} files to ${BACKUP_DIR}/"
-    else
-      ok "[DRY RUN] Would back up ${MD_COUNT} files"
-    fi
-
-    blank
-    echo "  ┌──────────────────────────────────────────────────────────────┐"
-    echo "  │                                                              │"
-    echo "  │   📦  Your originals are safe!                               │"
-    echo "  │                                                              │"
-    echo "  │   To restore at any time, run:                               │"
-    echo "  │                                                              │"
-    echo "  │     cp ${BACKUP_DIR}/*.md \\"
-    echo "  │        ${WORKSPACE}/                              │"
-    echo "  │                                                              │"
-    echo "  └──────────────────────────────────────────────────────────────┘"
-    blank
+  if ! $DRY_RUN; then
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    git clone "$REPO_URL" "$INSTALL_DIR" 2>&1 | tail -3
+    ok "Cloned to ${INSTALL_DIR}"
+  else
+    ok "[DRY RUN] Would clone to $INSTALL_DIR"
   fi
 fi
+
+# Now we know where everything is
+SCRIPT_DIR="$INSTALL_DIR"
+
+blank
 
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                                                                            │
-# │   STEP 2 of 7:  CHECK PREREQUISITES                                       │
-# │                                                                            │
-# │   We need a few tools installed before we can set up ShadowDB.             │
-# │   If anything's missing, we'll tell you exactly how to install it.         │
+# │   STEP 2 of 6:  CHECK PREREQUISITES                                       │
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
@@ -757,16 +655,11 @@ echo ""
 echo ""
 echo "  ┌──────────────────────────────────────────────────────────────────┐"
 echo "  │                                                                  │"
-echo "  │   📦  Backups:                                                   │"
-echo "  │       Workspace: ${BACKUP_DIR}/"
-echo "  │       Config:    ${OPENCLAW_CONFIG}.pre-shadowdb-backup"
+echo "  │   📦  Config backup: ${OPENCLAW_CONFIG}.pre-shadowdb-backup"
 echo "  │                                                                  │"
-echo "  │   🔄  Restore workspace anytime:                                 │"
-echo "  │       cp ~/OpenClaw-Workspace-Backup-*/*.md \\                   │"
-echo "  │          ${WORKSPACE}/                              │"
-echo "  │                                                                  │"
-echo "  │   🔁  Re-run setup anytime:                                      │"
-echo "  │       ./setup.sh                                                 │"
+echo "  │   🔁  Update anytime (same install command):                     │"
+echo "  │       curl -fsSL https://raw.githubusercontent.com/              │"
+echo "  │         jamesdwilson/Sh4d0wDB/main/setup.sh | bash               │"
 echo "  │                                                                  │"
 echo "  └──────────────────────────────────────────────────────────────────┘"
 echo ""
