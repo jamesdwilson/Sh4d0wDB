@@ -553,13 +553,36 @@ PLUGIN_DIR="${SCRIPT_DIR}/extensions/memory-shadowdb"
 
 if [[ -d "$PLUGIN_DIR" ]]; then
   if [[ -f "$PLUGIN_DIR/package.json" ]]; then
-    info "Installing npm dependencies for memory-shadowdb..."
+    info "Installing core dependencies..."
 
     if ! $DRY_RUN; then
       (cd "$PLUGIN_DIR" && npm install --production 2>&1 | tail -3)
-      ok "Plugin dependencies installed"
+      ok "Core dependencies installed"
     else
       ok "[DRY RUN] Would run npm install in $PLUGIN_DIR"
+    fi
+
+    # Install only the backend-specific driver
+    blank
+    info "Installing ${BOLD}${BACKEND}${NC} driver..."
+
+    if ! $DRY_RUN; then
+      case "$BACKEND" in
+        postgres)
+          (cd "$PLUGIN_DIR" && npm install --save pg 2>&1 | tail -3)
+          ok "Installed: pg"
+          ;;
+        sqlite)
+          (cd "$PLUGIN_DIR" && npm install --save better-sqlite3 sqlite-vec 2>&1 | tail -3)
+          ok "Installed: better-sqlite3, sqlite-vec"
+          ;;
+        mysql)
+          (cd "$PLUGIN_DIR" && npm install --save mysql2 2>&1 | tail -3)
+          ok "Installed: mysql2"
+          ;;
+      esac
+    else
+      ok "[DRY RUN] Would install $BACKEND driver"
     fi
   else
     warn "No package.json found in plugin directory"
