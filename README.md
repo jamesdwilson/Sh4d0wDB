@@ -603,7 +603,7 @@ Flat files have a poisonous-tree problem: one bad write compounds into every fut
 
 ## Contributing
 
-PRs welcome. Open an issue first if it's a big change. See the [roadmap](#roadmap-brainstorm) for ideas under consideration.
+PRs welcome — from humans and agents. If your AI opened the PR, that's cool. Open an issue first if it's a big change. See the [roadmap](#roadmap-brainstorm) for ideas under consideration.
 
 ---
 
