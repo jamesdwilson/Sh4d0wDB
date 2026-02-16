@@ -3,8 +3,8 @@
  *
  * Implements all abstract methods from MemoryStore using:
  * - sqlite-vec for vector similarity search (cosine distance)
- * - FTS5 for full-text search
- * - No fuzzy/trigram search (SQLite has no built-in equivalent)
+ * - FTS5 for full-text search (unicode61 tokenizer, BM25 ranked)
+ * - FTS5 trigram for fuzzy/substring search (trigram tokenizer)
  * - Standard SQL for CRUD, soft-delete, and retention purge
  *
  * Dependencies:
@@ -14,7 +14,7 @@
  * DESIGN NOTES:
  * - Single-file database: zero config, no server process
  * - Synchronous API wrapped in async for interface compatibility
- * - FTS5 via a shadow table (memories_fts) synced via triggers
+ * - FTS5 via two shadow tables: _fts (word-level BM25) and _trigram (substring)
  * - Tags stored as JSON array (no native array type in SQLite)
  * - Timestamps stored as ISO 8601 TEXT (no native timestamp type)
  * - Vector embeddings stored in a separate vec0 virtual table
@@ -36,7 +36,7 @@ type Database = any;
  *
  * Zero-config backend: single file, no server, no extensions to install
  * (sqlite-vec is loaded as a runtime extension if available).
- * FTS5 is built into SQLite. No trigram/fuzzy search.
+ * FTS5 is built into SQLite. Trigram tokenizer provides substring/fuzzy matching.
  */
 export class SQLiteStore extends MemoryStore {
   private db: Database = null;
@@ -106,21 +106,60 @@ export class SQLiteStore extends MemoryStore {
       );
     `);
 
-    // Triggers to keep FTS5 in sync
+    // Trigram FTS5 virtual table for substring/fuzzy search
+    const trigramExists = this.db.prepare(
+      `SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`,
+    ).get(`${this.config.table}_trigram`);
+
+    this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS ${this.config.table}_trigram USING fts5(
+        title, content, content=${this.config.table}, content_rowid=id,
+        tokenize='trigram'
+      );
+    `);
+
+    // Migration: drop old triggers that don't sync the trigram table,
+    // then recreate them. Safe to run every time (IF NOT EXISTS handles steady state).
+    this.db.exec(`
+      DROP TRIGGER IF EXISTS ${this.config.table}_ai;
+      DROP TRIGGER IF EXISTS ${this.config.table}_ad;
+      DROP TRIGGER IF EXISTS ${this.config.table}_au;
+    `);
+
+    // Triggers to keep both FTS5 tables in sync
     this.db.exec(`
       CREATE TRIGGER IF NOT EXISTS ${this.config.table}_ai AFTER INSERT ON ${this.config.table} BEGIN
         INSERT INTO ${this.config.table}_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
+        INSERT INTO ${this.config.table}_trigram(rowid, title, content) VALUES (new.id, new.title, new.content);
       END;
 
       CREATE TRIGGER IF NOT EXISTS ${this.config.table}_ad AFTER DELETE ON ${this.config.table} BEGIN
         INSERT INTO ${this.config.table}_fts(${this.config.table}_fts, rowid, title, content) VALUES ('delete', old.id, old.title, old.content);
+        INSERT INTO ${this.config.table}_trigram(${this.config.table}_trigram, rowid, title, content) VALUES ('delete', old.id, old.title, old.content);
       END;
 
       CREATE TRIGGER IF NOT EXISTS ${this.config.table}_au AFTER UPDATE ON ${this.config.table} BEGIN
         INSERT INTO ${this.config.table}_fts(${this.config.table}_fts, rowid, title, content) VALUES ('delete', old.id, old.title, old.content);
+        INSERT INTO ${this.config.table}_trigram(${this.config.table}_trigram, rowid, title, content) VALUES ('delete', old.id, old.title, old.content);
         INSERT INTO ${this.config.table}_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
+        INSERT INTO ${this.config.table}_trigram(rowid, title, content) VALUES (new.id, new.title, new.content);
       END;
     `);
+
+    // Backfill trigram table for existing databases (one-time migration)
+    if (!trigramExists) {
+      const count = this.db.prepare(
+        `SELECT COUNT(*) as n FROM ${this.config.table} WHERE deleted_at IS NULL`,
+      ).get() as { n: number };
+
+      if (count.n > 0) {
+        this.db.exec(`
+          INSERT INTO ${this.config.table}_trigram(rowid, title, content)
+            SELECT id, title, content FROM ${this.config.table};
+        `);
+        this.logger.info(`memory-shadowdb: backfilled trigram index for ${count.n} records`);
+      }
+    }
 
     // Vector table (if sqlite-vec is available)
     if (this.hasVec) {
@@ -210,9 +249,42 @@ export class SQLiteStore extends MemoryStore {
     }
   }
 
-  protected async fuzzySearch(_query: string, _limit: number): Promise<RankedHit[]> {
-    // SQLite has no built-in trigram/fuzzy support
-    return [];
+  protected async fuzzySearch(query: string, limit: number): Promise<RankedHit[]> {
+    // FTS5 trigram tokenizer — enables substring matching.
+    // Unlike pg_trgm, this is boolean (match/no-match) not scored similarity,
+    // but combined with BM25 ranking it produces usable fuzzy results.
+    // Trigram MATCH requires the query to be at least 3 characters.
+    if (query.length < 3) return [];
+
+    const sql = `
+      SELECT m.id, m.content, m.category, m.title, m.record_type, m.created_at,
+             -tri.rank AS score
+      FROM ${this.config.table}_trigram tri
+      JOIN ${this.config.table} m ON m.id = tri.rowid
+      WHERE ${this.config.table}_trigram MATCH ?
+        AND m.deleted_at IS NULL
+      ORDER BY tri.rank
+      LIMIT ?
+    `;
+
+    try {
+      // Quote the query for trigram MATCH — wrap in double quotes for literal substring
+      const quoted = '"' + query.replace(/"/g, '""') + '"';
+      const rows = this.db.prepare(sql).all(quoted, limit);
+      return rows.map((r: any, idx: number) => ({
+        id: r.id,
+        content: r.content,
+        category: r.category,
+        title: r.title,
+        record_type: r.record_type,
+        created_at: r.created_at,
+        rank: idx + 1,
+        rawScore: r.score,
+      }));
+    } catch {
+      // Trigram FTS5 can throw on certain inputs — degrade gracefully
+      return [];
+    }
   }
 
   // ==========================================================================

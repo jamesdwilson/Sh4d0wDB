@@ -54,7 +54,7 @@ Records don't expire. A phone number from 3 months ago is still a phone number. 
 
 ShadowDB gives the agent two pieces of information and lets it decide:
 
-- **Age in snippets** — search results show `[project] | 5d ago` instead of a raw timestamp. The agent reads "5 days ago" the same way you would. This matters because models are bad at date math — ask one to compute "how many days between Feb 10 and Feb 15" and it'll confidently say 3 or 6. Pre-computing the age removes that failure mode.
+- **Age in snippets** — search results show `[topic] | 5d ago` instead of a raw timestamp. The agent reads "5 days ago" the same way you would. This matters because models are bad at date math — ask one to compute "how many days between Feb 10 and Feb 15" and it'll confidently say 3 or 6. Pre-computing the age removes that failure mode.
 
 - **Recency as a tiebreaker** — newer records get a small ranking boost (weight: `0.15`), but a relevant old record still beats a vaguely relevant new one.
 
@@ -88,7 +88,7 @@ Every search combines multiple signals to find the best matches. What's availabl
 |--------|----------|--------|-------|-----------------|
 | Vector similarity | ✓ (weight: `0.7`) | ✓ (sqlite-vec) | ✓ (9.2+) | Semantic meaning via embeddings |
 | Full-text search | ✓ (weight: `0.3`) | ✓ (FTS5) | ✓ (FULLTEXT) | Keyword/phrase matches |
-| Trigram similarity | ✓ (weight: `0.2`) | — | — | Fuzzy/typo-tolerant matching |
+| Trigram similarity | ✓ (weight: `0.2`) | ✓ (FTS5 trigram) | — | Fuzzy/substring matching |
 | Recency boost | ✓ (weight: `0.15`) | ✓ | ✓ | Newer records boosted slightly |
 
 With Postgres, signals are merged via Reciprocal Rank Fusion (RRF) — each signal produces a ranked list, and RRF combines them without needing score normalization. All weights are configurable.
