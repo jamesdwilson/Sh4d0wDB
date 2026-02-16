@@ -998,7 +998,7 @@ fi
 # │                                                                            │
 # │   Most identity/rules work as searchable memories. But a few things        │
 # │   need to be present before the agent's first thought:                     │
-# │     - Core identity ("You are Shadow, Alex's assistant")                  │
+# │     - Core identity ("You are Shadow, Alex's assistant")                     │
 # │     - Safety rails ("Never send without confirmation")                     │
 # │     - Hard constraints (banned words, communication gates)                 │
 # │                                                                            │
@@ -1176,7 +1176,7 @@ if ! $IS_UPDATE && ! $DRY_RUN; then
     echo "  │   them when relevant. But a few need to be loaded before the     │"
     echo "  │   agent's first thought:                                         │"
     echo "  │                                                                  │"
-    echo "  │     • Core identity (\""You are Shadow"\")                           │"
+    echo "  │     • Core identity (\""You are Shadow"\")                             │"
     echo "  │     • Safety rails (\"Never send without confirmation\")           │"
     echo "  │     • Banned words, hard constraints                             │"
     echo "  │                                                                  │"

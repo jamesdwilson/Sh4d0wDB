@@ -303,7 +303,7 @@ This is what the `primer` table is for. It's a small, curated set of **non-negot
 - Put only the irreducible core in the `primer` table (identity, safety, hard constraints).
 - Everything else — preferences, behavioral nuance, learned lessons, project context — lives in searchable memory where it's pulled on demand.
 
-Think of it like human cognition: you don't consciously recite your entire life history before answering a question. You have a small set of always-on identity (I'm Alex, I live in Austin, I have a daughter") and a vast searchable memory of everything else. The primer is the always-on identity. `memory_search` is everything else.
+Think of it like human cognition: you don't consciously recite your entire life history before answering a question. You have a small set of always-on identity ("I'm Alex, I live in Austin, I have a daughter") and a vast searchable memory of everything else. The primer is the always-on identity. `memory_search` is everything else.
 
 ### How primer injection works
 
@@ -351,7 +351,7 @@ Here's the question: **if the agent violates this rule before it has a chance to
 |------|--------------------------|---------------|
 | "You are Shadow, Alex's AI assistant" | No — agent needs its name before generating a single token | **Primer** |
 | "Never use the words workout, exercise, or cardio" | No — damage is done before the agent thinks to search for banned words | **Primer** |
-| "James drives a Tesla Model 3" | Yes — agent will search when cars come up | **Memory** |
+| "Alex drives a Rivian R1S" | Yes — agent will search when cars come up | **Memory** |
 | "Format emails with a signature block" | Yes — agent will search when composing email | **Memory** |
 | "Always confirm before sending messages" | No — can't retrieve this *after* already sending | **Primer** |
 | "Preferred restaurants in Austin" | Yes — agent searches when food comes up | **Memory** |
