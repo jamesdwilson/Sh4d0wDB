@@ -201,18 +201,20 @@ Recency is intentionally low — it's a tiebreaker, not a dominant signal.
 
 All benchmarks measured on a MacBook Pro M3 Max against a real production knowledge base (6,800+ records, 768-dim embeddings). "OpenClaw Builtin" refers to the default memory plugin (flat `.md` files + SQLite embedding search). ShadowDB numbers are from the live system.
 
+> **What this table measures:** gateway-level search and retrieval — what happens at the data layer before the model sees results. An LLM can reason through typos or infer meaning once data is in context, but these benchmarks measure what the *retrieval system* can do to find the right data in the first place.
+
 ### Speed
 
 | Operation | OpenClaw Builtin | ShadowDB (Postgres) | Winner |
 |-----------|---------|---------------------|--------|
 | Load identity + knowledge | 45ms (read 8 files from disk) | 0ms (primer already in prompt) | **ShadowDB** — identity is in the prompt, not loaded per turn |
-| Keyword search ("Watson") | ❌ Not supported (embedding-only) | **55ms** FTS | **ShadowDB** — from impossible to 55ms |
+| Keyword search ("Watson") | ❌ No retrieval support (embedding-only) | **55ms** FTS | **ShadowDB** — from impossible to 55ms |
 | Semantic search ("Watson's military service") | 200–500ms (embedding similarity only) | **230ms** (FTS + vector + trigram + RRF) | **ShadowDB** — same speed, multi-signal results |
-| Fuzzy/substring search ("Watsn") | ❌ Not supported | **60ms** trigram | **ShadowDB** — from impossible to 60ms |
+| Fuzzy/substring search ("Watsn") | ❌ No retrieval support | **60ms** trigram | **ShadowDB** — caught at retrieval, no model guesswork needed |
 | Search cold start | 1–3s (load embedding model) | **55ms** (FTS always hot, PG always running) | **ShadowDB 5–55×** faster |
 | Sub-agent identity load | ∞ (impossible — filtered out) | **<1ms** (primer injection) | **ShadowDB** — from impossible to instant |
 
-The builtin memory plugin uses embedding similarity as its only search strategy — if the embedding misses, you get nothing. It has no keyword search, no fuzzy matching, no fallback. ShadowDB's FTS path (55ms) is pure PostgreSQL with no embedding overhead. The hybrid path (230ms) adds Ollama embedding generation (85ms) + pgvector cosine search + trigram fallback, all fused with RRF.
+The builtin memory plugin uses embedding similarity as its only retrieval strategy — if the embedding misses, the data never reaches the model. It has no keyword search, no fuzzy matching, no fallback. ShadowDB's FTS path (55ms) is pure PostgreSQL with no embedding overhead. The hybrid path (230ms) adds Ollama embedding generation (85ms) + pgvector cosine search + trigram fallback, all fused with RRF.
 
 ### Ceiling
 
