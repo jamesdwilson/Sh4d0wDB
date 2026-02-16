@@ -158,6 +158,10 @@ if $DO_UNINSTALL; then
   echo -e "  ${GREEN}✓${NC}  Your database and all memory records (kept safe)"
   echo -e "  ${GREEN}✓${NC}  OpenClaw itself"
   echo ""
+  echo -e "  ${BOLD}This will restore:${NC}"
+  echo ""
+  echo -e "  ${GREEN}↩${NC}  Workspace .md files (from backup, if ShadowDB imported them)"
+  echo ""
 
   if ! confirm "Uninstall ShadowDB?"; then
     info "Aborted. Nothing was changed."
@@ -241,7 +245,40 @@ fs.writeFileSync('$OPENCLAW_CONFIG', JSON.stringify(cfg, null, 2) + '\n');
   echo ""
   ok "Your database and all memory records are untouched."
 
-  # 3. Restart gateway
+  # 3. Restore workspace .md files from backup
+  OPENCLAW_WORKSPACE="${OPENCLAW_WORKSPACE:-${HOME}/.openclaw/workspace}"
+  MD_FILES=(MEMORY.md SOUL.md IDENTITY.md USER.md RULES.md BOOTSTRAP.md KNOWLEDGE.md AGENTS.md)
+
+  # Find the most recent backup dir
+  LATEST_BACKUP=""
+  for d in "${HOME}"/OpenClaw-Before-ShadowDB-*/; do
+    [[ -d "$d" ]] && LATEST_BACKUP="$d"
+  done
+
+  if [[ -n "$LATEST_BACKUP" ]]; then
+    RESTORED=0
+    for fname in "${MD_FILES[@]}"; do
+      src="${LATEST_BACKUP}${fname}"
+      dest="${OPENCLAW_WORKSPACE}/${fname}"
+      if [[ -f "$src" && ! -f "$dest" ]]; then
+        if ! $DRY_RUN; then
+          cp "$src" "$dest" && RESTORED=$((RESTORED + 1))
+        else
+          RESTORED=$((RESTORED + 1))
+        fi
+      fi
+    done
+    if [[ $RESTORED -gt 0 ]]; then
+      if $DRY_RUN; then
+        ok "[DRY RUN] Would restore ${RESTORED} workspace file(s) from ${LATEST_BACKUP}"
+      else
+        ok "Restored ${RESTORED} workspace file(s) from ${LATEST_BACKUP}"
+        detail "OpenClaw will use these for builtin memory injection again."
+      fi
+    fi
+  fi
+
+  # 4. Restart gateway
   echo ""
   if command -v openclaw &>/dev/null && ! $DRY_RUN; then
     info "Restarting OpenClaw gateway..."
@@ -1013,7 +1050,21 @@ if ! $IS_UPDATE && ! $DRY_RUN; then
     if [[ $TOTAL_IMPORTED -gt 0 ]]; then
       ok "Imported ${TOTAL_IMPORTED} memory record(s) from ${#IMPORT_FILES[@]} file(s)"
       detail "These will be embedded on first agent startup (or next reembed)."
-      detail "You can safely remove or rename the source .md files now."
+
+      # Move imported files to backup dir — DB is truth now, files are dead
+      BACKUP_DIR="${BACKUP_DIR:-${HOME}/OpenClaw-Before-ShadowDB-$(date +%Y-%m-%d)}"
+      mkdir -p "$BACKUP_DIR"
+      MOVED_COUNT=0
+      for mdfile in "${IMPORT_FILES[@]}"; do
+        fname="$(basename "$mdfile")"
+        if mv "$mdfile" "$BACKUP_DIR/$fname" 2>/dev/null; then
+          MOVED_COUNT=$((MOVED_COUNT + 1))
+        fi
+      done
+      if [[ $MOVED_COUNT -gt 0 ]]; then
+        ok "Moved ${MOVED_COUNT} source file(s) to ${BACKUP_DIR}/"
+        detail "ShadowDB is your memory now. Originals are safe in the backup folder."
+      fi
     fi
     blank
   fi
