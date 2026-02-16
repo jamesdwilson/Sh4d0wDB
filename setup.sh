@@ -723,8 +723,8 @@ blank
 # │                                                                            │
 # │     query  →  database  →  search  →  ranked results                       │
 # │                                                                            │
-# │   If you see results, everything is working. If not, the database          │
-# │   might be empty (which is fine — add records with `m save`).              │
+# │   If the tables exist and have rows, the database is ready.                │
+# │   The native OpenClaw plugin handles all search from here.                 │
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
@@ -732,27 +732,29 @@ header "Step 7 of 7 — Verifying installation"
 
 if ! $DRY_RUN; then
 
-  if [[ -f "$SCRIPT_DIR/m" ]]; then
-    info "Running test search:  ${BOLD}m \"test\"${NC}"
-    blank
+  if [[ "$BACKEND" == "postgres" ]]; then
+    ROW_COUNT=$(psql -qtAX "$DB_NAME" -c "SELECT count(*) FROM memories;" 2>/dev/null || echo "0")
+    STARTUP_COUNT=$(psql -qtAX "$DB_NAME" -c "SELECT count(*) FROM startup;" 2>/dev/null || echo "0")
 
-    OUTPUT=$("$SCRIPT_DIR/m" "test" 2>&1 || true)
+    ok "Database verified:"
+    detail "memories table: ${ROW_COUNT} records"
+    detail "startup table:  ${STARTUP_COUNT} entries"
 
-    if [[ -n "$OUTPUT" ]]; then
-      ok "Search is working! Here's a preview:"
+    if [[ "$ROW_COUNT" -eq 0 && "$STARTUP_COUNT" -eq 0 ]]; then
       blank
-      echo "$OUTPUT" | head -15 | sed 's/^/     /'
-    else
-      info "No results returned — this is normal for an empty database."
-      detail "Add your first record:  m save \"Hello\" \"My first memory\""
+      info "Tables are empty — that's normal for a fresh install."
+      detail "Your agent will populate them via memory_write."
     fi
-
   else
-    warn "m script not found — can't verify"
+    ok "Database created — verify by restarting OpenClaw."
   fi
 
+  blank
+  info "Next: wire the plugin into OpenClaw and restart the gateway."
+  detail "Run: openclaw doctor --non-interactive | grep shadowdb"
+
 else
-  ok "[DRY RUN] Would test with: m \"test\""
+  ok "[DRY RUN] Would verify table row counts"
 fi
 
 blank
@@ -814,17 +816,13 @@ echo "  ║                                                                  ║
 echo "  ╚══════════════════════════════════════════════════════════════════╝"
 echo ""
 echo ""
-echo "  Your workspace is now database-backed."
+echo "  Your database is ready. Next steps:"
 echo ""
-echo "     AGENTS.md  →  ${BOLD}DB: m query${NC}  (11 bytes)"
-echo "     All other .md files  →  emptied (data is in the database)"
+echo "     1. Wire the plugin into OpenClaw (setup.sh handled the DB part)"
+echo "     2. Restart:  ${BOLD}openclaw gateway restart${NC}"
+echo "     3. Verify:   ${BOLD}openclaw doctor --non-interactive | grep shadowdb${NC}"
 echo ""
-echo ""
-echo "  Try it out:"
-echo ""
-echo "     m \"your search query\"          Search your knowledge base"
-echo "     m save \"Title\" \"Content\"       Save a new record"
-echo "     m d                            Daily dashboard"
+echo "  Your agent now has memory_search, memory_write, and friends."
 echo ""
 echo ""
 echo "  ┌──────────────────────────────────────────────────────────────────┐"
