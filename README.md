@@ -61,6 +61,56 @@ The script auto-detects non-interactive mode and defaults to SQLite with zero pr
 
 ---
 
+## Want to put it back the way it was?
+
+Breathe. Nothing was lost.
+
+ShadowDB doesn't delete, overwrite, or modify any of your original files. Here's exactly what the install touched — and how to undo every bit of it:
+
+<details>
+<summary>What install changed (and what it didn't)</summary>
+
+### What install did
+
+| What | Where | Reversible? |
+|------|-------|-------------|
+| Downloaded plugin files | `~/.openclaw/plugins/memory-shadowdb/` | ✅ Deleted on uninstall |
+| Added a config entry | `plugins.entries.memory-shadowdb` in `openclaw.json` | ✅ Removed on uninstall |
+| Set the memory slot | `plugins.slots.memory` in `openclaw.json` | ✅ Cleared on uninstall |
+| **Backed up your config first** | `openclaw.json.pre-shadowdb-backup` | Your original config, untouched |
+| Created a database | `shadow` (Postgres) or `shadow.db` (SQLite) | ✅ Kept on uninstall (your data is yours) |
+| Imported workspace `.md` files as memories | Rows in the `memories` table | ✅ Kept on uninstall — originals untouched |
+| Imported `PRIMER.md` / `ALWAYS.md` | Rows in the `primer` table | ✅ Kept on uninstall — originals untouched |
+
+### What install did NOT do
+
+- ❌ Did not delete or rename any `.md` files
+- ❌ Did not modify `MEMORY.md`, `SOUL.md`, `IDENTITY.md`, or any other workspace file
+- ❌ Did not change your agent's system prompt
+- ❌ Did not touch any other plugin's config
+
+Your original markdown files are still exactly where you left them.
+
+</details>
+
+### Uninstall
+
+One command. Same script, different flag:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jamesdwilson/Sh4d0wDB/main/setup.sh | bash -s -- --uninstall
+```
+
+This removes the plugin files and config entry, restarts OpenClaw, and you're back to your original setup. Your database and all its records are kept — we don't destroy data, ever. If you reinstall later, everything will still be there.
+
+Your original `openclaw.json` is also saved at `openclaw.json.pre-shadowdb-backup` if you prefer to restore it manually.
+
+**Or tell your agent:**
+
+> Uninstall ShadowDB: `curl -fsSL https://raw.githubusercontent.com/jamesdwilson/Sh4d0wDB/main/setup.sh | bash -s -- --uninstall`
+
+---
+
 ## What about old records?
 
 Records don't expire. A phone number from 3 months ago is still a phone number. A project status from 3 months ago probably isn't current — but that's a judgment call, not something the database should guess at.
