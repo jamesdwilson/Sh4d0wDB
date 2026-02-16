@@ -42,7 +42,13 @@ That's it. The script clones the repo, sets up the database, installs dependenci
 
 **Or tell your agent:**
 
-> Run `curl -fsSL https://raw.githubusercontent.com/jamesdwilson/Sh4d0wDB/main/setup.sh | bash`
+> Install ShadowDB: `curl -fsSL https://raw.githubusercontent.com/jamesdwilson/Sh4d0wDB/main/setup.sh | bash`
+
+The script auto-detects non-interactive mode (no TTY) and defaults to SQLite with zero prompts. To pick a specific backend non-interactively:
+
+```bash
+curl -fsSL .../setup.sh | bash -s -- --backend postgres
+```
 
 ---
 

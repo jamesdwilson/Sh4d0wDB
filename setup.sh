@@ -160,6 +160,14 @@ fi
 # │   If --backend was passed on CLI: skip the picker.                         │
 # └────────────────────────────────────────────────────────────────────────────┘
 
+# Detect non-interactive mode (agent piping curl | bash, or --yes flag)
+# Non-interactive = no TTY on stdin → auto-yes + default to sqlite
+if [[ ! -t 0 ]]; then
+  AUTO_YES=true
+  info "Non-interactive mode detected (no TTY) — using defaults"
+  blank
+fi
+
 BACKEND_FROM_CLI=false
 if [[ "$BACKEND" != "postgres" ]] || [[ "${SHADOWDB_BACKEND:-}" != "" ]]; then
   BACKEND_FROM_CLI=true
@@ -183,8 +191,16 @@ if [[ -n "$EXISTING_BACKEND" ]]; then
   BACKEND="$EXISTING_BACKEND"
   info "Existing install detected — backend: ${BOLD}${BACKEND}${NC}"
   blank
-elif ! $BACKEND_FROM_CLI && ! $AUTO_YES; then
-  # Fresh install — show the picker
+elif $BACKEND_FROM_CLI; then
+  # CLI flag set — use it as-is
+  :
+elif $AUTO_YES; then
+  # Non-interactive — default to sqlite (zero config, no prompts needed)
+  BACKEND="sqlite"
+  ok "Auto-selected: ${BOLD}sqlite${NC} (zero config default)"
+  blank
+else
+  # Interactive fresh install — show the picker
   echo ""
   echo -e "  ${BOLD}Which database would you like to use?${NC}"
   echo ""
