@@ -376,7 +376,7 @@ This feature is **off by default**. To enable it, add rows to the `primer` table
 
 ---
 
-## Importing your identity
+## How your identity works
 
 <details>
 <summary>How to migrate from markdown files — and what goes where</summary>
