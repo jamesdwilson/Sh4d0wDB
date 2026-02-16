@@ -106,7 +106,7 @@ ShadowDB doesn't delete, overwrite, or modify any of your original files. Here's
 
 | What | Where | Reversible? |
 |------|-------|-------------|
-| Downloaded plugin files | `~/.openclaw/plugins/memory-shadowdb/` | ✅ Deleted on uninstall |
+| Downloaded plugin files | `~/.openclaw/plugins/memory-shadowdb/` | ✅ Moved to trash on uninstall |
 | Added a config entry | `plugins.entries.memory-shadowdb` in `openclaw.json` | ✅ Removed on uninstall |
 | Set the memory slot | `plugins.slots.memory` in `openclaw.json` | ✅ Cleared on uninstall |
 | **Backed up your config first** | `~/OpenClaw-Before-ShadowDB-[install date]/openclaw.json` | Your original config, untouched |
@@ -133,11 +133,11 @@ One command. Same script, different flag:
 curl -fsSL https://raw.githubusercontent.com/jamesdwilson/Sh4d0wDB/main/setup.sh | bash -s -- --uninstall
 ```
 
-This removes the plugin files and config entry, restarts OpenClaw, and you're back to your original setup. Your database and all its records are kept — we don't destroy data, ever. If you reinstall later, everything will still be there.
+This moves the plugin files to your system trash (macOS Trash, GNOME Trash, or a recovery folder if no trash is available), removes the config entry, restarts OpenClaw, and you're back to your original setup. Your database and all its records are kept. If you reinstall later, everything will still be there.
 
 Your original `openclaw.json` is saved at `~/OpenClaw-Before-ShadowDB-[install date]/openclaw.json` — easy to find, impossible to miss.
 
-> **Design principle:** ShadowDB will never delete a file, drop a database, or remove anything that can't be put back. Not because we forgot — because we specifically chose not to. The uninstall flag removes plugin code and config entries. That's it. Your data stays unless *you* decide to delete it.
+> **Design principle:** ShadowDB will never delete a file, drop a database, or remove anything that can't be put back. Not because we forgot — because we specifically chose not to. Even uninstall moves files to your system trash — not `rm -rf`. Your data stays unless *you* empty the trash.
 
 Or tell your agent — same as install, it knows what to do.
 

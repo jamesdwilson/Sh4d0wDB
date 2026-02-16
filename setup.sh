@@ -202,12 +202,37 @@ fs.writeFileSync('$OPENCLAW_CONFIG', JSON.stringify(cfg, null, 2) + '\n');
   fi
 
   # 2. Remove plugin files
+  # 2. Move plugin files to system trash (not rm -rf)
   if [[ -d "$PLUGIN_DIR" ]]; then
     if ! $DRY_RUN; then
-      rm -rf "$PLUGIN_DIR"
-      ok "Removed ${PLUGIN_DIR}"
+      TRASHED=false
+
+      # macOS: native trash command
+      if command -v trash &>/dev/null; then
+        trash "$PLUGIN_DIR" 2>/dev/null && TRASHED=true
+
+      # Linux (GNOME/freedesktop): gio trash
+      elif command -v gio &>/dev/null; then
+        gio trash "$PLUGIN_DIR" 2>/dev/null && TRASHED=true
+
+      # Linux (trash-cli): trash-put
+      elif command -v trash-put &>/dev/null; then
+        trash-put "$PLUGIN_DIR" 2>/dev/null && TRASHED=true
+      fi
+
+      if $TRASHED; then
+        ok "Moved ${PLUGIN_DIR} to system trash"
+        detail "Check your trash if you need anything back."
+      else
+        # Fallback: move to a dated recovery folder instead of deleting
+        RECOVERY_DIR="${HOME}/.openclaw/uninstalled/memory-shadowdb-$(date +%Y-%m-%d)"
+        mkdir -p "$(dirname "$RECOVERY_DIR")"
+        mv "$PLUGIN_DIR" "$RECOVERY_DIR"
+        ok "Moved ${PLUGIN_DIR} → ${RECOVERY_DIR}"
+        detail "No system trash available — saved to recovery folder instead."
+      fi
     else
-      ok "[DRY RUN] Would remove ${PLUGIN_DIR}"
+      ok "[DRY RUN] Would move ${PLUGIN_DIR} to system trash"
     fi
   else
     info "Plugin directory not found — already removed?"
