@@ -57,6 +57,40 @@ That's it. The script downloads only the files you need, sets up the database, i
 
 Or just tell your agent — it can run the command itself. The script auto-detects non-interactive mode and defaults to SQLite with zero prompts. Pass `--backend postgres` or `--backend mysql` to override.
 
+### Platform compatibility
+
+ShadowDB runs everywhere OpenClaw runs. The install script is plain bash — no exotic tooling.
+
+| Platform | Works? | Notes |
+|----------|--------|-------|
+| **macOS** | ✅ | Primary development platform. Just works. |
+| **Linux** | ✅ | Servers, Raspberry Pi, VPS — all good. |
+| **Windows (WSL2)** | ✅ | OpenClaw requires WSL2 on Windows. Our bash script runs natively inside WSL. Same `~/.openclaw/` path as Linux. |
+| **Native Windows** | ❌ | OpenClaw itself doesn't support native Windows — WSL2 is required. |
+| **Android / iOS** | N/A | These are companion apps — they don't host the gateway, so plugins don't apply. |
+
+### What gets installed (and where)
+
+ShadowDB is just TypeScript files dropped into your OpenClaw plugins directory. No global installs, no system-level changes. Here's exactly what happens:
+
+1. **Plugin files** → `~/.openclaw/plugins/memory-shadowdb/` — the `.ts` source files, plugin manifest, and `package.json`.
+
+2. **Core dependencies** → `npm install` inside the plugin directory. Two packages: `@sinclair/typebox` (config schema) and `openai` (embedding API client). These live in the plugin's own `node_modules/`, not globally.
+
+3. **Your database driver** — only the one you picked:
+   - Postgres → `pg`
+   - SQLite → `better-sqlite3` + `sqlite-vec`
+   - MySQL → `mysql2`
+
+   Also installed inside the plugin's `node_modules/`. Nothing global.
+
+4. **System dependencies** — the setup script checks for these and tells you if anything's missing:
+   - A database server (Postgres or MySQL) — unless you chose SQLite, which runs in-process with no server.
+   - Ollama (optional) — for local embeddings. Semantic search works without it if you configure an API-based embedding provider.
+   - Node.js — but OpenClaw already requires this, so you have it.
+
+Everything lives inside `~/.openclaw/plugins/memory-shadowdb/`. Nothing is installed globally. Nothing touches your system paths. Uninstall removes the directory and you're clean.
+
 ---
 
 ## Want to put it back the way it was?
