@@ -66,8 +66,6 @@ ShadowDB runs everywhere OpenClaw runs. The install script is plain bash — no 
 | **macOS** | ✅ | Primary development platform. Just works. |
 | **Linux** | ✅ | Servers, Raspberry Pi, VPS — all good. |
 | **Windows (WSL2)** | ✅ | OpenClaw requires WSL2 on Windows. Our bash script runs natively inside WSL. Same `~/.openclaw/` path as Linux. |
-| **Native Windows** | ❌ | OpenClaw itself doesn't support native Windows — WSL2 is required. |
-| **Android / iOS** | N/A | These are companion apps — they don't host the gateway, so plugins don't apply. |
 
 ### What gets installed (and where)
 
