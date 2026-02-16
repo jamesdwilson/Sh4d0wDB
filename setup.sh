@@ -471,9 +471,9 @@ header "Step 2 of 6 — Checking prerequisites"
 
 MISSING=0
 
-# ── Python 3 ──────────────────────────────────────────────────────────────
+# ── Node.js ───────────────────────────────────────────────────────────────
 #
-#   Required. The `m` search CLI and all backend adapters are Python.
+#   Required. OpenClaw and this plugin are TypeScript/Node.
 
 if command -v node &>/dev/null; then
   ok "node found"
