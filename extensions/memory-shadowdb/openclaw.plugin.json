@@ -104,8 +104,14 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
+      "backend": {
+        "type": "string",
+        "enum": ["postgres", "sqlite", "mysql"],
+        "description": "Database backend: postgres (default), sqlite (zero-config), or mysql (9.2+)"
+      },
       "connectionString": {
-        "type": "string"
+        "type": "string",
+        "description": "Connection string (Postgres/MySQL) or file path (SQLite). Falls back to ~/.shadowdb.json if omitted."
       },
       "configPath": {
         "type": "string",

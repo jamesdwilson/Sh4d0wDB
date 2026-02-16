@@ -90,6 +90,14 @@ export class EmbeddingClient {
   }
 
   /**
+   * Get the configured embedding dimensions.
+   * Used by backends to create vector columns/tables with the right size.
+   */
+  getDimensions(): number {
+    return this.dimensions;
+  }
+
+  /**
    * Generate embedding vector for input text
    *
    * Delegates to provider-specific implementation, then validates dimensions.

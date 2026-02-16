@@ -1,18 +1,24 @@
 {
   "name": "@shadowdb/memory-shadowdb",
-  "version": "0.1.0",
-  "description": "OpenClaw memory plugin backed by PostgreSQL + pgvector. Drop-in replacement for memory-core.",
+  "version": "0.2.0",
+  "description": "OpenClaw memory plugin with multi-backend support (PostgreSQL, SQLite, MySQL). Hybrid semantic + full-text search.",
   "type": "module",
   "scripts": {
     "test": "node --test ./index.test.mjs"
   },
   "dependencies": {
     "@sinclair/typebox": "0.34.48",
-    "openai": "^4.77.0",
-    "pg": "^8.13.0"
+    "openai": "^4.77.0"
+  },
+  "optionalDependencies": {
+    "pg": "^8.13.0",
+    "better-sqlite3": "^11.0.0",
+    "sqlite-vec": "^0.1.0",
+    "mysql2": "^3.11.0"
   },
   "devDependencies": {
-    "@types/pg": "^8.11.0"
+    "@types/pg": "^8.11.0",
+    "@types/better-sqlite3": "^7.6.0"
   },
   "openclaw": {
     "extensions": [

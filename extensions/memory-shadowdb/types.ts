@@ -58,7 +58,15 @@ export type EmbeddingProvider =
  *   never from user input or external sources
  */
 export type PluginConfig = {
-  /** PostgreSQL connection string. SECURITY: may contain credentials */
+  /**
+   * Database backend to use.
+   * - "postgres": Full features — pgvector, FTS, trigram, recency (default)
+   * - "sqlite": Zero-config — sqlite-vec, FTS5, single file
+   * - "mysql": MySQL 9.2+ — native VECTOR, FULLTEXT
+   */
+  backend?: "postgres" | "sqlite" | "mysql";
+
+  /** Database connection string (Postgres/MySQL) or file path (SQLite). SECURITY: may contain credentials */
   connectionString?: string;
   
   /** Path to ~/.shadowdb.json config file */

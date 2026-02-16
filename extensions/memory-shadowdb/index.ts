@@ -1,41 +1,34 @@
 /**
  * index.ts — OpenClaw memory plugin registration for memory-shadowdb
  *
- * This is the main entry point for the plugin. It orchestrates:
- * - Configuration resolution
+ * Orchestrates:
+ * - Backend selection (postgres, sqlite, mysql) based on config
  * - Embedding client initialization
- * - Search service setup
- * - Tool registration (memory_search, memory_get, memory_write, memory_update, memory_delete)
+ * - Tool registration (memory_search, memory_get, memory_write, memory_update, memory_delete, memory_undelete)
  * - CLI command registration
  * - Startup context injection hook
  * - Service lifecycle (start/stop)
  *
  * ARCHITECTURE:
- * - types.ts: Pure type definitions (SearchResult, WriteResult, PluginConfig, etc.)
+ * - store.ts: Abstract MemoryStore base class with shared logic (RRF, formatting, validation)
+ * - postgres.ts: PostgreSQL backend (pgvector + FTS + pg_trgm)
+ * - sqlite.ts: SQLite backend (sqlite-vec + FTS5)
+ * - mysql.ts: MySQL backend (native VECTOR + FULLTEXT)
+ * - embedder.ts: Multi-provider embedding client (backend-agnostic)
  * - config.ts: Configuration resolution with fallback chains
- * - embedder.ts: Multi-provider embedding client
- * - search.ts: PostgreSQL hybrid search implementation (read path)
- * - writer.ts: Memory write/update/delete with auto-embedding (write path)
+ * - types.ts: Shared type definitions
  * - index.ts (this file): Plugin registration and orchestration
  *
- * SECURITY MODEL:
- * - All config sources are trusted (plugin config, env vars, config files)
- * - No user input flows into SQL queries (all parameterized)
- * - API keys and connection strings never logged
- * - Startup injection bounded by maxChars to prevent DoS
- * - Connection pool capped at 3 connections
- *
- * DROP-IN COMPATIBILITY:
- * - Registers memory_search and memory_get tools (same API as memory-core)
- * - Startup hydration via before_agent_start hook
- * - Clean rollback: disable plugin → falls back to memory-core
+ * BACKEND SELECTION:
+ * Config key `backend` determines which store is used:
+ * - "postgres" (default): Full features — vector, FTS, trigram, recency
+ * - "sqlite": Zero-config — vector (if sqlite-vec installed), FTS5
+ * - "mysql": MySQL 9.2+ — native vector, FULLTEXT
  */
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import { Type } from "@sinclair/typebox";
-import { createHash } from "node:crypto";
 
-// Local module imports (ESM .js extensions required)
 import type { PluginConfig, SearchResult, WriteResult } from "./types.js";
 import {
   resolveConnectionString,
@@ -46,30 +39,59 @@ import {
   validateEmbeddingDimensions,
 } from "./config.js";
 import { EmbeddingClient } from "./embedder.js";
-import { ShadowSearch } from "./search.js";
-import { ShadowWriter } from "./writer.js";
+import type { MemoryStore, StoreConfig } from "./store.js";
+
+// ============================================================================
+// Backend factory — picks the right store based on config
+// ============================================================================
 
 /**
- * Memory-ShadowDB Plugin Definition
+ * Create the appropriate MemoryStore backend based on config.
  *
- * Registers as a "memory" plugin for OpenClaw, providing database-backed
- * memory retrieval with hybrid semantic + full-text search.
- *
- * LIFECYCLE:
- * 1. register() called by OpenClaw during plugin load
- * 2. Config resolved from cascade: plugin config → env vars → ~/.shadowdb.json
- * 3. Embedding client initialized with provider-specific settings
- * 4. Search client initialized with connection pool
- * 5. Tools registered: memory_search, memory_get
- * 6. CLI registered: shadowdb {ping,search,get}
- * 7. Service registered: connection validation + cleanup
- * 8. Startup hook registered: inject DB context before agent start
+ * Dynamically imports backend modules so unused backends don't add
+ * to the dependency tree (e.g., SQLite users don't need pg).
  */
+async function createStore(
+  backend: string,
+  connectionString: string,
+  embedder: EmbeddingClient,
+  storeConfig: StoreConfig,
+  logger: { info: (msg: string) => void; warn: (msg: string) => void },
+): Promise<MemoryStore> {
+  switch (backend) {
+    case "postgres": {
+      const { PostgresStore } = await import("./postgres.js");
+      return new PostgresStore({ connectionString, embedder, config: storeConfig, logger });
+    }
+
+    case "sqlite": {
+      const { SQLiteStore } = await import("./sqlite.js");
+      // For SQLite, connectionString is the file path (e.g., ~/.shadowdb/memory.db)
+      const dbPath = connectionString || `${process.env.HOME}/.shadowdb/memory.db`;
+      return new SQLiteStore({ dbPath, embedder, config: storeConfig, logger });
+    }
+
+    case "mysql": {
+      const { MySQLStore } = await import("./mysql.js");
+      return new MySQLStore({ connectionString, embedder, config: storeConfig, logger });
+    }
+
+    default:
+      throw new Error(
+        `memory-shadowdb: unknown backend "${backend}". Supported: postgres, sqlite, mysql`,
+      );
+  }
+}
+
+// ============================================================================
+// Plugin Definition
+// ============================================================================
+
 const memoryShadowdbPlugin = {
   id: "memory-shadowdb",
   name: "Memory (ShadowDB)",
   description:
-    "PostgreSQL + pgvector memory search. Replaces memory-core with hybrid semantic + full-text search over ShadowDB.",
+    "Database-backed agent memory with hybrid semantic + full-text search. Supports PostgreSQL, SQLite, and MySQL.",
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
@@ -79,9 +101,8 @@ const memoryShadowdbPlugin = {
     // Configuration Resolution
     // ========================================================================
 
-    // SECURITY: Connection string may contain credentials — never log in full
+    const backend = pluginCfg.backend || "postgres";
     const connectionString = resolveConnectionString(pluginCfg);
-    
     const embeddingCfg = resolveEmbeddingConfig(pluginCfg);
     const tableName = pluginCfg.table || "memories";
     const maxResultsDefault = pluginCfg.search?.maxResults ?? 6;
@@ -91,47 +112,40 @@ const memoryShadowdbPlugin = {
     const recencyWeight = pluginCfg.search?.recencyWeight ?? 0.15;
     const startupCfg = resolveStartupInjectionConfig(pluginCfg);
 
-    // ========================================================================
-    // Write Operations Configuration
-    // ========================================================================
-    
-    // SECURITY: Write config resolution — all gates default to safe values.
-    // writes.enabled defaults to false (no writes unless explicitly enabled).
-    // writes.autoEmbed defaults to true (new records are immediately searchable).
-    // Retention defaults: purge soft-deleted records after 30 days.
     const writesCfg = {
-      enabled: pluginCfg.writes?.enabled === true,         // Must be explicitly true
-      autoEmbed: pluginCfg.writes?.autoEmbed !== false,    // Default true
+      enabled: pluginCfg.writes?.enabled === true,
+      autoEmbed: pluginCfg.writes?.autoEmbed !== false,
       purgeAfterDays: typeof pluginCfg.writes?.retention?.purgeAfterDays === "number"
         ? Math.max(0, Math.floor(pluginCfg.writes.retention.purgeAfterDays))
         : 30,
     };
-    
-    // SECURITY: Startup injection cache bounded at 5000 entries (prevents memory exhaustion)
+
+    const storeConfig: StoreConfig = {
+      table: tableName,
+      vectorWeight,
+      textWeight,
+      recencyWeight,
+      autoEmbed: writesCfg.autoEmbed,
+      purgeAfterDays: writesCfg.purgeAfterDays,
+    };
+
+    // Startup injection cache (bounded at 5000 entries)
     const startupInjectState = new Map<string, { digest: string; at: number }>();
 
-    // Warn about missing API keys for cloud providers
+    // Warn about missing API keys
     if (
       ["openai", "openai-compatible", "voyage", "gemini"].includes(embeddingCfg.provider) &&
       !embeddingCfg.apiKey
     ) {
       api.logger.warn(
-        `memory-shadowdb: provider=${embeddingCfg.provider} selected but no API key found. Set embedding.apiKey or provider env var.`,
-      );
-    }
-
-    // Warn about missing command for command-based provider
-    if (embeddingCfg.provider === "command" && !embeddingCfg.command) {
-      api.logger.warn(
-        "memory-shadowdb: provider=command selected but embedding.command is missing.",
+        `memory-shadowdb: provider=${embeddingCfg.provider} selected but no API key found.`,
       );
     }
 
     // ========================================================================
-    // Initialize Embedding Client and Search Service
+    // Initialize Embedding Client
     // ========================================================================
 
-    // SECURITY: API keys passed to constructor, never logged
     const embedder = new EmbeddingClient({
       provider: embeddingCfg.provider,
       model: embeddingCfg.model,
@@ -147,113 +161,71 @@ const memoryShadowdbPlugin = {
       commandTimeoutMs: embeddingCfg.commandTimeoutMs,
     });
 
-    // SECURITY: Connection pool capped at 3 connections (in ShadowSearch constructor)
-    const search = new ShadowSearch({
-      connectionString,
-      table: tableName,
-      embedder,
-      vectorWeight,
-      textWeight,
-      recencyWeight,
-    });
+    // ========================================================================
+    // Create Store (deferred — initialized in service start)
+    // ========================================================================
 
-    // Initialize writer lazily (uses shared pool from search to avoid duplicate connections).
-    // Lazy init ensures the pool is created before the writer tries to use it.
-    // SECURITY: Tools are only registered when writesCfg.enabled is true (primary gate).
-    // Writer also checks config internally (defense-in-depth).
-    let writer: ShadowWriter | null = null;
+    let store: MemoryStore | null = null;
 
     /**
-     * Lazy-initialize and return the ShadowWriter instance.
-     *
-     * Created on first write tool call rather than at plugin load time because:
-     * 1. The pool must be initialized (search.getSharedPool() creates it lazily)
-     * 2. Avoids unnecessary object creation when writes are disabled
-     *
-     * @returns ShadowWriter instance (singleton per plugin lifecycle)
-     * @throws Error if writes are not enabled (should never happen — tool gate prevents this)
+     * Get or create the store instance.
+     * Store is created lazily on first use and fully initialized in service.start().
      */
-    function getWriter(): ShadowWriter {
-      if (!writer) {
-        writer = new ShadowWriter({
-          pool: search.getSharedPool(),
-          table: tableName,
-          embedder,
-          autoEmbed: writesCfg.autoEmbed,
-          purgeAfterDays: writesCfg.purgeAfterDays,
-          logger: api.logger,
-        });
+    async function getStore(): Promise<MemoryStore> {
+      if (!store) {
+        store = await createStore(backend, connectionString, embedder, storeConfig, api.logger);
       }
-      return writer;
+      return store;
     }
 
     api.logger.info(
-      `memory-shadowdb: registered (table: ${tableName}, provider: ${embeddingCfg.provider}, model: ${embeddingCfg.model}, dims: ${embeddingCfg.dimensions}, startup: ${startupCfg.enabled ? startupCfg.mode : "disabled"}, writes: ${writesCfg.enabled ? "enabled" : "disabled"})`,
+      `memory-shadowdb: registered (backend: ${backend}, table: ${tableName}, provider: ${embeddingCfg.provider}, model: ${embeddingCfg.model}, dims: ${embeddingCfg.dimensions}, startup: ${startupCfg.enabled ? startupCfg.mode : "disabled"}, writes: ${writesCfg.enabled ? "enabled" : "disabled"})`,
     );
 
     // ========================================================================
-    // Startup Hydration Hook (identity/rules front-load)
+    // Startup Hydration Hook
     // ========================================================================
 
     if (startupCfg.enabled) {
       api.on("before_agent_start", async (_event, ctx) => {
         try {
-          // Resolve model-aware maxChars (e.g., small-context models get less)
+          const s = await getStore();
           const currentModel = (ctx as Record<string, unknown>)?.model as string | undefined;
           const effectiveMaxChars = resolveMaxCharsForModel(startupCfg, currentModel);
 
-          // Fetch startup context from DB
-          const startup = await search.getStartupContext(effectiveMaxChars);
-          if (!startup?.text) {
-            return;
-          }
+          const startup = await s.getStartupContext(effectiveMaxChars);
+          if (!startup?.text) return;
 
-          // Check if we should inject based on mode + cache state
           const sessionKey = (ctx?.sessionKey || "__global__").trim();
           const now = Date.now();
           const prev = startupInjectState.get(sessionKey);
 
           let shouldInject = false;
           if (startupCfg.mode === "always") {
-            // Always inject on every start (highest overhead, strictest parity)
             shouldInject = true;
           } else if (startupCfg.mode === "first-run") {
-            // Inject only on first session start (lowest overhead)
             shouldInject = !prev;
           } else {
-            // digest mode: inject when content changes or cache expires
-            shouldInject =
-              !prev ||
+            shouldInject = !prev ||
               prev.digest !== startup.digest ||
               (startupCfg.cacheTtlMs > 0 && now - prev.at >= startupCfg.cacheTtlMs);
           }
 
-          if (!shouldInject) {
-            return;
-          }
+          if (!shouldInject) return;
 
-          // Update cache state
           startupInjectState.set(sessionKey, { digest: startup.digest, at: now });
 
-          // SECURITY: Bound cache map size to prevent memory exhaustion
-          // If map exceeds 5000 entries, evict 1000 oldest entries
+          // Evict stale cache entries
           if (startupInjectState.size > 5000) {
             const stale = [...startupInjectState.entries()]
               .sort((a, b) => a[1].at - b[1].at)
               .slice(0, 1000)
               .map(([key]) => key);
-            for (const key of stale) {
-              startupInjectState.delete(key);
-            }
+            for (const key of stale) startupInjectState.delete(key);
           }
 
           const truncatedAttr = startup.truncated ? ' truncated="true"' : "";
 
-          api.logger.debug?.(
-            `memory-shadowdb: startup injected (mode=${startupCfg.mode}, model=${currentModel || "unknown"}, maxChars=${effectiveMaxChars}, rows=${startup.rowCount}, chars=${startup.totalChars}, digest=${startup.digest}, session=${sessionKey})`,
-          );
-
-          // Return context for injection into agent prompt
           return {
             prependContext:
               `<startup-identity source="shadowdb" digest="${startup.digest}"${truncatedAttr}>\n` +
@@ -273,8 +245,6 @@ const memoryShadowdbPlugin = {
 
     api.registerTool(
       (_ctx) => {
-        // TOOL 1: memory_search
-        // Hybrid semantic + FTS + trigram search over ShadowDB
         const memorySearchTool = {
           label: "Memory Search",
           name: "memory_search",
@@ -287,16 +257,15 @@ const memoryShadowdbPlugin = {
           }),
           execute: async (_toolCallId: string, params: Record<string, unknown>) => {
             const query = (params.query as string)?.trim();
-            if (!query) {
-              return jsonResult({ results: [], error: "empty query" });
-            }
+            if (!query) return jsonResult({ results: [], error: "empty query" });
+
             const max = (params.maxResults as number) ?? maxResultsDefault;
             const min = (params.minScore as number) ?? minScoreDefault;
 
             try {
-              const results = await search.search(query, max, min);
+              const s = await getStore();
+              const results = await s.search(query, max, min);
 
-              // Attach citations to snippets for easy reference
               const decorated = results.map((r) => ({
                 ...r,
                 snippet: `${r.snippet.trim()}\n\nSource: ${r.citation}`,
@@ -305,7 +274,8 @@ const memoryShadowdbPlugin = {
               return jsonResult({
                 results: decorated,
                 provider: "shadowdb",
-                model: `pgvector+fts (${embeddingCfg.model})`,
+                backend,
+                model: `${backend}+fts (${embeddingCfg.model})`,
                 citations: "auto",
               });
             } catch (err) {
@@ -316,8 +286,6 @@ const memoryShadowdbPlugin = {
           },
         };
 
-        // TOOL 2: memory_get
-        // Read specific record by path (follow-up after memory_search)
         const memoryGetTool = {
           label: "Memory Get",
           name: "memory_get",
@@ -330,14 +298,11 @@ const memoryShadowdbPlugin = {
           }),
           execute: async (_toolCallId: string, params: Record<string, unknown>) => {
             const reqPath = (params.path as string)?.trim();
-            if (!reqPath) {
-              return jsonResult({ path: "", text: "", error: "path required" });
-            }
-            const from = params.from as number | undefined;
-            const lines = params.lines as number | undefined;
+            if (!reqPath) return jsonResult({ path: "", text: "", error: "path required" });
 
             try {
-              const result = await search.getByPath(reqPath, from, lines);
+              const s = await getStore();
+              const result = await s.getByPath(reqPath, params.from as number, params.lines as number);
               return jsonResult(result);
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err);
@@ -352,21 +317,12 @@ const memoryShadowdbPlugin = {
     );
 
     // ========================================================================
-    // Tool Registration: memory_write, memory_update, memory_delete
+    // Tool Registration: Write tools (config-gated)
     // ========================================================================
-    //
-    // SECURITY: Write tools are only registered when writes.enabled is true.
-    // When disabled, these tools simply don't exist — the agent cannot call them
-    // and they don't appear in tool listings. This is the primary access gate.
-    //
-    // Defense-in-depth: ShadowWriter also checks config internally, so even if
-    // tool registration were bypassed, writes would still be rejected.
-    //
 
     if (writesCfg.enabled) {
       api.registerTool(
         (_ctx) => {
-          // TOOL 3: memory_write — create new memory record
           const memoryWriteTool = {
             label: "Memory Write",
             name: "memory_write",
@@ -375,18 +331,14 @@ const memoryShadowdbPlugin = {
               "Auto-embeds for vector search if writes.autoEmbed is true.",
             parameters: Type.Object({
               content: Type.String({ description: "Record content (required, max 100K chars)" }),
-              category: Type.Optional(
-                Type.String({ description: 'Category (default: "general")' }),
-              ),
+              category: Type.Optional(Type.String({ description: 'Category (default: "general")' })),
               title: Type.Optional(Type.String({ description: "Human-readable title" })),
-              tags: Type.Optional(
-                Type.Array(Type.String(), { description: "Searchable tags (max 50)" }),
-              ),
+              tags: Type.Optional(Type.Array(Type.String(), { description: "Searchable tags (max 50)" })),
             }),
             execute: async (_toolCallId: string, params: Record<string, unknown>) => {
               try {
-                const w = getWriter();
-                const result = await w.write({
+                const s = await getStore();
+                const result = await s.write({
                   content: params.content as string,
                   category: params.category as string | undefined,
                   title: params.title as string | undefined,
@@ -401,7 +353,6 @@ const memoryShadowdbPlugin = {
             },
           };
 
-          // TOOL 4: memory_update — update existing memory record
           const memoryUpdateTool = {
             label: "Memory Update",
             name: "memory_update",
@@ -410,19 +361,15 @@ const memoryShadowdbPlugin = {
               "Re-embeds automatically if content changes.",
             parameters: Type.Object({
               id: Type.Number({ description: "Record ID to update" }),
-              content: Type.Optional(
-                Type.String({ description: "New content (triggers re-embedding)" }),
-              ),
+              content: Type.Optional(Type.String({ description: "New content (triggers re-embedding)" })),
               title: Type.Optional(Type.String({ description: "New title" })),
               category: Type.Optional(Type.String({ description: "New category" })),
-              tags: Type.Optional(
-                Type.Array(Type.String(), { description: "New tags (replaces existing)" }),
-              ),
+              tags: Type.Optional(Type.Array(Type.String(), { description: "New tags (replaces existing)" })),
             }),
             execute: async (_toolCallId: string, params: Record<string, unknown>) => {
               try {
-                const w = getWriter();
-                const result = await w.update({
+                const s = await getStore();
+                const result = await s.update({
                   id: params.id as number,
                   content: params.content as string | undefined,
                   title: params.title as string | undefined,
@@ -438,7 +385,6 @@ const memoryShadowdbPlugin = {
             },
           };
 
-          // TOOL 5: memory_delete — soft-delete only (sets deleted_at, never permanent)
           const memoryDeleteTool = {
             label: "Memory Delete",
             name: "memory_delete",
@@ -450,8 +396,8 @@ const memoryShadowdbPlugin = {
             }),
             execute: async (_toolCallId: string, params: Record<string, unknown>) => {
               try {
-                const w = getWriter();
-                const result = await w.delete({ id: params.id as number });
+                const s = await getStore();
+                const result = await s.delete({ id: params.id as number });
                 return jsonResult(result as unknown as Record<string, unknown>);
               } catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
@@ -461,7 +407,6 @@ const memoryShadowdbPlugin = {
             },
           };
 
-          // TOOL 6: memory_undelete — restore a soft-deleted record
           const memoryUndeleteTool = {
             label: "Memory Undelete",
             name: "memory_undelete",
@@ -473,8 +418,8 @@ const memoryShadowdbPlugin = {
             }),
             execute: async (_toolCallId: string, params: Record<string, unknown>) => {
               try {
-                const w = getWriter();
-                const result = await w.undelete({ id: params.id as number });
+                const s = await getStore();
+                const result = await s.undelete({ id: params.id as number });
                 return jsonResult(result as unknown as Record<string, unknown>);
               } catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
@@ -491,7 +436,7 @@ const memoryShadowdbPlugin = {
     }
 
     // ========================================================================
-    // CLI Registration: shadowdb commands
+    // CLI Registration
     // ========================================================================
 
     api.registerCli(
@@ -500,28 +445,24 @@ const memoryShadowdbPlugin = {
           .command("shadowdb")
           .description("ShadowDB memory plugin commands");
 
-        // shadowdb ping — test database connection
         cmd
           .command("ping")
-          .description("Test PostgreSQL connection")
+          .description("Test database connection")
           .action(async () => {
-            const ok = await search.ping();
+            const s = await getStore();
+            const ok = await s.ping();
             console.log(ok ? "✓ Connected" : "✗ Connection failed");
             process.exit(ok ? 0 : 1);
           });
 
-        // shadowdb search <query> — CLI search interface
         cmd
           .command("search")
           .description("Search ShadowDB")
           .argument("<query>", "Search query")
           .option("--limit <n>", "Max results", String(maxResultsDefault))
           .action(async (query: string, opts: { limit: string }) => {
-            const results = await search.search(
-              query,
-              parseInt(opts.limit, 10),
-              minScoreDefault,
-            );
+            const s = await getStore();
+            const results = await s.search(query, parseInt(opts.limit, 10), minScoreDefault);
             for (const r of results) {
               console.log(`[${r.score.toFixed(3)}] ${r.citation}`);
               console.log(`  ${r.snippet.slice(0, 120).replace(/\n/g, " ")}`);
@@ -529,13 +470,13 @@ const memoryShadowdbPlugin = {
             }
           });
 
-        // shadowdb get <id> — fetch specific record by ID
         cmd
           .command("get")
           .description("Get a specific record")
           .argument("<id>", "Record ID")
           .action(async (id: string) => {
-            const record = await search.get(parseInt(id, 10));
+            const s = await getStore();
+            const record = await s.get(parseInt(id, 10));
             if (record) {
               console.log(record.text);
             } else {
@@ -547,32 +488,38 @@ const memoryShadowdbPlugin = {
     );
 
     // ========================================================================
-    // Service Registration (connection lifecycle)
+    // Service Registration
     // ========================================================================
 
     api.registerService({
       id: "memory-shadowdb",
       start: async () => {
-        const ok = await search.ping();
-        if (ok) {
-          api.logger.info("memory-shadowdb: PostgreSQL connection verified");
+        const s = await getStore();
 
-          // Run retention purge on service start (if writes are enabled)
+        // Initialize backend (create tables for SQLite/MySQL, no-op for Postgres)
+        await s.initialize();
+
+        const ok = await s.ping();
+        if (ok) {
+          api.logger.info(`memory-shadowdb: ${backend} connection verified`);
+
+          // Run retention purge on start
           if (writesCfg.enabled && writesCfg.purgeAfterDays > 0) {
             try {
-              const w = getWriter();
-              await w.runRetentionPurge();
+              await s.runRetentionPurge();
             } catch (err) {
               api.logger.warn(`memory-shadowdb: retention purge failed: ${String(err)}`);
             }
           }
         } else {
-          api.logger.warn("memory-shadowdb: PostgreSQL connection failed — searches will error");
+          api.logger.warn(`memory-shadowdb: ${backend} connection failed — searches will error`);
         }
       },
       stop: async () => {
-        await search.close();
-        api.logger.info("memory-shadowdb: connection pool closed");
+        if (store) {
+          await store.close();
+          api.logger.info("memory-shadowdb: connection closed");
+        }
       },
     });
   },
@@ -582,37 +529,19 @@ const memoryShadowdbPlugin = {
 // Helpers
 // ============================================================================
 
-/**
- * Format tool result as JSON content
- *
- * Wraps data object in OpenClaw tool result format:
- * { content: [{ type: "text", text: JSON.stringify(data) }] }
- *
- * @param data - Result data object
- * @returns Formatted tool result
- */
 function jsonResult(data: Record<string, unknown>) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(data) }],
-  };
+  return { content: [{ type: "text" as const, text: JSON.stringify(data) }] };
 }
 
 // ============================================================================
 // Exports
 // ============================================================================
 
-/**
- * Test-only exports for internal functions
- *
- * Enables unit testing of config resolution without exposing internals
- * to plugin consumers.
- */
 export const __test__ = {
   normalizeEmbeddingProvider,
   resolveEmbeddingConfig,
   resolveStartupInjectionConfig,
   validateEmbeddingDimensions,
-  ShadowWriter,
 };
 
 export default memoryShadowdbPlugin;
