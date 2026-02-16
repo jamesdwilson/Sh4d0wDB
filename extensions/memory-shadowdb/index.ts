@@ -184,6 +184,23 @@ const memoryShadowdbPlugin = {
 
     // ========================================================================
     // Startup Hydration Hook
+    //
+    // MECHANISM: OpenClaw's before_agent_start hook fires on EVERY agent turn
+    // (it's per-turn, not per-session, despite the name). We use in-memory
+    // caching to control when we actually inject:
+    //
+    //   digest mode (default):
+    //     Turn 1 → no cache → inject startup context as prependContext
+    //     Turn 2+ → cache hit, same digest → return nothing (skip)
+    //     After cacheTtlMs (default 10min) → cache expired → re-inject
+    //
+    // On turns where we skip, the model still sees the startup block from
+    // the earlier turn in its conversation history. The TTL refresh is a
+    // safety net for long sessions where the original injection might scroll
+    // out of the context window.
+    //
+    // This means startup context is NOT sent every turn — only on first turn
+    // and periodically as a refresh.
     // ========================================================================
 
     if (startupCfg.enabled) {
@@ -200,12 +217,17 @@ const memoryShadowdbPlugin = {
           const now = Date.now();
           const prev = startupInjectState.get(sessionKey);
 
+          // Decide whether to inject this turn or skip (let history carry it)
           let shouldInject = false;
           if (startupCfg.mode === "always") {
+            // Inject every turn (expensive — only use if you have a reason)
             shouldInject = true;
           } else if (startupCfg.mode === "first-run") {
+            // Inject once per session, never refresh
             shouldInject = !prev;
           } else {
+            // digest mode: inject on first turn, re-inject when content changes
+            // or TTL expires (safety net for long conversations)
             shouldInject = !prev ||
               prev.digest !== startup.digest ||
               (startupCfg.cacheTtlMs > 0 && now - prev.at >= startupCfg.cacheTtlMs);
@@ -213,9 +235,10 @@ const memoryShadowdbPlugin = {
 
           if (!shouldInject) return;
 
+          // Record that we injected for this session
           startupInjectState.set(sessionKey, { digest: startup.digest, at: now });
 
-          // Evict stale cache entries
+          // Evict stale cache entries (bound map at 5000 to prevent memory leak)
           if (startupInjectState.size > 5000) {
             const stale = [...startupInjectState.entries()]
               .sort((a, b) => a[1].at - b[1].at)

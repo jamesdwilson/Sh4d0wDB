@@ -38,7 +38,7 @@ Gives your agent a persistent memory it can search, write, update, and delete �
 curl -fsSL https://raw.githubusercontent.com/jamesdwilson/Sh4d0wDB/main/setup.sh | bash
 ```
 
-That's it. The script clones the repo, sets up the database, installs dependencies, wires the plugin into OpenClaw, and restarts the gateway. Run the same command again to update.
+That's it. The script downloads only the files you need, sets up the database, installs dependencies, wires the plugin into OpenClaw, and restarts the gateway. Run the same command again to update.
 
 **Or tell your agent:**
 
@@ -84,12 +84,12 @@ The principle: if the guardrails are more complex than the feature, you've lost 
 
 Every search combines multiple signals to find the best matches. What's available depends on your backend:
 
-| Signal | Postgres | SQLite | What it measures |
-|--------|----------|--------|-----------------|
-| Vector similarity | ✓ (weight: `0.7`) | planned | Semantic meaning via embeddings |
-| Full-text search | ✓ (weight: `0.3`) | ✓ | Keyword/phrase matches |
-| Trigram similarity | ✓ (weight: `0.2`) | — | Fuzzy/typo-tolerant matching |
-| Recency boost | ✓ (weight: `0.15`) | ✓ | Newer records boosted slightly |
+| Signal | Postgres | SQLite | MySQL | What it measures |
+|--------|----------|--------|-------|-----------------|
+| Vector similarity | ✓ (weight: `0.7`) | ✓ (sqlite-vec) | ✓ (9.2+) | Semantic meaning via embeddings |
+| Full-text search | ✓ (weight: `0.3`) | ✓ (FTS5) | ✓ (FULLTEXT) | Keyword/phrase matches |
+| Trigram similarity | ✓ (weight: `0.2`) | — | — | Fuzzy/typo-tolerant matching |
+| Recency boost | ✓ (weight: `0.15`) | ✓ | ✓ | Newer records boosted slightly |
 
 With Postgres, signals are merged via Reciprocal Rank Fusion (RRF) — each signal produces a ranked list, and RRF combines them without needing score normalization. All weights are configurable.
 
@@ -99,16 +99,33 @@ Recency is intentionally low — it's a tiebreaker, not a dominant signal.
 
 ---
 
-## Startup injection
+## Startup injection (optional)
 
 <details>
-<summary>Replace your .md bootstrap files with DB-driven identity</summary>
+<summary>Load agent identity from the database instead of .md files</summary>
 
-ShadowDB can inject identity and rules from a `startup` table before each agent run. Records are prioritized (P0 = critical, P3 = reference) and concatenated until a character budget is hit.
+By default, OpenClaw loads your agent's identity from workspace files (`SOUL.md`, `IDENTITY.md`, etc.) and injects them into every prompt. ShadowDB can replace this with a `startup` table in the database.
 
-Smaller models get less context via `maxCharsByModel` — substring matching against the model name, first match wins.
+**Why bother?**
 
-This replaces `SOUL.md`, `IDENTITY.md`, `TOOLS.md`, etc. Keep empty stubs so OpenClaw doesn't complain, but the content comes from the database.
+- **Priority ordering** — critical rules (identity, safety) go in first. If the context window is tight, low-priority reference material gets trimmed, not your agent's core identity.
+- **Model-aware budgets** — Opus gets 6000 chars of startup context, a small model gets 1500. Same rules, right-sized. Configure via `maxCharsByModel`.
+- **Editable via tools** — your agent can update its own rules with `memory_update`. No file editing.
+
+**How it works:**
+
+OpenClaw's `before_agent_start` hook fires on every agent turn. ShadowDB hooks into it, but doesn't inject every time — that would waste tokens. Instead:
+
+1. **First turn** of a session: reads the `startup` table, concatenates rows by priority, and prepends the result to the prompt.
+2. **Subsequent turns**: skips injection. The model already has the startup context in its conversation history from turn 1.
+3. **After 10 minutes** (configurable via `cacheTtlMs`): re-injects as a refresh, in case the original has scrolled out of the context window in a long conversation.
+
+Three modes control this behavior:
+- `digest` (default) — inject once, re-inject when content changes or TTL expires
+- `first-run` — inject once per session, never refresh
+- `always` — inject every turn (expensive, rarely needed)
+
+This feature is **off by default**. To enable it, add rows to the `startup` table and set `startup.enabled: true` in your plugin config.
 
 </details>
 
