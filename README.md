@@ -358,33 +358,41 @@ Here's the question: **if the agent violates this rule before it has a chance to
 
 ### Step 3: Load your primer rules
 
-**Option A: Add them during setup.** On fresh installs, the setup script asks if you have always-on rules and walks you through adding them one at a time — key, content, priority. No LLM, no file editing, just paste:
+**Option A: Create a `PRIMER.md` file.** The setup script auto-detects it and imports every section:
 
-```
-  Key (e.g. identity, safety, banned-words) or 'done': identity
-  Content: You are Shadow, Alex's AI assistant. You run on OpenClaw.
-  Priority [0]: 0
-  ✓  Added: identity
+```markdown
+# identity
+You are Shadow, Alex's AI assistant. You run on OpenClaw.
 
-  Key: safety
-  Content: Never send emails, messages, or make purchases without explicit user confirmation.
-  Priority [10]: 5
-  ✓  Added: safety
+# owner
+Alex Chen lives in Austin, TX. His daughter Maya was born 2020-03-15.
 
-  Key: done
-  ✓  Added 2 primer rule(s)
-```
+# banned-words
+Never use the words: workout, exercise, cardio, regime. Use specific activity names instead.
 
-**Option B: Add them later with SQL.** If you skip during setup, you can always insert directly:
-
-```sql
-INSERT INTO primer (key, content, priority) VALUES
-  ('identity', 'You are Shadow, Alex''s AI assistant.', 0),
-  ('safety', 'Never send without explicit user confirmation.', 5),
-  ('banned-words', 'Never use: workout, exercise, cardio, regime.', 20);
+# safety
+Never send emails, messages, or make purchases without explicit user confirmation.
 ```
 
-**Option C: Let your agent do it.** Tell your agent to insert primer rules — it has full DB access. Or just skip primer entirely and start with searchable memories. If you notice your agent forgetting something critical on the first turn of new conversations, that's your sign to add it as a primer rule.
+Drop this file at `~/.openclaw/workspace/PRIMER.md` (or `./PRIMER.md`) and run setup. Each `# heading` becomes a key, the body becomes content, priority is assigned by order (0, 10, 20...). The script tells you exactly what it's importing:
+
+```
+  ℹ  Found primer file: /Users/you/.openclaw/workspace/PRIMER.md
+     Parsing sections (# heading = key, body = rule text)...
+
+  ✓  identity (priority 0)
+  ✓  owner (priority 10)
+  ✓  banned-words (priority 20)
+  ✓  safety (priority 30)
+
+  ✓  Imported 4 primer rule(s) from PRIMER.md
+```
+
+Edit the file and re-run setup anytime to update.
+
+**Option B: Paste during setup.** If no `PRIMER.md` is found, the script offers an interactive prompt — enter rules one at a time with key, content, and priority.
+
+**Option C: Skip it entirely.** Start with searchable memories only. If you notice your agent forgetting something critical on the first turn of new conversations, that's your sign to add a primer rule — create the file, re-run setup, or insert with SQL directly.
 
 ### The `always` column
 

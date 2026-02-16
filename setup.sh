@@ -836,7 +836,7 @@ fi
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                                                                            │
-# │   STEP 5.5:  PRIMER RULES (optional, interactive only)                     │
+# │   STEP 5.5:  PRIMER RULES (optional)                                      │
 # │                                                                            │
 # │   Most identity/rules work as searchable memories. But a few things        │
 # │   need to be present before the agent's first thought:                     │
@@ -844,98 +844,203 @@ fi
 # │     - Safety rails ("Never send without confirmation")                     │
 # │     - Hard constraints (banned words, communication gates)                 │
 # │                                                                            │
-# │   The litmus test: if the agent violates this rule BEFORE it has a         │
-# │   chance to search, is that a problem? If yes → primer.                    │
+# │   Auto-detects PRIMER.md in workspace or current dir.                      │
+# │   Format: # heading = key, body = content, order = priority.               │
+# │   Falls back to interactive paste if no file found.                        │
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-# Only run primer setup on fresh installs (not updates) and interactive mode
-if ! $IS_UPDATE && ! $AUTO_YES && ! $DRY_RUN; then
+# Helper: insert a primer rule (backend-aware upsert)
+insert_primer_rule() {
+  local key="$1" content="$2" priority="$3"
 
-  blank
-  echo ""
-  echo "  ┌──────────────────────────────────────────────────────────────────┐"
-  echo "  │                                                                  │"
-  echo "  │   🧬  Primer Rules (optional)                                    │"
-  echo "  │                                                                  │"
-  echo "  │   Most rules work as searchable memories — the agent finds       │"
-  echo "  │   them when relevant. But a few need to be loaded before the     │"
-  echo "  │   agent's first thought:                                         │"
-  echo "  │                                                                  │"
-  echo "  │     • Core identity (\""You are Shadow"\")                           │"
-  echo "  │     • Safety rails (\"Never send without confirmation\")           │"
-  echo "  │     • Banned words, hard constraints                             │"
-  echo "  │                                                                  │"
-  echo "  │   The test: if violating this rule before the agent thinks to    │"
-  echo "  │   search would cause damage, it's a primer rule.                 │"
-  echo "  │                                                                  │"
-  echo "  └──────────────────────────────────────────────────────────────────┘"
-  echo ""
+  # Escape single quotes for SQL
+  local esc_key="${key//\'/\'\'}"
+  local esc_content="${content//\'/\'\'}"
 
-  echo -ne "  ${BOLD}Do you have always-on rules to add?${NC} (y/N): "
-  read -r ADD_PRIMER
-  echo ""
+  case "$BACKEND" in
+    postgres)
+      psql "$DB_NAME" -c "INSERT INTO primer (key, content, priority) VALUES ('${esc_key}', '${esc_content}', ${priority}) ON CONFLICT (key) DO UPDATE SET content = EXCLUDED.content, priority = EXCLUDED.priority;" 2>/dev/null
+      ;;
+    sqlite)
+      sqlite3 "$CONN_STRING" "INSERT OR REPLACE INTO primer (key, content, priority) VALUES ('${esc_key}', '${esc_content}', ${priority});" 2>/dev/null
+      ;;
+    mysql)
+      mysql -e "INSERT INTO primer (\`key\`, content, priority) VALUES ('${esc_key}', '${esc_content}', ${priority}) ON DUPLICATE KEY UPDATE content=VALUES(content), priority=VALUES(priority);" "$DB_NAME" 2>/dev/null
+      ;;
+  esac
+}
 
-  if [[ "$ADD_PRIMER" =~ ^[Yy] ]]; then
+# Helper: parse PRIMER.md and insert each section
+#   Format: # heading lines become keys, body becomes content
+#   Priority assigned by order of appearance (0, 10, 20, ...)
+import_primer_file() {
+  local file="$1"
+  local current_key=""
+  local current_content=""
+  local priority=0
+  local count=0
 
-    PRIMER_COUNT=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^#[[:space:]]+(.*) ]]; then
+      # New heading — flush previous section
+      if [[ -n "$current_key" && -n "$current_content" ]]; then
+        # Trim leading/trailing whitespace from content
+        current_content="$(echo "$current_content" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+        if [[ -n "$current_content" ]]; then
+          insert_primer_rule "$current_key" "$current_content" "$priority"
+          ok "  ${current_key} (priority ${priority})"
+          priority=$((priority + 10))
+          count=$((count + 1))
+        fi
+      fi
+      # Start new section — key is the heading text, lowercased, spaces→dashes
+      current_key="$(echo "${BASH_REMATCH[1]}" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')"
+      current_content=""
+    else
+      # Accumulate body lines
+      if [[ -n "$current_key" ]]; then
+        if [[ -n "$current_content" ]]; then
+          current_content="${current_content}
+${line}"
+        else
+          current_content="$line"
+        fi
+      fi
+    fi
+  done < "$file"
 
-    echo "  Enter primer rules one at a time."
-    echo "  Each needs a ${BOLD}key${NC} (short name) and ${BOLD}content${NC} (the rule text)."
-    echo "  Priority: lower number = injected first (0 = highest priority)."
+  # Flush last section
+  if [[ -n "$current_key" && -n "$current_content" ]]; then
+    current_content="$(echo "$current_content" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    if [[ -n "$current_content" ]]; then
+      insert_primer_rule "$current_key" "$current_content" "$priority"
+      ok "  ${current_key} (priority ${priority})"
+      count=$((count + 1))
+    fi
+  fi
+
+  echo "$count"
+}
+
+# Only run primer setup on fresh installs (not updates) and not dry-run
+if ! $IS_UPDATE && ! $DRY_RUN; then
+
+  # Look for PRIMER.md in likely locations
+  PRIMER_FILE=""
+  OPENCLAW_WORKSPACE="${HOME}/.openclaw/workspace"
+
+  for candidate in \
+    "${OPENCLAW_WORKSPACE}/PRIMER.md" \
+    "${OPENCLAW_WORKSPACE}/primer.md" \
+    "./PRIMER.md" \
+    "./primer.md"; do
+    if [[ -f "$candidate" ]]; then
+      PRIMER_FILE="$candidate"
+      break
+    fi
+  done
+
+  if [[ -n "$PRIMER_FILE" ]]; then
+    # ── Auto-import from file ─────────────────────────────────────────
+    blank
+    info "Found primer file: ${BOLD}${PRIMER_FILE}${NC}"
+    detail "Parsing sections (# heading = key, body = rule text)..."
     echo ""
-    echo "  Type ${BOLD}done${NC} when finished."
+
+    IMPORTED=$(import_primer_file "$PRIMER_FILE")
+
+    if [[ "$IMPORTED" -gt 0 ]]; then
+      blank
+      ok "Imported ${IMPORTED} primer rule(s) from ${PRIMER_FILE}"
+      detail "These will be injected before the agent's first thought each session."
+      detail "Edit the file and re-run setup to update."
+    else
+      warn "No sections found in ${PRIMER_FILE}"
+      detail "Expected format: # heading on its own line, content below it"
+    fi
+    blank
+
+  elif ! $AUTO_YES; then
+    # ── Interactive fallback ──────────────────────────────────────────
+    blank
+    echo ""
+    echo "  ┌──────────────────────────────────────────────────────────────────┐"
+    echo "  │                                                                  │"
+    echo "  │   🧬  Primer Rules (optional)                                    │"
+    echo "  │                                                                  │"
+    echo "  │   Most rules work as searchable memories — the agent finds       │"
+    echo "  │   them when relevant. But a few need to be loaded before the     │"
+    echo "  │   agent's first thought:                                         │"
+    echo "  │                                                                  │"
+    echo "  │     • Core identity (\""You are Shadow"\")                           │"
+    echo "  │     • Safety rails (\"Never send without confirmation\")           │"
+    echo "  │     • Banned words, hard constraints                             │"
+    echo "  │                                                                  │"
+    echo "  │   The test: if violating this rule before the agent thinks to    │"
+    echo "  │   search would cause damage, it's a primer rule.                 │"
+    echo "  │                                                                  │"
+    echo "  │   💡  Or create ~/.openclaw/workspace/PRIMER.md and re-run.      │"
+    echo "  │                                                                  │"
+    echo "  └──────────────────────────────────────────────────────────────────┘"
     echo ""
 
-    while true; do
-      echo -ne "  ${BOLD}Key${NC} (e.g. identity, safety, banned-words) or 'done': "
-      read -r PRIMER_KEY
-      [[ "$PRIMER_KEY" == "done" || -z "$PRIMER_KEY" ]] && break
+    echo -ne "  ${BOLD}Do you have always-on rules to add?${NC} (y/N): "
+    read -r ADD_PRIMER
+    echo ""
 
-      echo -ne "  ${BOLD}Content${NC}: "
-      read -r PRIMER_CONTENT
-      if [[ -z "$PRIMER_CONTENT" ]]; then
-        warn "Empty content — skipping"
+    if [[ "$ADD_PRIMER" =~ ^[Yy] ]]; then
+
+      PRIMER_COUNT=0
+
+      echo "  Enter primer rules one at a time."
+      echo "  Each needs a ${BOLD}key${NC} (short name) and ${BOLD}content${NC} (the rule text)."
+      echo "  Priority: lower number = injected first (0 = highest priority)."
+      echo ""
+      echo "  Type ${BOLD}done${NC} when finished."
+      echo ""
+
+      while true; do
+        echo -ne "  ${BOLD}Key${NC} (e.g. identity, safety, banned-words) or 'done': "
+        read -r PRIMER_KEY
+        [[ "$PRIMER_KEY" == "done" || -z "$PRIMER_KEY" ]] && break
+
+        echo -ne "  ${BOLD}Content${NC}: "
+        read -r PRIMER_CONTENT
+        if [[ -z "$PRIMER_CONTENT" ]]; then
+          warn "Empty content — skipping"
+          echo ""
+          continue
+        fi
+
+        echo -ne "  ${BOLD}Priority${NC} [${PRIMER_COUNT}0]: "
+        read -r PRIMER_PRIORITY
+        PRIMER_PRIORITY="${PRIMER_PRIORITY:-${PRIMER_COUNT}0}"
+
+        insert_primer_rule "$PRIMER_KEY" "$PRIMER_CONTENT" "$PRIMER_PRIORITY"
+
+        PRIMER_COUNT=$((PRIMER_COUNT + 1))
+        ok "Added: ${PRIMER_KEY}"
         echo ""
-        continue
+      done
+
+      if [[ $PRIMER_COUNT -gt 0 ]]; then
+        ok "Added ${PRIMER_COUNT} primer rule(s)"
+        detail "These will be injected before the agent's first thought each session."
       fi
 
-      echo -ne "  ${BOLD}Priority${NC} [${PRIMER_COUNT}0]: "
-      read -r PRIMER_PRIORITY
-      PRIMER_PRIORITY="${PRIMER_PRIORITY:-${PRIMER_COUNT}0}"
-
-      # Escape single quotes for SQL
-      ESCAPED_KEY="${PRIMER_KEY//\'/\'\'}"
-      ESCAPED_CONTENT="${PRIMER_CONTENT//\'/\'\'}"
-
-      case "$BACKEND" in
-        postgres)
-          psql "$DB_NAME" -c "INSERT INTO primer (key, content, priority) VALUES ('${ESCAPED_KEY}', '${ESCAPED_CONTENT}', ${PRIMER_PRIORITY}) ON CONFLICT (key) DO UPDATE SET content = EXCLUDED.content, priority = EXCLUDED.priority;" 2>/dev/null
-          ;;
-        sqlite)
-          sqlite3 "$CONN_STRING" "INSERT OR REPLACE INTO primer (key, content, priority) VALUES ('${ESCAPED_KEY}', '${ESCAPED_CONTENT}', ${PRIMER_PRIORITY});" 2>/dev/null
-          ;;
-        mysql)
-          mysql -e "INSERT INTO primer (\`key\`, content, priority) VALUES ('${ESCAPED_KEY}', '${ESCAPED_CONTENT}', ${PRIMER_PRIORITY}) ON DUPLICATE KEY UPDATE content=VALUES(content), priority=VALUES(priority);" "$DB_NAME" 2>/dev/null
-          ;;
-      esac
-
-      PRIMER_COUNT=$((PRIMER_COUNT + 1))
-      ok "Added: ${PRIMER_KEY}"
-      echo ""
-    done
-
-    if [[ $PRIMER_COUNT -gt 0 ]]; then
-      ok "Added ${PRIMER_COUNT} primer rule(s)"
-      detail "These will be injected before the agent's first thought each session."
+      blank
+    else
+      detail "No problem — you can add primer rules anytime:"
+      detail "  • Create ~/.openclaw/workspace/PRIMER.md and re-run setup"
+      detail "  • Insert with SQL directly"
+      detail "  • Ask your agent to do it"
+      detail "See: https://github.com/jamesdwilson/Sh4d0wDB#importing-your-identity"
+      blank
     fi
 
-    blank
-  else
-    detail "No problem — you can add primer rules anytime with SQL or ask your agent to do it."
-    detail "See: https://github.com/jamesdwilson/Sh4d0wDB#importing-your-identity"
-    blank
   fi
+  # AUTO_YES with no PRIMER.md → silently skip (agent-driven install)
 fi
 
 
