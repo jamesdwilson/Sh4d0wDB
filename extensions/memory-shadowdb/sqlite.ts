@@ -156,6 +156,15 @@ export class SQLiteStore extends MemoryStore {
         updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
       );
     `);
+
+    // Meta table for embedding fingerprint tracking
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS ${this.config.table}_meta (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+    `);
   }
 
   // ==========================================================================
@@ -419,5 +428,29 @@ export class SQLiteStore extends MemoryStore {
       this.db.close();
       this.db = null;
     }
+  }
+
+  async getMetaValue(key: string): Promise<string | null> {
+    try {
+      const row = this.db.prepare(
+        `SELECT value FROM ${this.config.table}_meta WHERE key = ?`,
+      ).get(key) as { value: string } | undefined;
+      return row?.value ?? null;
+    } catch {
+      return null; // table doesn't exist yet
+    }
+  }
+
+  async setMetaValue(key: string, value: string): Promise<void> {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO ${this.config.table}_meta (key, value, updated_at)
+      VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    `).run(key, value);
+  }
+
+  protected async getRecordBatch(afterId: number, limit: number): Promise<Array<{ id: number; content: string }>> {
+    return this.db.prepare(
+      `SELECT id, content FROM ${this.config.table} WHERE deleted_at IS NULL AND id > ? ORDER BY id ASC LIMIT ?`,
+    ).all(afterId, limit) as Array<{ id: number; content: string }>;
   }
 }

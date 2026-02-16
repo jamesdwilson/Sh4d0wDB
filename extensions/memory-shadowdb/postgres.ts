@@ -313,8 +313,43 @@ export class PostgresStore extends MemoryStore {
   }
 
   async initialize(): Promise<void> {
-    // Postgres schema is managed externally via schema.sql / setup.sh.
-    // This is a no-op — we don't auto-create tables.
-    // Run `setup.sh` or apply schema.sql manually.
+    // Create meta table for embedding fingerprint tracking
+    await this.getPool().query(`
+      CREATE TABLE IF NOT EXISTS ${this.config.table}_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+  }
+
+  async getMetaValue(key: string): Promise<string | null> {
+    try {
+      const result = await this.getPool().query(
+        `SELECT value FROM ${this.config.table}_meta WHERE key = $1`, [key],
+      );
+      return result.rows[0]?.value ?? null;
+    } catch (err) {
+      // Table might not exist yet
+      const code = (err as { code?: string }).code;
+      if (code === "42P01") return null; // undefined_table
+      throw err;
+    }
+  }
+
+  async setMetaValue(key: string, value: string): Promise<void> {
+    await this.getPool().query(`
+      INSERT INTO ${this.config.table}_meta (key, value, updated_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
+    `, [key, value]);
+  }
+
+  protected async getRecordBatch(afterId: number, limit: number): Promise<Array<{ id: number; content: string }>> {
+    const result = await this.getPool().query(
+      `SELECT id, content FROM ${this.config.table} WHERE deleted_at IS NULL AND id > $1 ORDER BY id ASC LIMIT $2`,
+      [afterId, limit],
+    );
+    return result.rows;
   }
 }

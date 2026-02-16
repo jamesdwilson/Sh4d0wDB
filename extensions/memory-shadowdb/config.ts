@@ -21,6 +21,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { createHash } from "node:crypto";
 import type {
   ShadowDbConfig,
   EmbeddingProvider,
@@ -422,4 +423,19 @@ export function validateEmbeddingDimensions(
     );
   }
   return embedding;
+}
+
+/**
+ * Compute a fingerprint for the current embedding configuration.
+ * Used to detect when re-embedding is needed (model change, prefix change, etc).
+ */
+export function computeEmbeddingFingerprint(cfg: {
+  provider: string;
+  model: string;
+  dimensions: number;
+}): string {
+  // Include prefix behavior: nomic models use task prefixes, others don't
+  const hasTaskPrefix = cfg.model.toLowerCase().includes("nomic") ? "task-prefix" : "none";
+  const input = `${cfg.provider}:${cfg.model}:${cfg.dimensions}:${hasTaskPrefix}`;
+  return createHash("sha256").update(input).digest("hex").slice(0, 16);
 }

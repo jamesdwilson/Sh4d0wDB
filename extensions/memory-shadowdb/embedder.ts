@@ -2,11 +2,11 @@
  * embedder.ts — Embedding provider implementations for memory-shadowdb
  *
  * Unified client for multiple embedding providers with strict dimension validation.
- * All providers receive text input (max 8000 chars) and return float[] embeddings.
+ * All providers receive text input (max 6000 chars) and return float[] embeddings.
  *
  * SECURITY MODEL:
  * - API keys are never logged (passed to constructor, used in Authorization headers)
- * - Input text is truncated to 8000 chars to prevent DoS via large inputs
+ * - Input text is truncated to 6000 chars to prevent DoS via large inputs
  * - Command-based provider: command path from config only, not user input
  * - HTTP errors include truncated response body (max 300 chars) to avoid log spam
  *
@@ -19,7 +19,7 @@
  * - command: external process via stdin/stdout JSON
  *
  * DATA FLOW:
- * 1. Text input (truncated to 8000 chars)
+ * 1. Text input (truncated to 6000 chars)
  * 2. Provider-specific API call or command execution
  * 3. Parse response → extract embedding vector
  * 4. Validate dimensions against config
@@ -39,7 +39,7 @@ import { validateEmbeddingDimensions } from "./config.js";
  * SECURITY NOTES:
  * - API keys are stored in private fields and never logged
  * - All HTTP requests use fetch with explicit headers (no ambient auth)
- * - Input truncation (8000 chars) prevents DoS via large text inputs
+ * - Input truncation (6000 chars) prevents DoS via large text inputs
  * - Dimension validation ensures output matches pgvector schema
  *
  * CONCURRENCY:
@@ -102,25 +102,20 @@ export class EmbeddingClient {
    *
    * Delegates to provider-specific implementation, then validates dimensions.
    *
-   * SECURITY: Input is truncated to 8000 chars to prevent DoS.
+   * SECURITY: Input is truncated to 6000 chars to prevent DoS.
    * This limit is enforced in each provider method.
    *
    * @param text - Input text to embed
    * @returns Embedding vector (validated to match expected dimensions)
    * @throws Error if provider fails or dimensions don't match
    */
-  async embed(text: string, _purpose: "query" | "document" = "query"): Promise<number[]> {
+  async embed(text: string, purpose: "query" | "document" = "query"): Promise<number[]> {
     let embedding: number[];
+    const taskPrefix = this.resolveTaskPrefix(purpose);
 
-    // NOTE: Task prefix (search_query:/search_document: for nomic-embed-text)
-    // is intentionally NOT applied here. Existing embeddings in the DB were
-    // generated without prefixes. Adding prefixes to queries only would degrade
-    // similarity vs unprefixed document embeddings. To enable prefixes:
-    // 1. Update this to pass this.resolveTaskPrefix(purpose)
-    // 2. Re-embed all existing documents with "document" purpose
     switch (this.provider) {
       case "ollama":
-        embedding = await this.embedOllama(text);
+        embedding = await this.embedOllama(text, taskPrefix);
         break;
       case "openai":
       case "openai-compatible":
@@ -154,7 +149,7 @@ export class EmbeddingClient {
    * Ollama runs locally (typically localhost:11434) and requires no authentication.
    * API: POST /api/embeddings with JSON {model, prompt}
    *
-   * @param text - Input text (truncated to 8000 chars)
+   * @param text - Input text (truncated to 6000 chars)
    * @returns Embedding vector from Ollama
    * @throws Error if HTTP request fails or response is invalid
    */
@@ -173,7 +168,7 @@ export class EmbeddingClient {
 
   private async embedOllama(text: string, taskPrefix?: string): Promise<number[]> {
     // SECURITY: Truncate input to prevent DoS via large text
-    const truncated = text.slice(0, 8000);
+    const truncated = text.slice(0, 6000);
     // nomic-embed-text uses task prefixes: "search_query: " for queries,
     // "search_document: " for documents. Other models ignore unknown prefixes.
     const prompt = taskPrefix ? `${taskPrefix}${truncated}` : truncated;
@@ -210,7 +205,7 @@ export class EmbeddingClient {
    * SECURITY: Requires API key in Authorization header (Bearer token).
    * Key is never logged.
    *
-   * @param text - Input text (truncated to 8000 chars)
+   * @param text - Input text (truncated to 6000 chars)
    * @returns Embedding vector from OpenAI-compatible API
    * @throws Error if API key missing, HTTP fails, or response invalid
    */
@@ -221,7 +216,7 @@ export class EmbeddingClient {
     }
     
     // SECURITY: Truncate input to prevent DoS
-    const truncated = text.slice(0, 8000);
+    const truncated = text.slice(0, 6000);
     
     const body: Record<string, unknown> = {
       model: this.model,
@@ -273,7 +268,7 @@ export class EmbeddingClient {
    *
    * SECURITY: Requires VOYAGE_API_KEY in Authorization header.
    *
-   * @param text - Input text (truncated to 8000 chars)
+   * @param text - Input text (truncated to 6000 chars)
    * @returns Embedding vector from Voyage AI
    * @throws Error if API key missing, HTTP fails, or response invalid
    */
@@ -284,7 +279,7 @@ export class EmbeddingClient {
     }
     
     // SECURITY: Truncate input
-    const truncated = text.slice(0, 8000);
+    const truncated = text.slice(0, 6000);
     
     const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}/v1/embeddings`, {
       method: "POST",
@@ -332,7 +327,7 @@ export class EmbeddingClient {
    * SECURITY: API key in query string (Gemini API requirement).
    * URL-encode key to handle special characters.
    *
-   * @param text - Input text (truncated to 8000 chars)
+   * @param text - Input text (truncated to 6000 chars)
    * @returns Embedding vector from Gemini
    * @throws Error if API key missing, HTTP fails, or response invalid
    */
@@ -343,7 +338,7 @@ export class EmbeddingClient {
     }
     
     // SECURITY: Truncate input
-    const truncated = text.slice(0, 8000);
+    const truncated = text.slice(0, 6000);
     
     // Gemini model path format: models/{model-name}
     const modelPath = this.model.startsWith("models/") ? this.model : `models/${this.model}`;
@@ -398,9 +393,9 @@ export class EmbeddingClient {
    * - Command path comes from config only (never user input)
    * - Process is killed after timeout (default 15s)
    * - Stderr is captured but not logged in full (max 500 chars on error)
-   * - Input text truncated to 8000 chars before sending to process
+   * - Input text truncated to 6000 chars before sending to process
    *
-   * @param text - Input text (truncated to 8000 chars)
+   * @param text - Input text (truncated to 6000 chars)
    * @returns Embedding vector from external command
    * @throws Error if command fails, times out, or returns invalid JSON
    */
@@ -410,7 +405,7 @@ export class EmbeddingClient {
     }
     
     // SECURITY: Truncate input before sending to external process
-    const truncated = text.slice(0, 8000);
+    const truncated = text.slice(0, 6000);
 
     const payload = JSON.stringify({
       text: truncated,

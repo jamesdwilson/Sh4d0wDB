@@ -37,6 +37,7 @@ import {
   resolveMaxCharsForModel,
   normalizeEmbeddingProvider,
   validateEmbeddingDimensions,
+  computeEmbeddingFingerprint,
 } from "./config.js";
 import { EmbeddingClient } from "./embedder.js";
 import type { MemoryStore, StoreConfig } from "./store.js";
@@ -537,6 +538,46 @@ const memoryShadowdbPlugin = {
               api.logger.warn(`memory-shadowdb: retention purge failed: ${String(err)}`);
             }
           }
+
+          // Check embedding fingerprint — re-embed if config changed
+          try {
+            const fingerprint = computeEmbeddingFingerprint({
+              provider: embeddingCfg.provider,
+              model: embeddingCfg.model,
+              dimensions: embeddingCfg.dimensions,
+            });
+            const stored = await s.getMetaValue("embedding_fingerprint");
+
+            if (stored !== fingerprint) {
+              const reason = stored
+                ? `fingerprint changed (${stored} → ${fingerprint})`
+                : "no stored fingerprint (first run or upgrade)";
+              api.logger.info(`memory-shadowdb: embedding config mismatch — ${reason}. Starting background re-embed...`);
+
+              // Background re-embed — don't block startup
+              (async () => {
+                try {
+                  const startTime = Date.now();
+                  const result = await s.reembedAll((done, _total) => {
+                    if (done % 500 === 0) {
+                      api.logger.info(`memory-shadowdb: re-embed progress: ${done} records processed`);
+                    }
+                  });
+                  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                  api.logger.info(
+                    `memory-shadowdb: re-embed complete — ${result.success} success, ${result.errors} errors, ${elapsed}s`,
+                  );
+                  await s.setMetaValue("embedding_fingerprint", fingerprint);
+                } catch (err) {
+                  api.logger.warn(`memory-shadowdb: background re-embed failed: ${String(err)}`);
+                }
+              })();
+            } else {
+              api.logger.info(`memory-shadowdb: embedding fingerprint matches (${fingerprint}) — no re-embed needed`);
+            }
+          } catch (err) {
+            api.logger.warn(`memory-shadowdb: fingerprint check failed: ${String(err)}`);
+          }
         } else {
           api.logger.warn(`memory-shadowdb: ${backend} connection failed — searches will error`);
         }
@@ -568,6 +609,7 @@ export const __test__ = {
   resolveEmbeddingConfig,
   resolvePrimerConfig,
   validateEmbeddingDimensions,
+  computeEmbeddingFingerprint,
 };
 
 export default memoryShadowdbPlugin;

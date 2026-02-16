@@ -138,7 +138,7 @@ export abstract class MemoryStore {
    * @returns Ranked, deduplicated results with snippets and citations
    */
   async search(query: string, maxResults: number, minScore: number): Promise<SearchResult[]> {
-    const embedding = await this.embedder.embed(query);
+    const embedding = await this.embedder.embed(query, "query");
     const oversample = maxResults * 5;
 
     // Run all search legs in parallel — backends return [] for unsupported signals
@@ -516,7 +516,7 @@ export abstract class MemoryStore {
    */
   protected async tryEmbed(recordId: number, content: string): Promise<boolean> {
     try {
-      const embedding = await this.embedder.embed(content);
+      const embedding = await this.embedder.embed(content, "document");
       await this.storeEmbedding(recordId, embedding);
       return true;
     } catch (err) {
@@ -526,13 +526,48 @@ export abstract class MemoryStore {
     }
   }
 
+  /**
+   * Re-embed all non-deleted records with the current embedding configuration.
+   * Cursor-based iteration to keep memory bounded. Errors are logged and skipped.
+   */
+  async reembedAll(onProgress?: (done: number, total: number) => void): Promise<{ success: number; errors: number }> {
+    let lastId = 0;
+    let success = 0;
+    let errors = 0;
+    const batchSize = 100;
+
+    while (true) {
+      const batch = await this.getRecordBatch(lastId, batchSize);
+      if (batch.length === 0) break;
+
+      for (const row of batch) {
+        try {
+          const embedding = await this.embedder.embed(row.content, "document");
+          await this.storeEmbedding(row.id, embedding);
+          success++;
+        } catch (err) {
+          errors++;
+          const message = err instanceof Error ? err.message : String(err);
+          this.logger.warn(`memory-shadowdb: re-embed failed for record ${row.id}: ${message}`);
+        }
+        lastId = row.id;
+      }
+
+      if (onProgress) {
+        onProgress(success + errors, success + errors); // total unknown at this point
+      }
+    }
+
+    return { success, errors };
+  }
+
   // ==========================================================================
   // FORMATTING — shared across all backends
   // ==========================================================================
 
   /**
    * Format a search result snippet.
-   * Compact: [category] | 3d ago\n{content truncated to 700 chars}
+   * Compact: category|3d\n{content truncated to 700 chars}
    */
   protected formatSnippet(row: {
     id: number;
@@ -546,7 +581,7 @@ export abstract class MemoryStore {
     const header = [
       row.category || null,
       row.created_at ? formatRelativeAge(row.created_at) : null,
-    ].filter(Boolean).join(" ");
+    ].filter(Boolean).join("|");
 
     const prefix = header ? `${header}\n` : "";
     const body = (row.content || "").slice(0, maxChars - prefix.length);
@@ -575,6 +610,17 @@ export abstract class MemoryStore {
   // ==========================================================================
   // ABSTRACT METHODS — each backend implements these
   // ==========================================================================
+
+  // --- Meta table operations (for embedding fingerprint tracking) ---
+
+  /** Get a metadata value by key from the _meta table. */
+  abstract getMetaValue(key: string): Promise<string | null>;
+
+  /** Set a metadata value by key in the _meta table. */
+  abstract setMetaValue(key: string, value: string): Promise<void>;
+
+  /** Fetch a batch of non-deleted record IDs and content for re-embedding (cursor-based). */
+  protected abstract getRecordBatch(afterId: number, limit: number): Promise<Array<{ id: number; content: string }>>;
 
   // --- Search legs (return ranked hits for RRF merge) ---
 

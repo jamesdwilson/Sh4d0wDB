@@ -134,6 +134,15 @@ export class MySQLStore extends MemoryStore {
         updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
+
+    // Meta table for embedding fingerprint tracking
+    await this.exec(`
+      CREATE TABLE IF NOT EXISTS ${this.config.table}_meta (
+        \`key\`      VARCHAR(255) PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
   }
 
   // ==========================================================================
@@ -394,5 +403,31 @@ export class MySQLStore extends MemoryStore {
       await this.pool.end();
       this.pool = null;
     }
+  }
+
+  async getMetaValue(key: string): Promise<string | null> {
+    try {
+      const rows = await this.query(
+        `SELECT value FROM ${this.config.table}_meta WHERE \`key\` = ?`, [key],
+      );
+      return rows[0]?.value ?? null;
+    } catch {
+      return null; // table doesn't exist yet
+    }
+  }
+
+  async setMetaValue(key: string, value: string): Promise<void> {
+    await this.exec(`
+      INSERT INTO ${this.config.table}_meta (\`key\`, value, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP(3))
+      ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = CURRENT_TIMESTAMP(3)
+    `, [key, value]);
+  }
+
+  protected async getRecordBatch(afterId: number, limit: number): Promise<Array<{ id: number; content: string }>> {
+    return await this.query(
+      `SELECT id, content FROM ${this.config.table} WHERE deleted_at IS NULL AND id > ? ORDER BY id ASC LIMIT ?`,
+      [afterId, limit],
+    ) as Array<{ id: number; content: string }>;
   }
 }
