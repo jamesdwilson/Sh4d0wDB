@@ -25,7 +25,7 @@
  * - WAL mode for concurrent read safety
  */
 
-import { MemoryStore, type RankedHit, type StartupRow, type StoreConfig, type StoreLogger } from "./store.js";
+import { MemoryStore, type RankedHit, type PrimerRow, type StoreConfig, type StoreLogger } from "./store.js";
 import type { EmbeddingClient } from "./embedder.js";
 
 // better-sqlite3 types
@@ -145,13 +145,13 @@ export class SQLiteStore extends MemoryStore {
       `);
     }
 
-    // Startup table
+    // Primer table
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS startup (
+      CREATE TABLE IF NOT EXISTS primer (
         key        TEXT PRIMARY KEY,
         content    TEXT NOT NULL,
         priority   INTEGER DEFAULT 50,
-        reinforce  INTEGER DEFAULT 0,
+        always     INTEGER DEFAULT 0,
         enabled    INTEGER DEFAULT 1,
         updated_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
       );
@@ -309,11 +309,11 @@ export class SQLiteStore extends MemoryStore {
     return { text: text || "No records found", path: pathQuery };
   }
 
-  protected async getStartupRows(): Promise<StartupRow[]> {
+  protected async getPrimerRows(): Promise<PrimerRow[]> {
     try {
       return this.db.prepare(
-        `SELECT key, content FROM startup WHERE enabled = 1 OR enabled IS NULL ORDER BY priority ASC, key ASC`,
-      ).all() as StartupRow[];
+        `SELECT key, content FROM primer WHERE enabled = 1 OR enabled IS NULL ORDER BY priority ASC, key ASC`,
+      ).all() as PrimerRow[];
     } catch {
       // Table might not exist yet
       return [];

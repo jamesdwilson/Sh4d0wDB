@@ -1,11 +1,11 @@
 -- ShadowDB MySQL / MariaDB schema
--- Baseline schema for startup identity + memories FULLTEXT search.
+-- Baseline schema for primer identity + memories FULLTEXT search.
 
-CREATE TABLE IF NOT EXISTS startup (
+CREATE TABLE IF NOT EXISTS primer (
   `key` VARCHAR(128) PRIMARY KEY,
   content LONGTEXT NOT NULL,
   priority INT NOT NULL DEFAULT 0,
-  reinforce TINYINT(1) NOT NULL DEFAULT 0,
+  `always` TINYINT(1) NOT NULL DEFAULT 0,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

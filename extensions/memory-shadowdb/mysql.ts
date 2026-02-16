@@ -29,7 +29,7 @@
  * - deleted_at uses DATETIME type (MySQL's TIMESTAMP has 2038 limitation)
  */
 
-import { MemoryStore, type RankedHit, type StartupRow, type StoreConfig, type StoreLogger } from "./store.js";
+import { MemoryStore, type RankedHit, type PrimerRow, type StoreConfig, type StoreLogger } from "./store.js";
 import type { EmbeddingClient } from "./embedder.js";
 
 // mysql2 types
@@ -123,13 +123,13 @@ export class MySQLStore extends MemoryStore {
       );
     }
 
-    // Startup table
+    // Primer table
     await this.exec(`
-      CREATE TABLE IF NOT EXISTS startup (
+      CREATE TABLE IF NOT EXISTS primer (
         \`key\`      VARCHAR(255) PRIMARY KEY,
         content    TEXT NOT NULL,
         priority   INT DEFAULT 50,
-        reinforce  TINYINT(1) DEFAULT 0,
+        \`always\`   TINYINT(1) DEFAULT 0,
         enabled    TINYINT(1) DEFAULT 1,
         updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -279,11 +279,11 @@ export class MySQLStore extends MemoryStore {
     return { text: text || "No records found", path: pathQuery };
   }
 
-  protected async getStartupRows(): Promise<StartupRow[]> {
+  protected async getPrimerRows(): Promise<PrimerRow[]> {
     try {
       return await this.query(
-        "SELECT `key`, content FROM startup WHERE enabled = 1 OR enabled IS NULL ORDER BY priority ASC, `key` ASC",
-      ) as StartupRow[];
+        "SELECT `key`, content FROM primer WHERE enabled = 1 OR enabled IS NULL ORDER BY priority ASC, `key` ASC",
+      ) as PrimerRow[];
     } catch {
       return [];
     }

@@ -6,7 +6,7 @@
  * - Embedding client initialization
  * - Tool registration (memory_search, memory_get, memory_write, memory_update, memory_delete, memory_undelete)
  * - CLI command registration
- * - Startup context injection hook
+ * - Primer context injection hook
  * - Service lifecycle (start/stop)
  *
  * ARCHITECTURE:
@@ -33,7 +33,7 @@ import type { PluginConfig, SearchResult, WriteResult } from "./types.js";
 import {
   resolveConnectionString,
   resolveEmbeddingConfig,
-  resolveStartupInjectionConfig,
+  resolvePrimerConfig,
   resolveMaxCharsForModel,
   normalizeEmbeddingProvider,
   validateEmbeddingDimensions,
@@ -110,7 +110,7 @@ const memoryShadowdbPlugin = {
     const vectorWeight = pluginCfg.search?.vectorWeight ?? 0.7;
     const textWeight = pluginCfg.search?.textWeight ?? 0.3;
     const recencyWeight = pluginCfg.search?.recencyWeight ?? 0.15;
-    const startupCfg = resolveStartupInjectionConfig(pluginCfg);
+    const primerCfg = resolvePrimerConfig(pluginCfg);
 
     const writesCfg = {
       enabled: pluginCfg.writes?.enabled === true,
@@ -129,8 +129,8 @@ const memoryShadowdbPlugin = {
       purgeAfterDays: writesCfg.purgeAfterDays,
     };
 
-    // Startup injection cache (bounded at 5000 entries)
-    const startupInjectState = new Map<string, { digest: string; at: number }>();
+    // Primer injection cache (bounded at 5000 entries)
+    const primerState = new Map<string, { digest: string; at: number }>();
 
     // Warn about missing API keys
     if (
@@ -179,84 +179,84 @@ const memoryShadowdbPlugin = {
     }
 
     api.logger.info(
-      `memory-shadowdb: registered (backend: ${backend}, table: ${tableName}, provider: ${embeddingCfg.provider}, model: ${embeddingCfg.model}, dims: ${embeddingCfg.dimensions}, startup: ${startupCfg.enabled ? startupCfg.mode : "disabled"}, writes: ${writesCfg.enabled ? "enabled" : "disabled"})`,
+      `memory-shadowdb: registered (backend: ${backend}, table: ${tableName}, provider: ${embeddingCfg.provider}, model: ${embeddingCfg.model}, dims: ${embeddingCfg.dimensions}, primer: ${primerCfg.enabled ? primerCfg.mode : "disabled"}, writes: ${writesCfg.enabled ? "enabled" : "disabled"})`,
     );
 
     // ========================================================================
-    // Startup Hydration Hook
+    // Primer Hydration Hook
     //
     // MECHANISM: OpenClaw's before_agent_start hook fires on EVERY agent turn
     // (it's per-turn, not per-session, despite the name). We use in-memory
     // caching to control when we actually inject:
     //
     //   digest mode (default):
-    //     Turn 1 → no cache → inject startup context as prependContext
+    //     Turn 1 → no cache → inject primer context as prependContext
     //     Turn 2+ → cache hit, same digest → return nothing (skip)
     //     After cacheTtlMs (default 10min) → cache expired → re-inject
     //
-    // On turns where we skip, the model still sees the startup block from
+    // On turns where we skip, the model still sees the primer block from
     // the earlier turn in its conversation history. The TTL refresh is a
     // safety net for long sessions where the original injection might scroll
     // out of the context window.
     //
-    // This means startup context is NOT sent every turn — only on first turn
+    // This means primer context is NOT sent every turn — only on first turn
     // and periodically as a refresh.
     // ========================================================================
 
-    if (startupCfg.enabled) {
+    if (primerCfg.enabled) {
       api.on("before_agent_start", async (_event, ctx) => {
         try {
           const s = await getStore();
           const currentModel = (ctx as Record<string, unknown>)?.model as string | undefined;
-          const effectiveMaxChars = resolveMaxCharsForModel(startupCfg, currentModel);
+          const effectiveMaxChars = resolveMaxCharsForModel(primerCfg, currentModel);
 
-          const startup = await s.getStartupContext(effectiveMaxChars);
-          if (!startup?.text) return;
+          const primer = await s.getPrimerContext(effectiveMaxChars);
+          if (!primer?.text) return;
 
           const sessionKey = (ctx?.sessionKey || "__global__").trim();
           const now = Date.now();
-          const prev = startupInjectState.get(sessionKey);
+          const prev = primerState.get(sessionKey);
 
           // Decide whether to inject this turn or skip (let history carry it)
           let shouldInject = false;
-          if (startupCfg.mode === "always") {
+          if (primerCfg.mode === "always") {
             // Inject every turn (expensive — only use if you have a reason)
             shouldInject = true;
-          } else if (startupCfg.mode === "first-run") {
+          } else if (primerCfg.mode === "first-run") {
             // Inject once per session, never refresh
             shouldInject = !prev;
           } else {
             // digest mode: inject on first turn, re-inject when content changes
             // or TTL expires (safety net for long conversations)
             shouldInject = !prev ||
-              prev.digest !== startup.digest ||
-              (startupCfg.cacheTtlMs > 0 && now - prev.at >= startupCfg.cacheTtlMs);
+              prev.digest !== primer.digest ||
+              (primerCfg.cacheTtlMs > 0 && now - prev.at >= primerCfg.cacheTtlMs);
           }
 
           if (!shouldInject) return;
 
           // Record that we injected for this session
-          startupInjectState.set(sessionKey, { digest: startup.digest, at: now });
+          primerState.set(sessionKey, { digest: primer.digest, at: now });
 
           // Evict stale cache entries (bound map at 5000 to prevent memory leak)
-          if (startupInjectState.size > 5000) {
-            const stale = [...startupInjectState.entries()]
+          if (primerState.size > 5000) {
+            const stale = [...primerState.entries()]
               .sort((a, b) => a[1].at - b[1].at)
               .slice(0, 1000)
               .map(([key]) => key);
-            for (const key of stale) startupInjectState.delete(key);
+            for (const key of stale) primerState.delete(key);
           }
 
-          const truncatedAttr = startup.truncated ? ' truncated="true"' : "";
+          const truncatedAttr = primer.truncated ? ' truncated="true"' : "";
 
           return {
             prependContext:
-              `<startup-identity source="shadowdb" digest="${startup.digest}"${truncatedAttr}>\n` +
-              `${startup.text}\n` +
-              `</startup-identity>`,
+              `<primer-context source="shadowdb" digest="${primer.digest}"${truncatedAttr}>\n` +
+              `${primer.text}\n` +
+              `</primer-context>`,
           };
         } catch (err) {
-          api.logger.warn(`memory-shadowdb startup hydration failed: ${String(err)}`);
+          api.logger.warn(`memory-shadowdb primer hydration failed: ${String(err)}`);
           return;
         }
       });
@@ -563,7 +563,7 @@ function jsonResult(data: Record<string, unknown>) {
 export const __test__ = {
   normalizeEmbeddingProvider,
   resolveEmbeddingConfig,
-  resolveStartupInjectionConfig,
+  resolvePrimerConfig,
   validateEmbeddingDimensions,
 };
 

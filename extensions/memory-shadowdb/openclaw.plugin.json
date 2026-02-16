@@ -79,25 +79,25 @@
       "label": "Retention: Purge After Days",
       "help": "Permanently remove soft-deleted records after N days (default: 30, 0 = never)"
     },
-    "startup.enabled": {
-      "label": "Startup Hydration Enabled",
-      "help": "Inject startup identity/rules context from DB before runs (default: true)"
+    "primer.enabled": {
+      "label": "Primer Injection Enabled",
+      "help": "Inject primer identity/rules context from DB before runs (default: true)"
     },
-    "startup.mode": {
-      "label": "Startup Hydration Mode",
+    "primer.mode": {
+      "label": "Primer Injection Mode",
       "help": "always | first-run | digest (default: always)"
     },
-    "startup.maxChars": {
-      "label": "Startup Max Chars",
-      "help": "Max characters injected from startup records per hydration (default: 4000)"
+    "primer.maxChars": {
+      "label": "Primer Max Chars",
+      "help": "Max characters injected from primer records per hydration (default: 4000)"
     },
-    "startup.cacheTtlMs": {
-      "label": "Startup Digest Cache TTL (ms)",
+    "primer.cacheTtlMs": {
+      "label": "Primer Digest Cache TTL (ms)",
       "help": "For mode=digest, reinject after TTL even if digest unchanged (default: 600000)"
     },
-    "startup.maxCharsByModel": {
+    "primer.maxCharsByModel": {
       "label": "Model-Aware Max Chars",
-      "help": "Map of model substring patterns to maxChars overrides. First match wins, falls back to startup.maxChars."
+      "help": "Map of model substring patterns to maxChars overrides. First match wins, falls back to primer.maxChars."
     }
   },
   "configSchema": {
@@ -229,7 +229,7 @@
           }
         }
       },
-      "startup": {
+      "primer": {
         "type": "object",
         "additionalProperties": false,
         "properties": {

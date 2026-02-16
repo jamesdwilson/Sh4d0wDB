@@ -168,9 +168,9 @@ export type PluginConfig = {
     };
   };
 
-  /** Startup context injection configuration */
-  startup?: {
-    /** Enable/disable startup context injection */
+  /** Primer context injection configuration */
+  primer?: {
+    /** Enable/disable primer context injection */
     enabled?: boolean;
     
     /** Injection strategy: always, first-run, or digest-based */
@@ -196,13 +196,13 @@ export type PluginConfig = {
 };
 
 /**
- * Startup injection mode strategies
+ * Primer injection mode strategies
  *
  * - always: inject on every agent start (highest overhead, strictest parity)
  * - first-run: inject only on first session start (lowest overhead)
  * - digest: inject when content changes or cache expires (balanced)
  */
-export type StartupInjectionMode = "always" | "first-run" | "digest";
+export type PrimerInjectionMode = "always" | "first-run" | "digest";
 
 /**
  * Write operation result structure

@@ -15,7 +15,7 @@
  */
 
 import pg from "pg";
-import { MemoryStore, type RankedHit, type StartupRow, type StoreConfig, type StoreLogger } from "./store.js";
+import { MemoryStore, type RankedHit, type PrimerRow, type StoreConfig, type StoreLogger } from "./store.js";
 import type { EmbeddingClient } from "./embedder.js";
 
 /**
@@ -187,18 +187,18 @@ export class PostgresStore extends MemoryStore {
     return { text: text || "No records found", path: pathQuery };
   }
 
-  protected async getStartupRows(): Promise<StartupRow[]> {
+  protected async getPrimerRows(): Promise<PrimerRow[]> {
     // Try queries with decreasing schema assumptions (graceful degradation)
     const queries = [
-      `SELECT key, content FROM startup WHERE (enabled IS NULL OR enabled IS TRUE) ORDER BY priority ASC NULLS LAST, key ASC`,
-      `SELECT key, content FROM startup ORDER BY priority ASC NULLS LAST, key ASC`,
-      `SELECT key, content FROM startup ORDER BY key ASC`,
+      `SELECT key, content FROM primer WHERE (enabled IS NULL OR enabled IS TRUE) ORDER BY priority ASC NULLS LAST, key ASC`,
+      `SELECT key, content FROM primer ORDER BY priority ASC NULLS LAST, key ASC`,
+      `SELECT key, content FROM primer ORDER BY key ASC`,
     ];
 
     for (const sql of queries) {
       try {
         const result = await this.getPool().query(sql);
-        return result.rows as StartupRow[];
+        return result.rows as PrimerRow[];
       } catch (err) {
         const code = (err as { code?: string }).code;
         if (code === "42P01") return []; // table doesn't exist

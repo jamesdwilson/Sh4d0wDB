@@ -538,7 +538,7 @@ blank
 # │                                                                            │
 # │   We create a database and set up the tables ShadowDB needs:                                                                   │
 # │                                                                            │
-# │     startup   — Your agent's identity (who it is, who you are, rules)      │
+# │     primer    — Your agent's identity (who it is, who you are, rules)      │
 # │     memories  — Searchable knowledge base (everything the agent knows)     │
 # │                                                                            │
 # │   If the database already exists, we skip this step (safe to re-run).      │
@@ -881,10 +881,10 @@ if ! $DRY_RUN; then
   # Show DB stats (backend-aware)
   if [[ "$BACKEND" == "postgres" ]]; then
     ROW_COUNT=$(psql -qtAX "$DB_NAME" -c "SELECT count(*) FROM memories;" 2>/dev/null || echo "0")
-    STARTUP_COUNT=$(psql -qtAX "$DB_NAME" -c "SELECT count(*) FROM startup;" 2>/dev/null || echo "0")
+    PRIMER_COUNT=$(psql -qtAX "$DB_NAME" -c "SELECT count(*) FROM primer;" 2>/dev/null || echo "0")
     ok "Database (postgres):"
     detail "memories: ${ROW_COUNT} records"
-    detail "startup:  ${STARTUP_COUNT} entries"
+    detail "primer:   ${PRIMER_COUNT} entries"
   elif [[ "$BACKEND" == "sqlite" ]]; then
     ok "Database (sqlite): ${CONN_STRING:-~/.shadowdb/memory.db}"
     detail "Tables auto-created on first start"

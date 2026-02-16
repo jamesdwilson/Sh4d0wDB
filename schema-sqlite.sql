@@ -1,13 +1,13 @@
 -- ShadowDB SQLite schema
--- Baseline schema for startup identity + memories FTS5 search.
+-- Baseline schema for primer identity + memories FTS5 search.
 
 PRAGMA foreign_keys = ON;
 
-CREATE TABLE IF NOT EXISTS startup (
+CREATE TABLE IF NOT EXISTS primer (
   key TEXT PRIMARY KEY,
   content TEXT NOT NULL,
   priority INTEGER NOT NULL DEFAULT 0,
-  reinforce INTEGER NOT NULL DEFAULT 0,
+  always INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

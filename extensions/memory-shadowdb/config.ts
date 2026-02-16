@@ -25,7 +25,7 @@ import type {
   ShadowDbConfig,
   EmbeddingProvider,
   PluginConfig,
-  StartupInjectionMode,
+  PrimerInjectionMode,
 } from "./types.js";
 
 /**
@@ -277,9 +277,9 @@ export function resolveEmbeddingConfig(pluginCfg: PluginConfig): {
 }
 
 /**
- * Resolve startup injection configuration with validation
+ * Resolve primer injection configuration with validation
  *
- * Startup injection loads DB records into the agent's initial context before
+ * Primer injection loads DB records into the agent's initial context before
  * the first user message. This front-loads identity, rules, and critical memory.
  *
  * SECURITY NOTES:
@@ -294,29 +294,29 @@ export function resolveEmbeddingConfig(pluginCfg: PluginConfig): {
  * - digest: inject when DB content changes or cache expires (balanced)
  *
  * @param pluginCfg - Plugin configuration object
- * @returns Validated startup injection configuration
+ * @returns Validated primer injection configuration
  */
-export function resolveStartupInjectionConfig(pluginCfg: PluginConfig): {
+export function resolvePrimerConfig(pluginCfg: PluginConfig): {
   enabled: boolean;
-  mode: StartupInjectionMode;
+  mode: PrimerInjectionMode;
   maxChars: number;
   maxCharsByModel: Record<string, number>;
   cacheTtlMs: number;
 } {
-  const startup = pluginCfg.startup || {};
+  const primer = pluginCfg.primer || {};
   
   // Normalize and validate mode string
-  const rawMode = String(startup.mode || "always").trim().toLowerCase();
-  const mode: StartupInjectionMode =
+  const rawMode = String(primer.mode || "always").trim().toLowerCase();
+  const mode: PrimerInjectionMode =
     rawMode === "always" || rawMode === "first-run" || rawMode === "digest"
-      ? (rawMode as StartupInjectionMode)
+      ? (rawMode as PrimerInjectionMode)
       : "always"; // Invalid mode falls back to "always"
 
   // SECURITY: Validate and bound maxChars to prevent DoS via unbounded injection
   // Must be positive finite number, defaults to 4000 (safe for most models)
   const maxChars =
-    typeof startup.maxChars === "number" && Number.isFinite(startup.maxChars) && startup.maxChars > 0
-      ? Math.floor(startup.maxChars)
+    typeof primer.maxChars === "number" && Number.isFinite(primer.maxChars) && primer.maxChars > 0
+      ? Math.floor(primer.maxChars)
       : 4000;
 
   // Model-aware maxChars overrides
@@ -324,8 +324,8 @@ export function resolveStartupInjectionConfig(pluginCfg: PluginConfig): {
   // while large-context models (opus, sonnet) get full priority stack
   // Pattern matching is case-insensitive substring match
   const maxCharsByModel: Record<string, number> = {};
-  if (startup.maxCharsByModel && typeof startup.maxCharsByModel === "object") {
-    for (const [pattern, chars] of Object.entries(startup.maxCharsByModel)) {
+  if (primer.maxCharsByModel && typeof primer.maxCharsByModel === "object") {
+    for (const [pattern, chars] of Object.entries(primer.maxCharsByModel)) {
       if (typeof chars === "number" && Number.isFinite(chars) && chars > 0) {
         // Pattern is lowercased for case-insensitive matching
         maxCharsByModel[pattern.toLowerCase()] = Math.floor(chars);
@@ -336,12 +336,12 @@ export function resolveStartupInjectionConfig(pluginCfg: PluginConfig): {
   // SECURITY: Cache TTL validation — must be non-negative finite number
   // Default: 10 minutes (600,000 ms)
   const cacheTtlMs =
-    typeof startup.cacheTtlMs === "number" && Number.isFinite(startup.cacheTtlMs) && startup.cacheTtlMs >= 0
-      ? Math.floor(startup.cacheTtlMs)
+    typeof primer.cacheTtlMs === "number" && Number.isFinite(primer.cacheTtlMs) && primer.cacheTtlMs >= 0
+      ? Math.floor(primer.cacheTtlMs)
       : 10 * 60 * 1000;
 
   return {
-    enabled: startup.enabled !== false, // Default: enabled
+    enabled: primer.enabled !== false, // Default: enabled
     mode,
     maxChars,
     maxCharsByModel,
@@ -362,28 +362,28 @@ export function resolveStartupInjectionConfig(pluginCfg: PluginConfig): {
  *
  * Falls back to default maxChars if no pattern matches or model is unknown.
  *
- * @param startupCfg - Resolved startup configuration
+ * @param primerCfg - Resolved primer configuration
  * @param model - Model name string (may be undefined for unknown/default model)
  * @returns Character limit for this model
  */
 export function resolveMaxCharsForModel(
-  startupCfg: { maxChars: number; maxCharsByModel: Record<string, number> },
+  primerCfg: { maxChars: number; maxCharsByModel: Record<string, number> },
   model?: string,
 ): number {
-  if (!model || Object.keys(startupCfg.maxCharsByModel).length === 0) {
-    return startupCfg.maxChars;
+  if (!model || Object.keys(primerCfg.maxCharsByModel).length === 0) {
+    return primerCfg.maxChars;
   }
   
   const modelLower = model.toLowerCase();
   
   // First match wins — order matters!
-  for (const [pattern, chars] of Object.entries(startupCfg.maxCharsByModel)) {
+  for (const [pattern, chars] of Object.entries(primerCfg.maxCharsByModel)) {
     if (modelLower.includes(pattern)) {
       return chars;
     }
   }
   
-  return startupCfg.maxChars;
+  return primerCfg.maxChars;
 }
 
 /**

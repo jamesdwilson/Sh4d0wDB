@@ -4,12 +4,12 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- Startup identity/rules table — injected before agent runs
-CREATE TABLE IF NOT EXISTS startup (
+-- Primer table — core identity/rules injected before agent runs
+CREATE TABLE IF NOT EXISTS primer (
   key TEXT PRIMARY KEY,
   content TEXT NOT NULL,
   priority INTEGER NOT NULL DEFAULT 0,
-  reinforce BOOLEAN NOT NULL DEFAULT FALSE,
+  always BOOLEAN NOT NULL DEFAULT FALSE,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -51,9 +51,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS startup_set_updated_at ON startup;
-CREATE TRIGGER startup_set_updated_at
-BEFORE UPDATE ON startup
+DROP TRIGGER IF EXISTS primer_set_updated_at ON primer;
+CREATE TRIGGER primer_set_updated_at
+BEFORE UPDATE ON primer
 FOR EACH ROW
 EXECUTE FUNCTION shadowdb_set_updated_at();
 

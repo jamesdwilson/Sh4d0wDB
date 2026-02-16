@@ -99,7 +99,7 @@ Recency is intentionally low — it's a tiebreaker, not a dominant signal.
 
 ---
 
-## Your agent's soul (and why startup injection is optional)
+## Your agent's soul (and why the primer table is optional)
 
 <details>
 <summary>How identity works — and why searchable memory is better than force-feeding</summary>
@@ -109,6 +109,8 @@ Recency is intentionally low — it's a tiebreaker, not a dominant signal.
 Most agent frameworks do identity the same way: put your agent's personality in `SOUL.md`, its rules in `RULES.md`, its preferences in `USER.md`, and inject all of them into the system prompt on every single turn. The agent "knows" these things because you physically shoved them into the context window.
 
 This works. It's also wasteful, rigid, and has a hard ceiling.
+
+**And the files themselves are a liability.** If your agent writes incorrect info to `MEMORY.md` during one session, every future session inherits the mistake — fruit of the poisonous tree. Bad memory in, bad answers out, compounding forever. You end up hand-editing markdown files to undo what your agent hallucinated, which rather defeats the purpose of having an agent.
 
 ### The new way: import those files as memories
 
@@ -126,7 +128,9 @@ This is infinitely better. Your agent's identity isn't a static document stapled
 
 The practical upside is just as dramatic: a 200-line identity file costs ~4K tokens on every turn. With searchable memory, the agent pulls maybe 200 tokens of relevant rules per turn — a 20x reduction in identity overhead. Small models that choked on massive system prompts can now run with the same depth of personality, because they only load what they need.
 
-### The tradeoff: why you might still want startup injection
+**And because every record is individually addressable** — with its own ID, category, and soft-delete lifecycle — one bad write doesn't poison everything. You can fix, update, or delete individual memories without touching anything else. No more nuclear option of rewriting entire files.
+
+### The tradeoff: why you might still want the primer
 
 There's a catch. Searchable memory is pull-based — the agent has to *think to search.* On the very first turn of a conversation, before the model has any context, it doesn't know what to search for. And some rules are so critical they can't wait for the model to think of them:
 
@@ -134,21 +138,21 @@ There's a catch. Searchable memory is pull-based — the agent has to *think to 
 - **Safety rails** — "Never send emails without confirmation" can't be retrieved *after* the model already sent the email.
 - **Behavioral constraints** — tone, persona, hard-no rules. These need to be loaded before the first token is generated, not after.
 
-This is what the `startup` table is for. It's a small, curated set of **non-negotiable context** that gets injected before the agent runs — your agent's true core identity, the rules that can never be late.
+This is what the `primer` table is for. It's a small, curated set of **non-negotiable context** that gets injected before the agent runs — your agent's true core identity, the rules that can never be late.
 
 **The recommended approach: both.**
 - Import your full identity corpus as memories (searchable, rich, deep).
-- Put only the irreducible core in the `startup` table (identity, safety, hard constraints).
+- Put only the irreducible core in the `primer` table (identity, safety, hard constraints).
 - Everything else — preferences, behavioral nuance, learned lessons, project context — lives in searchable memory where it's pulled on demand.
 
-Think of it like human cognition: you don't consciously recite your entire life history before answering a question. You have a small set of always-on identity (I'm Alex, I live in Austin, I have a daughter") and a vast searchable memory of everything else. Startup injection is the always-on identity. `memory_search` is everything else.
+Think of it like human cognition: you don't consciously recite your entire life history before answering a question. You have a small set of always-on identity (I'm Alex, I live in Austin, I have a daughter") and a vast searchable memory of everything else. The primer is the always-on identity. `memory_search` is everything else.
 
-### How startup injection works
+### How primer injection works
 
 OpenClaw's `before_agent_start` hook fires on every agent turn. ShadowDB hooks into it, but doesn't inject every time — that would waste tokens. Instead:
 
-1. **First turn** of a session: reads the `startup` table, concatenates rows by priority, and prepends the result to the prompt.
-2. **Subsequent turns**: skips injection. The model already has the startup context in its conversation history from turn 1.
+1. **First turn** of a session: reads the `primer` table, concatenates rows by priority, and prepends the result to the prompt.
+2. **Subsequent turns**: skips injection. The model already has the primer context in its conversation history from turn 1.
 3. **After 10 minutes** (configurable via `cacheTtlMs`): re-injects as a refresh, in case the original has scrolled out of the context window in a long conversation.
 
 Three modes control this:
@@ -158,11 +162,11 @@ Three modes control this:
 
 **Priority ordering** — critical rules (identity, safety) go in first. If the context window is tight, low-priority reference material gets trimmed, not your agent's core identity.
 
-**Model-aware budgets** — Opus gets 6000 chars of startup context, a small model gets 1500. Same rules, right-sized. Configure via `maxCharsByModel`.
+**Model-aware budgets** — Opus gets 6000 chars of primer context, a small model gets 1500. Same rules, right-sized. Configure via `maxCharsByModel`.
 
-**Editable at runtime** — your agent can update its own startup rules. No file editing, no restart.
+**Editable at runtime** — your agent can update its own primer rules. No file editing, no restart.
 
-This feature is **off by default**. To enable it, add rows to the `startup` table and set `startup.enabled: true` in your plugin config. Most users should start with searchable memories only and add startup injection later if they need guaranteed-present context.
+This feature is **off by default**. To enable it, add rows to the `primer` table and set `primer.enabled: true` in your plugin config. Most users should start with searchable memories only and add primer injection later if they need guaranteed-present context.
 
 </details>
 
@@ -205,14 +209,14 @@ This feature is **off by default**. To enable it, add rows to the `startup` tabl
 | `updated_at` | timestamp | Last modification |
 | `deleted_at` | timestamp | Soft-delete marker (null = active) |
 
-**`startup`** — identity/rules injected before agent runs:
+**`primer`** — identity/rules injected before agent runs:
 
 | Column | Type | Purpose |
 |--------|------|---------|
 | `key` | text | Unique identifier (primary key) |
 | `content` | text | The rule or identity text |
 | `priority` | integer | Injection order (lower = first) |
-| `reinforce` | boolean | Include in every query, not just startup |
+| `always` | boolean | Include on every turn, not just first |
 
 Full schema with indexes: [`schema.sql`](schema.sql) (Postgres version)
 
@@ -231,7 +235,7 @@ Key settings:
 - **`search.recencyWeight`** — how much to boost newer records (default: `0.15`, higher = more recency bias)
 - **`writes.enabled`** — turn on write tools (default: `false`)
 - **`writes.retention.purgeAfterDays`** — how long soft-deleted records survive (default: `30`, `0` = forever)
-- **`startup.maxCharsByModel`** — per-model context budgets (substring match on model name)
+- **`primer.maxCharsByModel`** — per-model context budgets (substring match on model name)
 - **`embedding.provider`** — which embedding backend to use
 
 </details>
@@ -271,7 +275,7 @@ Key settings:
 
 ### Reactive rule injection
 
-Right now, ShadowDB injects context *before* the model runs (startup injection). But what about catching things in the model's *output*?
+Right now, ShadowDB injects context *before* the model runs (primer injection). But what about catching things in the model's *output*?
 
 **The idea:** after the LLM generates a reply, embed it, search the `rules` category, and surface any matching rules — so the agent self-corrects before the message reaches the user.
 
@@ -289,10 +293,33 @@ OpenClaw already has the hooks for this:
 
 This turns ShadowDB rules from static preamble into a live guardrail system — rules surface only when relevant, triggered by what the model is actually *doing*, not what the user asked.
 
+### Contextual rule injection (automatic per-turn rules)
+
+The primer table solves "what does the agent need before turn 1?" But most rules aren't needed on every turn — they're needed *when relevant.* The exercise-naming rule only matters when the user mentions running. The email-confirmation rule only matters when the agent is about to send email.
+
+**The idea:** on every inbound message, embed the user's text, vector-search against records in the `rules` category only, and automatically prepend any matches to the agent's context. Rules travel with data via embedding proximity — "let's go for a run" naturally surfaces the banned-words rule because "run" is close to "exercise/workout" in embedding space.
+
+**Two-pass search design:**
+- Pass 1: normal content search (6 results) — what the agent explicitly asks for
+- Pass 2: same query filtered to `rules` category only (2-3 results) — automatic rule injection
+
+Rules get their own slots, never compete with content for search results. One extra query per turn, same embedding.
+
+**What this could replace:** most of what's currently in the primer table. Only a tiny bootstrap for core identity ("You are Shadow") would survive as primer. Everything else — behavioral rules, communication gates, persona guidelines — becomes automatically surfaced context that arrives exactly when relevant.
+
+**Cost:** one embedding (~50ms) + one filtered vector query (~5ms) per turn. Trivial.
+
+### The poisonous tree problem (and why flat files fail)
+
+Most agent frameworks store memory in markdown files (`MEMORY.md`, `SOUL.md`) that get injected into every prompt. When the agent writes incorrect info during a compaction or session summary, every future session inherits the mistake. Bad memory compounds: one wrong fact in `MEMORY.md` propagates into the next compaction summary, which feeds the next session, which writes more wrong things. Fruit of the poisonous tree.
+
+ShadowDB solves this structurally: every memory is an individually addressable record with its own ID, category, and soft-delete lifecycle. A bad write is one record you can fix or delete — not a file-wide corruption that requires hand-editing markdown to undo.
+
+The write tools (`memory_write`, `memory_update`, `memory_delete`) give the agent and user fine-grained control. Combined with the 30-day soft-delete window, mistakes are always recoverable without cascading damage.
+
 ### Other ideas
 - Batch embedding backfill CLI for migrating unembedded records
-- Multi-agent startup scoping (different rules per agent ID)
-- Schema migration versioning
+- Multi-agent primer scoping (different rules per agent ID)
 - `clawhub publish` / `openclaw plugins install` distribution
 - SQLite + MySQL backend testing with real workloads
 

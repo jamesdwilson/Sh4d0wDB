@@ -5,7 +5,7 @@
  * must implement. Contains shared logic that is identical across backends:
  *
  * - Reciprocal Rank Fusion (RRF) merge of search signals
- * - Startup context assembly (priority ordering, char budgeting, digest)
+ * - Primer context assembly (priority ordering, char budgeting, digest)
  * - Relative age formatting ("5d ago")
  * - Snippet and full-record formatting
  * - Input validation and sanitization for writes
@@ -16,7 +16,7 @@
  * SECURITY MODEL:
  * - No SQL in this file — all queries delegated to backend implementations
  * - Input validation/sanitization centralized here (single enforcement point)
- * - maxChars bounds on startup injection prevent context overflow
+ * - maxChars bounds on primer injection prevent context overflow
  */
 
 import { createHash } from "node:crypto";
@@ -64,8 +64,8 @@ export interface RankedHit {
   rawScore?: number;
 }
 
-/** A row from the startup table. */
-export interface StartupRow {
+/** A row from the primer table. */
+export interface PrimerRow {
   key: string;
   content: string;
 }
@@ -227,32 +227,32 @@ export abstract class MemoryStore {
   }
 
   // ==========================================================================
-  // STARTUP CONTEXT — shared assembly logic
+  // PRIMER CONTEXT — shared assembly logic
   // ==========================================================================
 
   /**
-   * Load startup context from the `startup` table.
+   * Load primer context from the `primer` table.
    *
    * Fetches rows ordered by priority, formats as markdown sections,
    * enforces maxChars budget, and generates a content digest for caching.
    *
    * @param maxChars - Maximum characters to return (truncation marked in output)
-   * @returns Startup context with text, digest, and metadata; null if no rows
+   * @returns Primer context with text, digest, and metadata; null if no rows
    */
-  async getStartupContext(maxChars: number): Promise<{
+  async getPrimerContext(maxChars: number): Promise<{
     text: string;
     digest: string;
     totalChars: number;
     rowCount: number;
     truncated: boolean;
   } | null> {
-    const rows = await this.getStartupRows();
+    const rows = await this.getPrimerRows();
     if (rows.length === 0) return null;
 
     // Format each row as a markdown section: ## {key}\n{content}
     const sections = rows
       .map((row) => {
-        const key = String(row.key || "startup").trim();
+        const key = String(row.key || "primer").trim();
         const content = String(row.content || "").trim();
         return content ? `## ${key}\n${content}` : "";
       })
@@ -266,7 +266,7 @@ export abstract class MemoryStore {
     const trimmedMax = Math.max(0, maxChars);
     const truncated = trimmedMax > 0 && fullText.length > trimmedMax;
     const text = truncated
-      ? `${truncateCleanly(fullText, trimmedMax)}\n\n[...startup context truncated...]`
+      ? `${truncateCleanly(fullText, trimmedMax)}\n\n[...primer context truncated...]`
       : fullText;
 
     return { text, digest, totalChars: fullText.length, rowCount: sections.length, truncated };
@@ -533,8 +533,8 @@ export abstract class MemoryStore {
   /** Fetch by virtual path (category listing or specific record). */
   abstract getByPath(pathQuery: string, from?: number, lines?: number): Promise<{ text: string; path: string }>;
 
-  /** Fetch startup rows ordered by priority. */
-  protected abstract getStartupRows(): Promise<StartupRow[]>;
+  /** Fetch primer rows ordered by priority. */
+  protected abstract getPrimerRows(): Promise<PrimerRow[]>;
 
   // --- Write operations (raw DB, no validation — base class validates first) ---
 
