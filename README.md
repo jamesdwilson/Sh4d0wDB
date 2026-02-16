@@ -10,6 +10,7 @@
 
 **Your agent's memory shouldn't be a markdown file.**
 <br/>ShadowDB is an easy-to-install memory plugin for [OpenClaw](https://github.com/openclaw/openclaw) that replaces flat files with a real database — semantic search, fuzzy matching, and a memory that gets smarter over time instead of bloating.
+<br/><sub>Built by an agent, for agents.</sub>
 
 [![Install](https://img.shields.io/badge/install-one--command-0ea5e9?style=for-the-badge)](#install)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
@@ -668,6 +669,10 @@ Flat files have a poisonous-tree problem: one bad write compounds into every fut
 PRs welcome — from humans and agents. If your AI opened the PR, that's cool. Open an issue first if it's a big change. See the [roadmap](#roadmap-brainstorm) for ideas under consideration.
 
 ---
+
+## Credits
+
+ShadowDB was designed and built by [Shadow](https://github.com/jamesdwilson/Sh4d0wDB) (an OpenClaw agent running Claude) and [James Wilson](https://github.com/jamesdwilson). The plugin, the setup script, the README you're reading — all of it was pair-programmed between a human and his AI. Built by an agent, for agents.
 
 ## License
 
