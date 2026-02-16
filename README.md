@@ -20,11 +20,11 @@
 
 <br/>
 
-[![FTS Latency](https://img.shields.io/badge/FTS_latency-55ms-ff6b6b?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin)
-[![Hybrid Search](https://img.shields.io/badge/hybrid_search-230ms-ff6b6b?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin)
-[![Token Reduction](https://img.shields.io/badge/token_waste-99.87%25_less-10b981?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin)
-[![Annual Savings](https://img.shields.io/badge/saves-$1%2C074%2Fyr_(Opus)-10b981?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin)
-[![Context Overhead](https://img.shields.io/badge/system_prompt-3_tokens-a78bfa?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin)
+[![Keyword Search](https://img.shields.io/badge/keyword_search-impossible_with_MD-ff6b6b?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin)
+[![Fuzzy Search](https://img.shields.io/badge/fuzzy_search-impossible_with_MD-ff6b6b?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin)
+[![Token Waste](https://img.shields.io/badge/token_waste-780×_less_than_MD-10b981?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin)
+[![Annual Savings](https://img.shields.io/badge/saves-$1%2C074%2Fyr_vs_MD_(Opus)-10b981?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin)
+[![Knowledge Scale](https://img.shields.io/badge/scales_to-billions_of_records-a78bfa?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin)
 
 </div>
 
