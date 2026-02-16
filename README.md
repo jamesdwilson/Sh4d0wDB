@@ -23,8 +23,8 @@
 
 [![Keyword Search](https://img.shields.io/badge/keyword_search-impossible_with_MD-ff6b6b?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin-vs-qmd)
 [![Fuzzy Search](https://img.shields.io/badge/fuzzy_search-impossible_with_MD-ff6b6b?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin-vs-qmd)
-[![Token Waste](https://img.shields.io/badge/token_waste-780×_less_than_MD-10b981?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin-vs-qmd)
-[![Annual Savings](https://img.shields.io/badge/saves-$1%2C074%2Fyr_vs_MD_(Opus)-10b981?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin-vs-qmd)
+[![Token Waste](https://img.shields.io/badge/token_waste-18×_less_than_MD-10b981?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin-vs-qmd)
+[![Annual Savings](https://img.shields.io/badge/saves-$1%2C016%2Fyr_vs_MD_(Opus)-10b981?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin-vs-qmd)
 [![Knowledge Scale](https://img.shields.io/badge/scales_to-billions_of_records-a78bfa?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin-vs-qmd)
 
 </div>
@@ -35,7 +35,7 @@
 
 Gives your agent a persistent memory it can search, write, update, and delete — instead of flat markdown files that get shoved into every prompt. Works with Postgres (recommended), SQLite, or MySQL.
 
-**Why this matters:** Most agent frameworks inject your agent's entire identity — personality, rules, preferences, everything — into every single API call. That's ~9,000 bytes of static text the model already read, re-sent every turn, wasting tokens and pushing out conversation history. ShadowDB replaces all of that with an 11-byte database instruction. The agent searches for what it needs, when it needs it. Everything else stays in the database, not the prompt.
+**Why this matters:** Most agent frameworks inject your agent's entire identity — personality, rules, preferences, everything — into every single API call. That's ~9,000 bytes of static text the model already read, re-sent every turn, wasting tokens and pushing out conversation history. ShadowDB injects identity once on the first turn, then gets out of the way — turns 2+ cost zero bytes. The agent searches for what it needs, when it needs it. Everything else stays in the database, not the prompt.
 
 | Tool | Does |
 |------|------|
@@ -235,7 +235,7 @@ QMD significantly improves search quality over the builtin (BM25 + reranking is 
 | **Max file size before degradation** | 20,000 chars per file → 70% head / 20% tail truncation. The middle of your SOUL.md? Gone. | Same truncation — QMD indexes files but doesn't change how OpenClaw loads them. | **N/A.** No files to degrade. Content is ranked by relevance. |
 | **Max concurrent agents** | 10 sub-agents = 10× bootstrap reads. | Same — each agent still reads the same files. | **Shared database.** Connection pooling, MVCC, concurrent reads. |
 | **Search strategies** | 1 (embedding similarity). Miss = gone. | 2–3 (BM25 + vector + optional reranker). Significant improvement. | **4 fused via RRF.** FTS + vector + trigram + recency. If one misses, the others catch it. |
-| **Context budget ceiling** | Fixed. 200 turns × 2,300 tokens = **460,000 tokens** on static files. | Same — QMD doesn't reduce per-turn injection. | **Near-zero.** 200 turns × 3 tokens = **600 tokens.** |
+| **Context budget ceiling** | Fixed. 200 turns × 2,300 tokens = **460,000 tokens** on static files. | Same — QMD doesn't reduce per-turn injection. | **~1,000 tokens once.** Primer on turn 1, then 0 for the rest of the conversation. |
 | **Growth trajectory** | 📉 Inverse. More knowledge = less capability. | 📉 Same trajectory, better search within it. | 📈 Linear. More knowledge = smarter agent. |
 
 The fundamental difference: **Builtin and QMD both have a ceiling that gets lower as your agent gets smarter. ShadowDB has no ceiling.**
@@ -246,7 +246,7 @@ xychart-beta
     x-axis "Conversation Turn" [1, 25, 50, 75, 100, 125, 150, 175, 200]
     y-axis "Cumulative Wasted Tokens" 0 --> 500000
     bar [2300, 57500, 115000, 172500, 230000, 287500, 345000, 402500, 460000]
-    line [3, 75, 150, 225, 300, 375, 450, 525, 600]
+    line [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000]
 ```
 
 ```mermaid
@@ -263,17 +263,17 @@ xychart-beta
 | Metric | OpenClaw Builtin | QMD | ShadowDB Postgres | ShadowDB SQLite | ShadowDB MySQL | Unit |
 |--------|-------------------|-----|-------------------|----------------:|---------------:|------|
 | **Context Overhead** | | | | | | |
-| Static prompt per turn | 9,198 | 9,198 | 11 | 11 | 11 | bytes |
-| Static tokens per turn | ~2,300 | ~2,300 | ~3 | ~3 | ~3 | tokens |
-| Reduction vs Builtin | — | 0% | **99.88%** | **99.88%** | **99.88%** | |
-| Identity per turn (ongoing) | 9,198 | 9,198 | 0¹ | 0¹ | 0¹ | bytes |
+| Identity injection (turn 1) | 9,198 | 9,198 | ~4,000¹ | ~4,000¹ | ~4,000¹ | bytes |
+| Identity injection (turns 2+) | 9,198 | 9,198 | **0**¹ | **0**¹ | **0**¹ | bytes |
+| Static tokens per turn (avg) | ~2,300 | ~2,300 | ~20² | ~20² | ~20² | tokens |
+| Reduction vs Builtin | — | 0% | **~99%** | **~99%** | **~99%** | |
 | **Search Latency** | | | | | | |
 | Full hybrid query (warm) | — | ~200 | **230** | ~300 | ~250 | ms |
-| FTS/BM25-only query | — | ~100 | **55** | ~30² | ~40² | ms |
+| FTS/BM25-only query | — | ~100 | **55** | ~30³ | ~40³ | ms |
 | Trigram/fuzzy query | — | ❌ | **60** | ~35 | ~45 | ms |
-| Vector-only query (warm) | ~200–500⁴ | ~150 | **185** | ~250 | ~200³ | ms |
+| Vector-only query (warm) | ~200–500⁵ | ~150 | **185** | ~250 | ~200⁴ | ms |
 | Embedding generation | Varies | Built-in (GGUF) | 85 (Ollama) | 85 | 85 | ms |
-| Cold start | 1–3s | 2–10s⁸ | **55ms** | ~100ms | ~100ms | |
+| Cold start | 1–3s | 2–10s⁹ | **55ms** | ~100ms | ~100ms | |
 | **Search Quality** | | | | | | |
 | Search type | Embedding similarity | BM25 + vector + reranker | Hybrid 4-signal RRF | FTS5 + trigram + vec | FULLTEXT + ngram + vec | |
 | Exact name match ("Dr. Watson") | ⚠️ Fuzzy | ✅ BM25 | ✅ Exact (FTS) + semantic | ✅ Exact (FTS5) | ✅ Exact (FULLTEXT) | |
@@ -289,22 +289,22 @@ xychart-beta
 | External binary required | No | Yes (`qmd` CLI + Bun) | No | No | No | |
 | Server process required | No | No (sidecar) | Yes (PostgreSQL) | No (in-process) | Yes (MySQL) | |
 | **Scalability** | | | | | | |
-| Max practical records | ~500⁵ | ~5,000⁹ | **Billions** | ~100K | **Billions** | records |
+| Max practical records | ~500⁶ | ~5,000¹⁰ | **Billions** | ~100K | **Billions** | records |
 | 1,000 records | ⚠️ Files bloating | ✅ | ✅ | ✅ | ✅ | |
 | 10,000 records | ❌ Context overflow | ⚠️ Slow re-index | ✅ | ✅ | ✅ | |
 | 100,000 records | ❌ Unworkable | ❌ Re-index too slow | ✅ | ⚠️ Slower | ✅ | |
 | 1,000,000+ records | ❌ Impossible | ❌ Impossible | ✅ (HNSW index) | ❌ Too slow | ✅ (with indexes) | |
 | **Sub-Agent Identity** | | | | | | |
 | Main session gets identity | ✅ | ✅ | ✅ | ✅ | ✅ | |
-| Sub-agent gets identity | ❌ Filtered out⁶ | ❌ Filtered out⁶ | ✅ Via primer table | ✅ Via primer table | ✅ Via primer table | |
+| Sub-agent gets identity | ❌ Filtered out⁷ | ❌ Filtered out⁷ | ✅ Via primer table | ✅ Via primer table | ✅ Via primer table | |
 | Sub-agent has personality | ❌ Base model | ❌ Base model | ✅ Full personality | ✅ Full personality | ✅ Full personality | |
 | **Token Economics** | | | | | | |
-| Tokens wasted per turn (static) | ~2,300 | ~2,300 | ~3 | ~3 | ~3 | tokens |
-| Tokens per heartbeat | ~2,300 | ~2,300 | ~3 | ~3 | ~3 | tokens |
-| Tokens per sub-agent spawn | ~600⁷ | ~600⁷ | ~3 | ~3 | ~3 | tokens |
-| Daily waste (50 turns + 24 HB + 10 sub) | **~196,600** | **~196,600** | **~252** | **~252** | **~252** | tokens |
-| Annual waste | **~71.8M** | **~71.8M** | **~92K** | **~92K** | **~92K** | tokens |
-| **Cost (Claude Opus @ $15/1M in)** | **$1,076/yr** | **$1,076/yr** | **$1.38/yr** | **$1.38/yr** | **$1.38/yr** | USD |
+| Tokens wasted per turn (ongoing) | ~2,300 | ~2,300 | **0** | **0** | **0** | tokens |
+| Tokens per heartbeat | ~2,300 | ~2,300 | **0** | **0** | **0** | tokens |
+| Tokens per sub-agent spawn | ~600⁸ | ~600⁸ | ~1,000 | ~1,000 | ~1,000 | tokens |
+| Daily waste (50 turns + 24 HB + 10 sub) | **~196,600** | **~196,600** | **~11,000** | **~11,000** | **~11,000** | tokens |
+| Annual waste | **~71.8M** | **~71.8M** | **~4M** | **~4M** | **~4M** | tokens |
+| **Cost (Claude Opus @ $15/1M in)** | **$1,076/yr** | **$1,076/yr** | **$60/yr** | **$60/yr** | **$60/yr** | USD |
 | **Infrastructure** | | | | | | |
 | Runtime dependencies | None (files on disk) | `qmd` CLI + Bun + SQLite | PG + pgvector + pg_trgm + Ollama | better-sqlite3 + Ollama | mysql2 + Ollama | |
 | Server process required | No | No (sidecar) | Yes (PostgreSQL) | No (in-process) | Yes (MySQL) | |
@@ -316,31 +316,33 @@ xychart-beta
 
 #### Footnotes
 
-¹ Identity delivered once per session via primer table, then suppressed until content changes or TTL expires (digest mode). Not re-injected every turn like MD files.
+¹ Primer injection delivers identity on turn 1 (~4KB configurable), then suppresses until content changes or TTL expires (default 10 min). Turns 2+ cost exactly 0 bytes — the model carries the context from turn 1 in its conversation history. Not re-injected every turn like MD files.
 
-² SQLite FTS5 and MySQL FULLTEXT are often faster than PostgreSQL FTS for simple queries because they use BM25/inverted indexes optimized for keyword search.
+² Amortized across a 200-turn conversation: ~4,000 bytes on turn 1, 0 on turns 2–200 = ~20 bytes/turn average. Actual per-turn cost after turn 1 is zero.
 
-³ MySQL 9.2+ has native vector support. Earlier versions require an external vector store or skip vector search entirely (FULLTEXT + ngram still work).
+³ SQLite FTS5 and MySQL FULLTEXT are often faster than PostgreSQL FTS for simple queries because they use BM25/inverted indexes optimized for keyword search.
 
-⁴ OpenClaw's builtin `memory_search` uses a local SQLite database with embedding similarity. Latency varies by corpus size. Range is 200–500ms warm, 1–3s cold.
+⁴ MySQL 9.2+ has native vector support. Earlier versions require an external vector store or skip vector search entirely (FULLTEXT + ngram still work).
 
-⁵ MEMORY.md becomes unwieldy past ~500 indexed items. The file gets truncated at 20K chars with head/tail splitting, losing middle content silently.
+⁵ OpenClaw's builtin `memory_search` uses a local SQLite database with embedding similarity. Latency varies by corpus size. Range is 200–500ms warm, 1–3s cold.
 
-⁶ OpenClaw's `SUBAGENT_BOOTSTRAP_ALLOWLIST` only passes AGENTS.md and TOOLS.md to sub-agents. SOUL.md, IDENTITY.md, USER.md are silently dropped. This affects both Builtin and QMD since they use the same file-based identity system.
+⁶ MEMORY.md becomes unwieldy past ~500 indexed items. The file gets truncated at 20K chars with head/tail splitting, losing middle content silently.
 
-⁷ Sub-agents get AGENTS.md + TOOLS.md only (~600 tokens typical). They don't get the other 6 bootstrap files. Same for QMD — it doesn't change identity delivery.
+⁷ OpenClaw's `SUBAGENT_BOOTSTRAP_ALLOWLIST` only passes AGENTS.md and TOOLS.md to sub-agents. SOUL.md, IDENTITY.md, USER.md are silently dropped. This affects both Builtin and QMD since they use the same file-based identity system.
 
-⁸ QMD may download GGUF models (reranker, query expansion) on the first `qmd query` run. Subsequent cold starts are faster but still require loading models.
+⁸ Sub-agents get AGENTS.md + TOOLS.md only (~600 tokens typical). They don't get the other 6 bootstrap files. Same for QMD — it doesn't change identity delivery.
 
-⁹ QMD indexes markdown files and re-indexes on a configurable interval (default 5 min). At scale, re-indexing becomes the bottleneck — each update scans all files and regenerates embeddings for changed content.
+⁹ QMD may download GGUF models (reranker, query expansion) on the first `qmd query` run. Subsequent cold starts are faster but still require loading models.
+
+¹⁰ QMD indexes markdown files and re-indexes on a configurable interval (default 5 min). At scale, re-indexing becomes the bottleneck — each update scans all files and regenerates embeddings for changed content.
 
 ### The bottom line
 
 | | OpenClaw Builtin | QMD | ShadowDB |
 |--|----------|-----|----------|
 | **Source of truth** | `.md` files | `.md` files | **Database** |
-| **Annual token waste** | **~71.8M** | **~71.8M** | **~92K** |
-| **Annual cost (Opus)** | **~$1,076** | **~$1,076** | **~$1.38** |
+| **Annual token waste** | **~71.8M** | **~71.8M** | **~4M** |
+| **Annual cost (Opus)** | **~$1,076** | **~$1,076** | **~$60** |
 | **Sub-agent personality** | ❌ None | ❌ None | ✅ Full |
 | **Knowledge scalability** | Hundreds | Thousands | **Billions** |
 | **Fuzzy/typo tolerance** | ❌ None | ❌ None | ✅ All backends |
@@ -355,12 +357,12 @@ LLM inference has a real energy cost. Every token processed burns GPU cycles, me
 
 | Metric | Builtin / QMD | ShadowDB | Savings |
 |--------|---------|----------|---------|
-| **Wasted tokens/year** | ~71.8M | ~92K | **71.7M tokens not processed** |
-| **GPU-hours wasted/year** | ~7.2 hrs | ~0.009 hrs | **99.87% reduction** |
-| **Estimated CO₂** | ~2.9 kg CO₂ | ~0.004 kg CO₂ | **~2.9 kg CO₂ saved/year** |
-| **Per agent equivalent** | 🚗 11 km driven | 🚗 0.014 km driven | One less car trip to the store |
+| **Wasted tokens/year** | ~71.8M | ~4M | **~68M tokens not processed** |
+| **GPU-hours wasted/year** | ~7.2 hrs | ~0.4 hrs | **94% reduction** |
+| **Estimated CO₂** | ~2.9 kg CO₂ | ~0.16 kg CO₂ | **~2.7 kg CO₂ saved/year** |
+| **Per agent equivalent** | 🚗 11 km driven | 🚗 0.6 km driven | One less car trip to the store |
 
-QMD and Builtin have the same token waste because QMD improves search, not injection. The per-turn context overhead is identical.
+QMD and Builtin have the same token waste because QMD improves search, not injection. The per-turn context overhead is identical. ShadowDB still has some cost (primer on turn 1, primer per sub-agent), but it's 18× less than re-injecting every turn.
 
 These numbers are per agent. Scale to 1,000 agents and file-based memory wastes **71.8 billion tokens/year** — roughly **2,900 kg CO₂**, equivalent to a round-trip flight from NYC to LA.
 
