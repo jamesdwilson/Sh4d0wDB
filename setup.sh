@@ -836,6 +836,164 @@ fi
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                                                                            │
+# │   STEP 5.4:  AUTO-IMPORT WORKSPACE MARKDOWN AS MEMORIES                    │
+# │                                                                            │
+# │   Scans for common identity/knowledge files in the workspace and imports   │
+# │   each section as a searchable memory record. This replaces static .md     │
+# │   injection with on-demand retrieval.                                      │
+# │                                                                            │
+# │   Files detected: MEMORY.md, SOUL.md, IDENTITY.md, USER.md, RULES.md,     │
+# │   BOOTSTRAP.md, KNOWLEDGE.md. Skips PRIMER.md and ALWAYS.md (those go     │
+# │   to the primer table in the next step).                                   │
+# │                                                                            │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+# Helper: insert a memory record (backend-aware)
+#   $1=content  $2=category  $3=title  $4=tags (JSON array string)
+insert_memory_record() {
+  local content="$1" category="$2" title="$3" tags="$4"
+
+  local esc_content="${content//\'/\'\'}"
+  local esc_title="${title//\'/\'\'}"
+  local esc_category="${category//\'/\'\'}"
+  local esc_tags="${tags//\'/\'\'}"
+
+  case "$BACKEND" in
+    postgres)
+      psql "$DB_NAME" -c "INSERT INTO memories (content, category, title, tags) VALUES ('${esc_content}', '${esc_category}', '${esc_title}', '${esc_tags}'::jsonb);" 2>/dev/null
+      ;;
+    sqlite)
+      sqlite3 "$CONN_STRING" "INSERT INTO memories (content, category, title, tags) VALUES ('${esc_content}', '${esc_category}', '${esc_title}', '${esc_tags}');" 2>/dev/null
+      ;;
+    mysql)
+      mysql -e "INSERT INTO memories (content, category, title, tags) VALUES ('${esc_content}', '${esc_category}', '${esc_title}', '${esc_tags}');" "$DB_NAME" 2>/dev/null
+      ;;
+  esac
+}
+
+# Helper: parse a markdown file into sections and insert each as a memory
+#   $1=file path  $2=category (derived from filename)
+#   Returns count of records imported
+import_md_as_memories() {
+  local file="$1" category="$2"
+  local current_heading=""
+  local current_content=""
+  local count=0
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^#{1,3}[[:space:]]+(.*) ]]; then
+      # New heading — flush previous section
+      if [[ -n "$current_heading" && -n "$current_content" ]]; then
+        current_content="$(echo "$current_content" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+        if [[ -n "$current_content" ]]; then
+          local tag_name
+          tag_name="$(echo "$current_heading" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')"
+          insert_memory_record "$current_content" "$category" "$current_heading" "[\"${category}\", \"${tag_name}\", \"imported\"]"
+          ok "  ${current_heading}"
+          count=$((count + 1))
+        fi
+      fi
+      current_heading="${BASH_REMATCH[1]}"
+      current_content=""
+    else
+      if [[ -n "$current_heading" ]]; then
+        if [[ -n "$current_content" ]]; then
+          current_content="${current_content}
+${line}"
+        else
+          current_content="$line"
+        fi
+      else
+        # Content before first heading — use filename as heading
+        if [[ -n "$line" && ! "$line" =~ ^[[:space:]]*$ ]]; then
+          current_heading="$(basename "$file" .md)"
+          current_content="$line"
+        fi
+      fi
+    fi
+  done < "$file"
+
+  # Flush last section
+  if [[ -n "$current_heading" && -n "$current_content" ]]; then
+    current_content="$(echo "$current_content" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    if [[ -n "$current_content" ]]; then
+      local tag_name
+      tag_name="$(echo "$current_heading" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')"
+      insert_memory_record "$current_content" "$category" "$current_heading" "[\"${category}\", \"${tag_name}\", \"imported\"]"
+      ok "  ${current_heading}"
+      count=$((count + 1))
+    fi
+  fi
+
+  echo "$count"
+}
+
+# Map filenames to categories
+filename_to_category() {
+  case "$(echo "$1" | tr '[:upper:]' '[:lower:]')" in
+    memory.md|memories.md)   echo "general" ;;
+    soul.md)                 echo "identity" ;;
+    identity.md)             echo "identity" ;;
+    user.md)                 echo "identity" ;;
+    rules.md)                echo "rules" ;;
+    bootstrap.md)            echo "ops" ;;
+    knowledge.md)            echo "general" ;;
+    agents.md)               echo "ops" ;;
+    *)                       echo "general" ;;
+  esac
+}
+
+# Only auto-import on fresh installs (not updates) and not dry-run
+if ! $IS_UPDATE && ! $DRY_RUN; then
+
+  IMPORT_FILES=()
+  OPENCLAW_WORKSPACE="${OPENCLAW_WORKSPACE:-${HOME}/.openclaw/workspace}"
+
+  # Scan for common identity/knowledge files (skip PRIMER.md, ALWAYS.md)
+  for fname in MEMORY.md SOUL.md IDENTITY.md USER.md RULES.md BOOTSTRAP.md KNOWLEDGE.md AGENTS.md; do
+    for candidate in "${OPENCLAW_WORKSPACE}/${fname}" "./${fname}"; do
+      if [[ -f "$candidate" ]]; then
+        # Skip PRIMER.md and ALWAYS.md — those go to the primer table
+        base="$(basename "$candidate")"
+        upper="$(echo "$base" | tr '[:lower:]' '[:upper:]')"
+        if [[ "$upper" == "PRIMER.MD" || "$upper" == "ALWAYS.MD" ]]; then
+          continue
+        fi
+        IMPORT_FILES+=("$candidate")
+        break
+      fi
+    done
+  done
+
+  if [[ ${#IMPORT_FILES[@]} -gt 0 ]]; then
+    blank
+    header "Auto-importing workspace markdown files as memories"
+    detail "Each # section becomes a searchable memory record."
+    detail "Your agent retrieves these on demand instead of loading everything every turn."
+    echo ""
+
+    TOTAL_IMPORTED=0
+    for mdfile in "${IMPORT_FILES[@]}"; do
+      fname="$(basename "$mdfile")"
+      cat="$(filename_to_category "$fname")"
+      info "${BOLD}${fname}${NC} → category: ${cat}"
+      imported=$(import_md_as_memories "$mdfile" "$cat")
+      TOTAL_IMPORTED=$((TOTAL_IMPORTED + imported))
+      blank
+    done
+
+    if [[ $TOTAL_IMPORTED -gt 0 ]]; then
+      ok "Imported ${TOTAL_IMPORTED} memory record(s) from ${#IMPORT_FILES[@]} file(s)"
+      detail "These will be embedded on first agent startup (or next reembed)."
+      detail "You can safely remove or rename the source .md files now."
+    fi
+    blank
+  fi
+fi
+
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                                                                            │
 # │   STEP 5.5:  PRIMER RULES (optional)                                      │
 # │                                                                            │
 # │   Most identity/rules work as searchable memories. But a few things        │

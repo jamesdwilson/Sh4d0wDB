@@ -339,20 +339,9 @@ Your agent probably has identity files already — `SOUL.md`, `RULES.md`, `USER.
 
 ### Step 1: Import everything as memories
 
-Take your existing files and import them as memory records. Break them into logical chunks — one record per concept, not one giant blob:
+**Setup handles this automatically.** If it finds workspace markdown files (`MEMORY.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `RULES.md`, `BOOTSTRAP.md`, `KNOWLEDGE.md`), it splits each `# section` into a separate memory record with a meaningful category and tags. In headless/non-interactive mode it does this silently.
 
-```sql
--- Example: importing rules from RULES.md
-INSERT INTO memories (content, category, title, tags)
-VALUES
-  ('Never send emails without explicit user confirmation.', 'rules', 'Email confirmation rule', '{"communication", "safety"}'),
-  ('Format all dates as YYYY-MM-DD in written responses.', 'rules', 'Date formatting', '{"formatting"}'),
-  ('Alex lives in Austin, TX with his son Maya (born 2020-03-15).', 'identity', 'Family basics', '{"james", "leo", "tyler"}');
-```
-
-Or let your agent do it — tell it to read each file and `memory_write` each concept as a separate record with a meaningful category and tags.
-
-This is the main event. **Most of your identity files should become searchable memories.** The agent pulls relevant context when it needs it instead of having everything force-fed on every turn.
+You can also ask your agent to `memory_write` concepts manually, or import with SQL. The point is: **most of your identity files should become searchable memories** — the agent pulls relevant context when it needs it instead of having everything force-fed on every turn.
 
 ### Step 2: Decide what needs to be always-on
 
