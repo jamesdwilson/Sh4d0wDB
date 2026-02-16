@@ -147,20 +147,82 @@ echo "  ║                                                      ║"
 echo "  ╚══════════════════════════════════════════════════════╝"
 echo ""
 
+if $DRY_RUN; then
+  warn "DRY RUN — nothing will be changed. This is a preview."
+  blank
+fi
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                       DATABASE BACKEND PICKER                              │
+# │                                                                            │
+# │   On fresh install: ask the user which database they want.                 │
+# │   On update: skip (we read existing config to detect the backend).         │
+# │   If --backend was passed on CLI: skip the picker.                         │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+BACKEND_FROM_CLI=false
+if [[ "$BACKEND" != "postgres" ]] || [[ "${SHADOWDB_BACKEND:-}" != "" ]]; then
+  BACKEND_FROM_CLI=true
+fi
+
+# Check if this is an update (existing install with config already wired)
+OPENCLAW_CONFIG="${HOME}/.openclaw/openclaw.json"
+EXISTING_BACKEND=""
+if [[ -f "$OPENCLAW_CONFIG" ]]; then
+  EXISTING_BACKEND=$(node -e "
+    try {
+      const cfg = JSON.parse(require('fs').readFileSync('$OPENCLAW_CONFIG','utf8'));
+      const b = cfg.plugins?.entries?.['memory-shadowdb']?.config?.backend;
+      if (b) process.stdout.write(b);
+    } catch {}
+  " 2>/dev/null || true)
+fi
+
+if [[ -n "$EXISTING_BACKEND" ]]; then
+  # Update — use the existing backend
+  BACKEND="$EXISTING_BACKEND"
+  info "Existing install detected — backend: ${BOLD}${BACKEND}${NC}"
+  blank
+elif ! $BACKEND_FROM_CLI && ! $AUTO_YES; then
+  # Fresh install — show the picker
+  echo ""
+  echo -e "  ${BOLD}Which database would you like to use?${NC}"
+  echo ""
+  echo -e "  ${BOLD}1)${NC}  ${GREEN}SQLite${NC}           Zero config. Single file. Just works."
+  echo -e "                        Best for: personal use, trying it out"
+  echo ""
+  echo -e "  ${BOLD}2)${NC}  ${GREEN}PostgreSQL${NC}       Full power. Vector search, fuzzy matching."
+  echo -e "                        Best for: large knowledge bases, production"
+  echo ""
+  echo -e "  ${BOLD}3)${NC}  ${GREEN}MySQL${NC}            Native vectors (9.2+). Familiar if you know MySQL."
+  echo -e "                        Best for: existing MySQL setups"
+  echo ""
+  echo -ne "  ${BOLD}Pick [1/2/3]:${NC} "
+  read -r db_choice
+
+  case "${db_choice:-1}" in
+    1|sqlite|s)
+      BACKEND="sqlite"
+      ;;
+    2|postgres|p|pg)
+      BACKEND="postgres"
+      ;;
+    3|mysql|m)
+      BACKEND="mysql"
+      ;;
+    *)
+      BACKEND="sqlite"
+      info "Defaulting to SQLite"
+      ;;
+  esac
+
+  blank
+  ok "Selected: ${BOLD}${BACKEND}${NC}"
+  blank
+fi
+
 info "Install dir: ${BOLD}${INSTALL_DIR}${NC}"
 info "Backend:     ${BOLD}${BACKEND}${NC}"
-
-if $DRY_RUN; then
-  blank
-  warn "DRY RUN — nothing will be changed. This is a preview."
-fi
-
-blank
-
-if ! confirm "Continue?"; then
-  info "Aborted. Nothing was changed."
-  exit 0
-fi
 
 blank
 
@@ -237,13 +299,9 @@ fi
 
 blank
 
-# ── PostgreSQL (only if using postgres backend) ──────────────────────────
-#
-#   We need the `psql` client to create the database and run queries,
-#   and `createdb` to create the database itself.
+# ── Backend-specific prerequisites ────────────────────────────────────────
 
 if [[ "$BACKEND" == "postgres" ]]; then
-
   if command -v psql &>/dev/null; then
     ok "psql found"
     detail "$(psql --version 2>&1 | head -1)"
@@ -253,7 +311,6 @@ if [[ "$BACKEND" == "postgres" ]]; then
     detail "         apt install postgresql        (Ubuntu/Debian)"
     MISSING=1
   fi
-
   blank
 
   if command -v createdb &>/dev/null; then
@@ -262,7 +319,33 @@ if [[ "$BACKEND" == "postgres" ]]; then
     warn "createdb not found (usually comes with psql)"
     MISSING=1
   fi
+  blank
 
+elif [[ "$BACKEND" == "sqlite" ]]; then
+  # SQLite itself comes from the npm package (better-sqlite3), no system dep needed
+  ok "SQLite — no system dependencies needed"
+  detail "better-sqlite3 is installed via npm"
+  blank
+
+elif [[ "$BACKEND" == "mysql" ]]; then
+  if command -v mysql &>/dev/null; then
+    ok "mysql client found"
+    MYSQL_VER=$(mysql --version 2>&1 | head -1)
+    detail "$MYSQL_VER"
+
+    # Check for MySQL 9.2+ (required for native VECTOR type)
+    if echo "$MYSQL_VER" | grep -qE '(9\.[2-9]|[1-9][0-9]+\.)'; then
+      ok "MySQL version supports native vectors"
+    else
+      warn "MySQL 9.2+ required for vector search"
+      detail "Your version may work for text search only"
+    fi
+  else
+    warn "mysql client not found"
+    detail "Install: brew install mysql   (macOS)"
+    detail "         apt install mysql-client   (Ubuntu/Debian)"
+    MISSING=1
+  fi
   blank
 fi
 
@@ -336,91 +419,108 @@ blank
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
 
-header "Step 3 of 6 — Creating database"
+header "Step 3 of 6 — Setting up database"
 
 if [[ "$BACKEND" == "postgres" ]]; then
 
-  # ── Check if database exists ───────────────────────────────────────────
+  # ── PostgreSQL setup ──────────────────────────────────────────────────
 
   if psql -lqt 2>/dev/null | cut -d \| -f 1 | grep -qw "$DB_NAME"; then
-    ok "Database '${DB_NAME}' already exists — skipping creation"
+    ok "Database '${DB_NAME}' already exists"
   else
     info "Creating PostgreSQL database: ${BOLD}${DB_NAME}${NC}"
-    blank
-
-    if confirm "Create database '${DB_NAME}'?"; then
-      if ! $DRY_RUN; then
-        createdb "$DB_NAME"
-        ok "Database '${DB_NAME}' created"
-      else
-        ok "[DRY RUN] Would create database '${DB_NAME}'"
-      fi
+    if ! $DRY_RUN; then
+      createdb "$DB_NAME"
+      ok "Database '${DB_NAME}' created"
+    else
+      ok "[DRY RUN] Would create database '${DB_NAME}'"
     fi
   fi
 
   blank
 
-  # ── Apply schema ──────────────────────────────────────────────────────
-  #
-  #   The schema file creates the startup and memories tables, plus indexes
-  #   for fast search. It uses CREATE TABLE IF NOT EXISTS, so it's safe to
-  #   run multiple times.
-
   if [[ -f "$SCRIPT_DIR/schema.sql" ]]; then
-    info "Applying database schema..."
-
+    info "Applying schema..."
     if ! $DRY_RUN; then
       psql "$DB_NAME" -f "$SCRIPT_DIR/schema.sql" 2>/dev/null
-      ok "Schema applied"
+      ok "Schema applied (CREATE IF NOT EXISTS — safe to re-run)"
     else
       ok "[DRY RUN] Would apply schema.sql"
     fi
-  else
-    info "No schema.sql found in $SCRIPT_DIR"
-    detail "You may need to create tables manually — see README.md"
   fi
 
   blank
 
-  # ── Enable pgvector extension ─────────────────────────────────────────
-  #
-  #   pgvector adds vector/embedding columns to PostgreSQL. This enables
-  #   semantic search — finding records by meaning, not just keywords.
-  #   If pgvector isn't installed, we warn but continue. FTS still works.
-
+  # Enable pgvector + pg_trgm extensions
   if ! $DRY_RUN; then
     if psql "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null; then
-      ok "pgvector extension enabled (semantic search ready)"
+      ok "pgvector extension enabled"
     else
-      warn "Could not enable pgvector"
-      detail "Semantic search won't work, but keyword search still will."
+      warn "Could not enable pgvector — semantic search won't work"
       detail "Install: brew install pgvector   (macOS)"
+    fi
+
+    if psql "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;" 2>/dev/null; then
+      ok "pg_trgm extension enabled"
+    else
+      detail "pg_trgm not available — fuzzy search disabled (keyword search still works)"
     fi
   fi
 
+  # Connection string for config patching
+  CONN_STRING="postgresql://localhost:5432/${DB_NAME}"
   blank
 
 elif [[ "$BACKEND" == "sqlite" ]]; then
 
-  DB_PATH="${HOME}/.shadowdb/shadow.db"
-  info "SQLite database: ${BOLD}${DB_PATH}${NC}"
-  blank
+  # ── SQLite setup ──────────────────────────────────────────────────────
+  #
+  #   Zero config. The plugin auto-creates tables on first start.
+  #   We just need to make sure the directory exists.
 
-  if confirm "Create SQLite database?"; then
-    if ! $DRY_RUN; then
-      mkdir -p "$(dirname "$DB_PATH")"
+  DB_PATH="${SHADOWDB_PATH:-${HOME}/.shadowdb/memory.db}"
 
-      if [[ -f "$SCRIPT_DIR/schema-sqlite.sql" ]]; then
-        sqlite3 "$DB_PATH" < "$SCRIPT_DIR/schema-sqlite.sql"
-        ok "SQLite database created with schema"
-      else
-        info "No schema-sqlite.sql found — you may need to create tables manually"
-      fi
-    else
-      ok "[DRY RUN] Would create SQLite database at $DB_PATH"
-    fi
+  echo -ne "  ${BOLD}Database file path${NC} [${DB_PATH}]: "
+  if ! $AUTO_YES; then
+    read -r custom_path
+    [[ -n "$custom_path" ]] && DB_PATH="$custom_path"
+  else
+    echo ""
   fi
 
+  blank
+
+  if ! $DRY_RUN; then
+    mkdir -p "$(dirname "$DB_PATH")"
+    ok "Directory ready: $(dirname "$DB_PATH")"
+  fi
+
+  info "Tables will be auto-created on first plugin start"
+
+  # Connection string = file path for SQLite
+  CONN_STRING="$DB_PATH"
+  blank
+
+elif [[ "$BACKEND" == "mysql" ]]; then
+
+  # ── MySQL setup ───────────────────────────────────────────────────────
+
+  DEFAULT_MYSQL_CONN="mysql://root@localhost:3306/shadow"
+  echo -ne "  ${BOLD}MySQL connection string${NC} [${DEFAULT_MYSQL_CONN}]: "
+  if ! $AUTO_YES; then
+    read -r custom_conn
+    MYSQL_CONN="${custom_conn:-$DEFAULT_MYSQL_CONN}"
+  else
+    MYSQL_CONN="$DEFAULT_MYSQL_CONN"
+    echo ""
+  fi
+
+  blank
+
+  info "Tables will be auto-created on first plugin start"
+  detail "Requires MySQL 9.2+ for vector search"
+
+  CONN_STRING="$MYSQL_CONN"
   blank
 fi
 
@@ -472,7 +572,6 @@ blank
 
 header "Step 5 of 6 — Wiring plugin into OpenClaw"
 
-OPENCLAW_CONFIG="${HOME}/.openclaw/openclaw.json"
 PLUGIN_ABS_PATH="$(cd "$PLUGIN_DIR" 2>/dev/null && pwd)"
 
 if [[ ! -f "$OPENCLAW_CONFIG" ]]; then
@@ -527,6 +626,8 @@ if (!paths.includes(want)) {
 const fs = require('fs');
 const cfg = JSON.parse(fs.readFileSync('$OPENCLAW_CONFIG', 'utf8'));
 const pluginPath = '$PLUGIN_ABS_PATH';
+const backend = '$BACKEND';
+const connString = '$CONN_STRING';
 
 // Ensure plugins section
 cfg.plugins = cfg.plugins || {};
@@ -540,12 +641,14 @@ if (!cfg.plugins.load.paths.includes(pluginPath)) {
 cfg.plugins.slots = cfg.plugins.slots || {};
 cfg.plugins.slots.memory = 'memory-shadowdb';
 
-// Add plugin entry
+// Add plugin entry with backend-specific config
 cfg.plugins.entries = cfg.plugins.entries || {};
 if (!cfg.plugins.entries['memory-shadowdb']) {
   cfg.plugins.entries['memory-shadowdb'] = {
     enabled: true,
     config: {
+      backend: backend,
+      connectionString: connString,
       embedding: {
         provider: 'ollama',
         model: 'nomic-embed-text',
@@ -626,14 +729,19 @@ if ! $DRY_RUN; then
 
   blank
 
-  # Show DB stats
+  # Show DB stats (backend-aware)
   if [[ "$BACKEND" == "postgres" ]]; then
     ROW_COUNT=$(psql -qtAX "$DB_NAME" -c "SELECT count(*) FROM memories;" 2>/dev/null || echo "0")
     STARTUP_COUNT=$(psql -qtAX "$DB_NAME" -c "SELECT count(*) FROM startup;" 2>/dev/null || echo "0")
-
-    ok "Database:"
+    ok "Database (postgres):"
     detail "memories: ${ROW_COUNT} records"
     detail "startup:  ${STARTUP_COUNT} entries"
+  elif [[ "$BACKEND" == "sqlite" ]]; then
+    ok "Database (sqlite): ${CONN_STRING:-~/.shadowdb/memory.db}"
+    detail "Tables auto-created on first start"
+  elif [[ "$BACKEND" == "mysql" ]]; then
+    ok "Database (mysql): connected"
+    detail "Tables auto-created on first start"
   fi
 
 else
