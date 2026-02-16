@@ -252,13 +252,11 @@ const memoryShadowdbPlugin = {
             for (const key of stale) primerState.delete(key);
           }
 
-          const truncatedAttr = primer.truncated ? ' truncated="true"' : "";
-
           return {
             prependContext:
-              `<primer-context source="shadowdb" digest="${primer.digest}"${truncatedAttr}>\n` +
+              `init:\n` +
               `${primer.text}\n` +
-              `</primer-context>`,
+              `/init`,
           };
         } catch (err) {
           api.logger.warn(`memory-shadowdb primer hydration failed: ${String(err)}`);

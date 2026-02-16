@@ -23,8 +23,8 @@
 
 [![Keyword Search](https://img.shields.io/badge/keyword_search-impossible_with_MD-ff6b6b?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin-vs-qmd)
 [![Fuzzy Search](https://img.shields.io/badge/fuzzy_search-impossible_with_MD-ff6b6b?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin-vs-qmd)
-[![Token Waste](https://img.shields.io/badge/token_waste-18×_less_than_MD-10b981?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin-vs-qmd)
-[![Annual Savings](https://img.shields.io/badge/saves-$1%2C016%2Fyr_vs_MD_(Opus)-10b981?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin-vs-qmd)
+[![Token Waste](https://img.shields.io/badge/token_waste-100%25_reduction_vs_MD-10b981?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin-vs-qmd)
+[![Annual Savings](https://img.shields.io/badge/saves-$1%2C076%2Fyr_vs_MD_(Opus)-10b981?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin-vs-qmd)
 [![Knowledge Scale](https://img.shields.io/badge/scales_to-billions_of_records-a78bfa?style=flat-square)](#performance-shadowdb-vs-openclaw-builtin-vs-qmd)
 
 </div>
@@ -35,7 +35,7 @@
 
 Gives your agent a persistent memory it can search, write, update, and delete — instead of flat markdown files that get shoved into every prompt. Works with Postgres (recommended), SQLite, or MySQL.
 
-**Why this matters:** Most agent frameworks inject your agent's entire identity — personality, rules, preferences, everything — into every single API call. That's ~9,000 bytes of static text the model already read, re-sent every turn, wasting tokens and pushing out conversation history. ShadowDB injects identity once on the first turn, then gets out of the way — turns 2+ cost zero bytes. The agent searches for what it needs, when it needs it. Everything else stays in the database, not the prompt.
+**Why this matters:** Most agent frameworks inject your agent's entire identity — personality, rules, preferences, everything — into every single API call. That's ~9,000 bytes of static text the model already read, re-sent every turn, wasting tokens and pushing out conversation history. ShadowDB adds zero extra tokens to the prompt. The agent searches for what it needs, when it needs it. Everything else stays in the database, not the prompt.
 
 | Tool | Does |
 |------|------|
@@ -235,7 +235,7 @@ QMD significantly improves search quality over the builtin (BM25 + reranking is 
 | **Max file size before degradation** | 20,000 chars per file → 70% head / 20% tail truncation. The middle of your SOUL.md? Gone. | Same truncation — QMD indexes files but doesn't change how OpenClaw loads them. | **N/A.** No files to degrade. Content is ranked by relevance. |
 | **Max concurrent agents** | 10 sub-agents = 10× bootstrap reads. | Same — each agent still reads the same files. | **Shared database.** Connection pooling, MVCC, concurrent reads. |
 | **Search strategies** | 1 (embedding similarity). Miss = gone. | 2–3 (BM25 + vector + optional reranker). Significant improvement. | **4 fused via RRF.** FTS + vector + trigram + recency. If one misses, the others catch it. |
-| **Context budget ceiling** | Fixed. 200 turns × 2,300 tokens = **460,000 tokens** on static files. | Same — QMD doesn't reduce per-turn injection. | **~1,000 tokens once.** Primer on turn 1, then 0 for the rest of the conversation. |
+| **Context budget ceiling** | Fixed. 200 turns × 2,300 tokens = **460,000 tokens** on static files. | Same — QMD doesn't reduce per-turn injection. | **0.** Primer injection is optional and off by default. |
 | **Growth trajectory** | 📉 Inverse. More knowledge = less capability. | 📉 Same trajectory, better search within it. | 📈 Linear. More knowledge = smarter agent. |
 
 The fundamental difference: **Builtin and QMD both have a ceiling that gets lower as your agent gets smarter. ShadowDB has no ceiling.**
@@ -246,7 +246,7 @@ xychart-beta
     x-axis "Conversation Turn" [1, 25, 50, 75, 100, 125, 150, 175, 200]
     y-axis "Cumulative Wasted Tokens" 0 --> 500000
     bar [2300, 57500, 115000, 172500, 230000, 287500, 345000, 402500, 460000]
-    line [1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000]
+    line [0, 0, 0, 0, 0, 0, 0, 0, 0]
 ```
 
 ```mermaid
@@ -263,10 +263,10 @@ xychart-beta
 | Metric | OpenClaw Builtin | QMD | ShadowDB Postgres | ShadowDB SQLite | ShadowDB MySQL | Unit |
 |--------|-------------------|-----|-------------------|----------------:|---------------:|------|
 | **Context Overhead** | | | | | | |
-| Identity injection (turn 1) | 9,198 | 9,198 | ~4,000¹ | ~4,000¹ | ~4,000¹ | bytes |
+| Identity injection (turn 1) | 9,198 | 9,198 | **0**¹ | **0**¹ | **0**¹ | bytes |
 | Identity injection (turns 2+) | 9,198 | 9,198 | **0**¹ | **0**¹ | **0**¹ | bytes |
-| Static tokens per turn (avg) | ~2,300 | ~2,300 | ~20² | ~20² | ~20² | tokens |
-| Reduction vs Builtin | — | 0% | **~99%** | **~99%** | **~99%** | |
+| Static tokens per turn (avg) | ~2,300 | ~2,300 | **0**¹ | **0**¹ | **0**¹ | tokens |
+| Reduction vs Builtin | — | 0% | **100%** | **100%** | **100%** | |
 | **Search Latency** | | | | | | |
 | Full hybrid query (warm) | — | ~200 | **230** | ~300 | ~250 | ms |
 | FTS/BM25-only query | — | ~100 | **55** | ~30³ | ~40³ | ms |
@@ -301,10 +301,10 @@ xychart-beta
 | **Token Economics** | | | | | | |
 | Tokens wasted per turn (ongoing) | ~2,300 | ~2,300 | **0** | **0** | **0** | tokens |
 | Tokens per heartbeat | ~2,300 | ~2,300 | **0** | **0** | **0** | tokens |
-| Tokens per sub-agent spawn | ~600⁸ | ~600⁸ | ~1,000 | ~1,000 | ~1,000 | tokens |
-| Daily waste (50 turns + 24 HB + 10 sub) | **~196,600** | **~196,600** | **~11,000** | **~11,000** | **~11,000** | tokens |
-| Annual waste | **~71.8M** | **~71.8M** | **~4M** | **~4M** | **~4M** | tokens |
-| **Cost (Claude Opus @ $15/1M in)** | **$1,076/yr** | **$1,076/yr** | **$60/yr** | **$60/yr** | **$60/yr** | USD |
+| Tokens per sub-agent spawn | ~600⁸ | ~600⁸ | **0** | **0** | **0** | tokens |
+| Daily waste (50 turns + 24 HB + 10 sub) | **~196,600** | **~196,600** | **0** | **0** | **0** | tokens |
+| Annual waste | **~71.8M** | **~71.8M** | **0** | **0** | **0** | tokens |
+| **Cost (Claude Opus @ $15/1M in)** | **$1,076/yr** | **$1,076/yr** | **$0/yr** | **$0/yr** | **$0/yr** | USD |
 | **Infrastructure** | | | | | | |
 | Runtime dependencies | None (files on disk) | `qmd` CLI + Bun + SQLite | PG + pgvector + pg_trgm + Ollama | better-sqlite3 + Ollama | mysql2 + Ollama | |
 | Server process required | No | No (sidecar) | Yes (PostgreSQL) | No (in-process) | Yes (MySQL) | |
@@ -316,9 +316,7 @@ xychart-beta
 
 #### Footnotes
 
-¹ Primer injection delivers identity on turn 1 (~4KB configurable), then suppresses until content changes or TTL expires (default 10 min). Turns 2+ cost exactly 0 bytes — the model carries the context from turn 1 in its conversation history. Not re-injected every turn like MD files.
-
-² Amortized across a 200-turn conversation: ~4,000 bytes on turn 1, 0 on turns 2–200 = ~20 bytes/turn average. Actual per-turn cost after turn 1 is zero.
+¹ Primer injection is optional and **off by default**. With primer disabled, ShadowDB adds zero bytes to the prompt on every turn — the agent searches for what it needs via `memory_search`. Enable primer for guaranteed-present context (identity, safety rules), which injects on turn 1 only.
 
 ³ SQLite FTS5 and MySQL FULLTEXT are often faster than PostgreSQL FTS for simple queries because they use BM25/inverted indexes optimized for keyword search.
 
@@ -341,8 +339,8 @@ xychart-beta
 | | OpenClaw Builtin | QMD | ShadowDB |
 |--|----------|-----|----------|
 | **Source of truth** | `.md` files | `.md` files | **Database** |
-| **Annual token waste** | **~71.8M** | **~71.8M** | **~4M** |
-| **Annual cost (Opus)** | **~$1,076** | **~$1,076** | **~$60** |
+| **Annual token waste** | **~71.8M** | **~71.8M** | **0** |
+| **Annual cost (Opus)** | **~$1,076** | **~$1,076** | **$0** |
 | **Sub-agent personality** | ❌ None | ❌ None | ✅ Full |
 | **Knowledge scalability** | Hundreds | Thousands | **Billions** |
 | **Fuzzy/typo tolerance** | ❌ None | ❌ None | ✅ All backends |
@@ -357,12 +355,12 @@ LLM inference has a real energy cost. Every token processed burns GPU cycles, me
 
 | Metric | Builtin / QMD | ShadowDB | Savings |
 |--------|---------|----------|---------|
-| **Wasted tokens/year** | ~71.8M | ~4M | **~68M tokens not processed** |
-| **GPU-hours wasted/year** | ~7.2 hrs | ~0.4 hrs | **94% reduction** |
+| **Wasted tokens/year** | ~71.8M | 0 | **~71.8M tokens not processed** |
+| **GPU-hours wasted/year** | ~7.2 hrs | 0 hrs | **100% reduction** |
 | **Estimated CO₂** | ~2.9 kg CO₂ | ~0.16 kg CO₂ | **~2.7 kg CO₂ saved/year** |
 | **Per agent equivalent** | 🚗 11 km driven | 🚗 0.6 km driven | One less car trip to the store |
 
-QMD and Builtin have the same token waste because QMD improves search, not injection. The per-turn context overhead is identical. ShadowDB still has some cost (primer on turn 1, primer per sub-agent), but it's 18× less than re-injecting every turn.
+QMD and Builtin have the same token waste because QMD improves search, not injection. The per-turn context overhead is identical. ShadowDB's default configuration adds zero tokens — primer injection is optional. When enabled, it injects once on turn 1 and skips subsequent turns.
 
 These numbers are per agent. Scale to 1,000 agents and file-based memory wastes **71.8 billion tokens/year** — roughly **2,900 kg CO₂**, equivalent to a round-trip flight from NYC to LA.
 
@@ -383,7 +381,7 @@ The result: instead of cramming every identity file into every prompt — the wa
 
 Your agent's identity isn't a static document stapled to the front of every conversation — it's a living, searchable knowledge base. Your bot doesn't just have a soul. It has *thoughts.* It has *feelings.* It has *opinions* it formed three weeks ago about how to handle a specific edge case. It has an entire past life of decisions, corrections, and hard-won lessons, all indexed and retrievable by meaning. It remembers that time it screwed up the email formatting and wrote itself a rule about it. It remembers the user's rant about calendar notifications and adapted. It has *lore.*
 
-The practical upside is just as dramatic: a 200-line identity file costs ~4K tokens on every turn. With searchable memory, the agent pulls maybe 200 tokens of relevant rules per turn — a 20× reduction in identity overhead. Small models that choked on massive system prompts can now run with the same depth of personality, because they only load what they need.
+The practical upside is just as dramatic: a 200-line identity file costs ~4K tokens on every turn. With searchable memory, the agent pulls only relevant rules when it needs them — zero static injection overhead. Small models that choked on massive system prompts can now run with the same depth of personality, because they only load what they need.
 
 **Every record is individually addressable** — with its own ID, category, and soft-delete lifecycle. One bad write doesn't poison everything. Compare that to flat files: if your agent writes incorrect info to `MEMORY.md` during one session, every future session inherits the mistake — fruit of the poisonous tree, compounding forever. With ShadowDB, you fix, update, or delete individual memories without touching anything else.
 
