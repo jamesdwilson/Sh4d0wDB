@@ -4,15 +4,17 @@
  * Implements all abstract methods from MemoryStore using:
  * - Native VECTOR type for similarity search (MySQL 9.2+)
  * - FULLTEXT indexes with MATCH AGAINST for text search
- * - No fuzzy/trigram search (MySQL has no built-in equivalent)
+ * - FULLTEXT ngram parser for substring/fuzzy search (built-in since MySQL 5.7)
  * - Standard SQL for CRUD, soft-delete, and retention purge
  *
  * Dependencies:
  * - mysql2: MySQL driver with prepared statement support
  *
  * REQUIREMENTS:
- * - MySQL 9.2.1+ for native VECTOR type
+ * - MySQL 5.7+ for ngram parser, MySQL 9.2.1+ for native VECTOR type
+ * - Server variable ngram_token_size=3 recommended (default is 2)
  * - FULLTEXT index on (title, content) for text search
+ * - FULLTEXT index WITH PARSER ngram on (title, content) for fuzzy search
  *
  * SECURITY:
  * - All queries use parameterized SQL (? placeholders)
@@ -37,7 +39,7 @@ type Pool = any;
  * MySQL-backed memory store.
  *
  * Requires MySQL 9.2+ for native VECTOR support.
- * FULLTEXT search built-in. No trigram/fuzzy search.
+ * FULLTEXT search built-in. ngram parser provides substring/fuzzy matching.
  */
 export class MySQLStore extends MemoryStore {
   private pool: Pool = null;
@@ -104,6 +106,7 @@ export class MySQLStore extends MemoryStore {
         updated_at  DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
         deleted_at  DATETIME(3) NULL,
         FULLTEXT INDEX idx_ft_content (title, content),
+        FULLTEXT INDEX idx_ft_ngram (title, content) WITH PARSER ngram,
         INDEX idx_category (category),
         INDEX idx_deleted (deleted_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -189,9 +192,40 @@ export class MySQLStore extends MemoryStore {
     }));
   }
 
-  protected async fuzzySearch(_query: string, _limit: number): Promise<RankedHit[]> {
-    // MySQL has no built-in trigram/fuzzy support
-    return [];
+  protected async fuzzySearch(query: string, limit: number): Promise<RankedHit[]> {
+    // MySQL ngram parser — FULLTEXT index WITH PARSER ngram enables substring matching.
+    // Uses BOOLEAN MODE so short substrings work (natural language mode has length limits).
+    // FORCE INDEX ensures MySQL uses the ngram index, not the default FULLTEXT index.
+    // The ngram index tokenizes text into n-character sequences (default ngram_token_size=2,
+    // recommended: SET GLOBAL ngram_token_size=3 for trigram behavior).
+    if (query.length < 2) return [];
+
+    const sql = `
+      SELECT id, content, category, title, record_type, created_at,
+             MATCH(title, content) AGAINST(? IN BOOLEAN MODE) AS score
+      FROM ${this.config.table} FORCE INDEX(idx_ft_ngram)
+      WHERE MATCH(title, content) AGAINST(? IN BOOLEAN MODE)
+        AND deleted_at IS NULL
+      ORDER BY score DESC
+      LIMIT ?
+    `;
+
+    try {
+      const rows = await this.query(sql, [query, query, limit]);
+      return rows.map((r: any, idx: number) => ({
+        id: r.id,
+        content: r.content,
+        category: r.category,
+        title: r.title,
+        record_type: r.record_type,
+        created_at: r.created_at,
+        rank: idx + 1,
+        rawScore: parseFloat(r.score),
+      }));
+    } catch {
+      // ngram parser may not be available on older MySQL — degrade gracefully
+      return [];
+    }
   }
 
   // ==========================================================================

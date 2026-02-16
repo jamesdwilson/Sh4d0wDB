@@ -88,7 +88,7 @@ Every search combines multiple signals to find the best matches. What's availabl
 |--------|----------|--------|-------|-----------------|
 | Vector similarity | ✓ (weight: `0.7`) | ✓ (sqlite-vec) | ✓ (9.2+) | Semantic meaning via embeddings |
 | Full-text search | ✓ (weight: `0.3`) | ✓ (FTS5) | ✓ (FULLTEXT) | Keyword/phrase matches |
-| Trigram similarity | ✓ (weight: `0.2`) | ✓ (FTS5 trigram) | — | Fuzzy/substring matching |
+| Trigram similarity | ✓ (weight: `0.2`) | ✓ (FTS5 trigram) | ✓ (ngram parser) | Fuzzy/substring matching |
 | Recency boost | ✓ (weight: `0.15`) | ✓ | ✓ | Newer records boosted slightly |
 
 With Postgres, signals are merged via Reciprocal Rank Fusion (RRF) — each signal produces a ranked list, and RRF combines them without needing score normalization. All weights are configurable.
