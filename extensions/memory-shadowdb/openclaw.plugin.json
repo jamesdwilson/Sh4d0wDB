@@ -79,10 +79,6 @@
       "label": "Retention: Purge After Days",
       "help": "Permanently remove soft-deleted records after N days (default: 30, 0 = never)"
     },
-    "writes.retention.stalePurgeDays": {
-      "label": "Retention: Stale Purge Days",
-      "help": "Permanently remove records not accessed in N days (default: 0 = disabled)"
-    },
     "startup.enabled": {
       "label": "Startup Hydration Enabled",
       "help": "Inject startup identity/rules context from DB before runs (default: true)"
@@ -196,6 +192,10 @@
           },
           "textWeight": {
             "type": "number"
+          },
+          "recencyWeight": {
+            "type": "number",
+            "description": "Weight for recency in RRF ranking. Small value = tiebreaker only. Default: 0.15"
           }
         }
       },
@@ -218,10 +218,6 @@
               "purgeAfterDays": {
                 "type": "number",
                 "description": "Permanently remove soft-deleted records after N days (default: 30, 0 = never)"
-              },
-              "stalePurgeDays": {
-                "type": "number",
-                "description": "Permanently remove records not accessed in N days (default: 0 = disabled)"
               }
             }
           }

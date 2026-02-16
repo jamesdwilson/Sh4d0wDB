@@ -119,6 +119,15 @@ export type PluginConfig = {
     
     /** Weight for full-text search in RRF scoring */
     textWeight?: number;
+
+    /**
+     * Weight for recency in RRF scoring.
+     * Newer records get a slight boost when competing with older records
+     * of equal semantic relevance. Deliberately small — recency is a
+     * tiebreaker, not a dominant signal.
+     * Default: 0.15
+     */
+    recencyWeight?: number;
   };
   
   /** Write operations configuration (disabled by default) */
@@ -148,15 +157,6 @@ export type PluginConfig = {
        * Default: 30
        */
       purgeAfterDays?: number;
-
-      /**
-       * Permanently remove records not accessed in N days.
-       * Uses last_accessed column. Only targets active (non-deleted) records.
-       * Set to 0 to disable (default). Use with caution — stable knowledge
-       * that is rarely queried would be silently removed.
-       * Default: 0 (disabled)
-       */
-      stalePurgeDays?: number;
     };
   };
 

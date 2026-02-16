@@ -88,6 +88,7 @@ const memoryShadowdbPlugin = {
     const minScoreDefault = pluginCfg.search?.minScore ?? 0.15;
     const vectorWeight = pluginCfg.search?.vectorWeight ?? 0.7;
     const textWeight = pluginCfg.search?.textWeight ?? 0.3;
+    const recencyWeight = pluginCfg.search?.recencyWeight ?? 0.15;
     const startupCfg = resolveStartupInjectionConfig(pluginCfg);
 
     // ========================================================================
@@ -97,16 +98,13 @@ const memoryShadowdbPlugin = {
     // SECURITY: Write config resolution — all gates default to safe values.
     // writes.enabled defaults to false (no writes unless explicitly enabled).
     // writes.autoEmbed defaults to true (new records are immediately searchable).
-    // Retention defaults: purge soft-deleted records after 30 days, stale purge disabled.
+    // Retention defaults: purge soft-deleted records after 30 days.
     const writesCfg = {
       enabled: pluginCfg.writes?.enabled === true,         // Must be explicitly true
       autoEmbed: pluginCfg.writes?.autoEmbed !== false,    // Default true
       purgeAfterDays: typeof pluginCfg.writes?.retention?.purgeAfterDays === "number"
         ? Math.max(0, Math.floor(pluginCfg.writes.retention.purgeAfterDays))
         : 30,
-      stalePurgeDays: typeof pluginCfg.writes?.retention?.stalePurgeDays === "number"
-        ? Math.max(0, Math.floor(pluginCfg.writes.retention.stalePurgeDays))
-        : 0,
     };
     
     // SECURITY: Startup injection cache bounded at 5000 entries (prevents memory exhaustion)
@@ -156,6 +154,7 @@ const memoryShadowdbPlugin = {
       embedder,
       vectorWeight,
       textWeight,
+      recencyWeight,
     });
 
     // Initialize writer lazily (uses shared pool from search to avoid duplicate connections).
@@ -182,7 +181,6 @@ const memoryShadowdbPlugin = {
           embedder,
           autoEmbed: writesCfg.autoEmbed,
           purgeAfterDays: writesCfg.purgeAfterDays,
-          stalePurgeDays: writesCfg.stalePurgeDays,
           logger: api.logger,
         });
       }
@@ -560,7 +558,7 @@ const memoryShadowdbPlugin = {
           api.logger.info("memory-shadowdb: PostgreSQL connection verified");
 
           // Run retention purge on service start (if writes are enabled)
-          if (writesCfg.enabled && (writesCfg.purgeAfterDays > 0 || writesCfg.stalePurgeDays > 0)) {
+          if (writesCfg.enabled && writesCfg.purgeAfterDays > 0) {
             try {
               const w = getWriter();
               await w.runRetentionPurge();

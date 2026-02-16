@@ -55,6 +55,7 @@ export class ShadowSearch {
   private embedder: EmbeddingClient;
   private vectorWeight: number;
   private textWeight: number;
+  private recencyWeight: number;
 
   constructor(params: {
     connectionString: string;
@@ -62,12 +63,14 @@ export class ShadowSearch {
     embedder: EmbeddingClient;
     vectorWeight: number;
     textWeight: number;
+    recencyWeight: number;
   }) {
     this.connectionString = params.connectionString;
     this.table = params.table;
     this.embedder = params.embedder;
     this.vectorWeight = params.vectorWeight;
     this.textWeight = params.textWeight;
+    this.recencyWeight = params.recencyWeight;
   }
 
   /**
@@ -105,8 +108,8 @@ export class ShadowSearch {
    * SECURITY:
    * - All user input is parameterized ($1=vector, $2=maxResults, $3=query)
    * - Table name is interpolated but comes from config (not user input)
-   * - Query filters: deleted_at IS NULL AND superseded_by IS NULL AND contradicted IS NOT TRUE
-   *   (only returns active, non-contradicted records)
+   * - Query filters: deleted_at IS NULL
+   *   (only returns active, active records)
    * - Oversample factor: 5x maxResults for each CTE to ensure good RRF merge
    *
    * RRF FORMULA:
@@ -133,34 +136,45 @@ export class ShadowSearch {
     // NOTE: Table name ${this.table} is interpolated, but comes from config only (not user input)
     const sql = `
       WITH vector_search AS (
-        SELECT id, content, category, title, record_type,
+        SELECT id, content, category, title, record_type, created_at,
                1 - (embedding <=> $1::vector) AS vec_score,
                ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS vec_rank
         FROM ${this.table}
         WHERE embedding IS NOT NULL
-          AND deleted_at IS NULL AND superseded_by IS NULL AND contradicted IS NOT TRUE
+          AND deleted_at IS NULL
         ORDER BY embedding <=> $1::vector
         LIMIT $2
       ),
       fts_search AS (
-        SELECT id, content, category, title, record_type,
+        SELECT id, content, category, title, record_type, created_at,
                ts_rank_cd(fts, plainto_tsquery('english', $3)) AS fts_score,
                ROW_NUMBER() OVER (ORDER BY ts_rank_cd(fts, plainto_tsquery('english', $3)) DESC) AS fts_rank
         FROM ${this.table}
         WHERE fts IS NOT NULL
           AND fts @@ plainto_tsquery('english', $3)
-          AND deleted_at IS NULL AND superseded_by IS NULL AND contradicted IS NOT TRUE
+          AND deleted_at IS NULL
         ORDER BY fts_score DESC
         LIMIT $2
       ),
       trigram_search AS (
-        SELECT id, content, category, title, record_type,
+        SELECT id, content, category, title, record_type, created_at,
                similarity(content, $3) AS trgm_score,
                ROW_NUMBER() OVER (ORDER BY content <-> $3) AS trgm_rank
         FROM ${this.table}
         WHERE (content % $3 OR content ILIKE '%' || $3 || '%')
-          AND deleted_at IS NULL AND superseded_by IS NULL AND contradicted IS NOT TRUE
+          AND deleted_at IS NULL
         ORDER BY content <-> $3
+        LIMIT $2
+      ),
+      recency_search AS (
+        -- Recency ranking: newest records rank highest.
+        -- This is a soft tiebreaker, not a dominant signal (weight is small).
+        -- See README "The two-column model" for design rationale.
+        SELECT id, ROW_NUMBER() OVER (ORDER BY created_at DESC) AS recency_rank
+        FROM ${this.table}
+        WHERE deleted_at IS NULL
+          AND created_at IS NOT NULL
+        ORDER BY created_at DESC
         LIMIT $2
       ),
       combined AS (
@@ -171,15 +185,18 @@ export class ShadowSearch {
           COALESCE(v.title, f.title, t.title) AS title,
           COALESCE(v.record_type, f.record_type, t.record_type) AS record_type,
           COALESCE(v.vec_score, 0) AS vec_score,
-          -- RRF: 1/(k+rank) with k=60
+          COALESCE(t.created_at, v.created_at, f.created_at) AS created_at,
+          -- RRF: 1/(k+rank) with k=60. Four signals: vector, FTS, trigram, recency.
           COALESCE($4::float * (1.0 / (60 + v.vec_rank)), 0) +
           COALESCE($5::float * (1.0 / (60 + f.fts_rank)), 0) +
-          COALESCE(0.2 * (1.0 / (60 + t.trgm_rank)), 0) AS rrf_score
+          COALESCE(0.2 * (1.0 / (60 + t.trgm_rank)), 0) +
+          COALESCE($6::float * (1.0 / (60 + r.recency_rank)), 0) AS rrf_score
         FROM vector_search v
         FULL OUTER JOIN fts_search f ON v.id = f.id
         FULL OUTER JOIN trigram_search t ON COALESCE(v.id, f.id) = t.id
+        LEFT JOIN recency_search r ON COALESCE(v.id, f.id, t.id) = r.id
       )
-      SELECT DISTINCT ON (id) id, content, category, title, record_type, vec_score, rrf_score
+      SELECT DISTINCT ON (id) id, content, category, title, record_type, vec_score, rrf_score, created_at
       FROM combined
       WHERE rrf_score > 0.001
       ORDER BY id, rrf_score DESC
@@ -192,6 +209,7 @@ export class ShadowSearch {
       query, // $3: text query for FTS and trigram
       this.vectorWeight, // $4: RRF weight for vector ranking
       this.textWeight, // $5: RRF weight for FTS ranking
+      this.recencyWeight, // $6: RRF weight for recency ranking
     ]);
 
     // DISTINCT ON resets ordering, so re-sort by rrf_score descending
@@ -486,11 +504,14 @@ export class ShadowSearch {
    *
    * Format:
    * ```
-   * # {title} | [{category}] | type: {record_type}
+   * [{category}] | 3d ago
    * {content truncated to fit}
    * ```
    *
-   * @param row - Database row with id, content, category, title, record_type
+   * Age is shown as relative shorthand so the LLM can judge staleness in context.
+   * See README "The two-column model" — staleness is the LLM's problem, not the system's.
+   *
+   * @param row - Database row with id, content, category, title, record_type, created_at
    * @returns Formatted snippet string
    */
   private formatSnippet(row: {
@@ -499,16 +520,14 @@ export class ShadowSearch {
     category?: string;
     title?: string;
     record_type?: string;
+    created_at?: string | Date;
   }): string {
     const maxChars = 700;
     
-    // Build metadata header
+    // Build metadata header: [category] | age
     const header = [
-      row.title ? `# ${row.title}` : null,
       row.category ? `[${row.category}]` : null,
-      row.record_type && row.record_type !== row.category
-        ? `type: ${row.record_type}`
-        : null,
+      row.created_at ? formatRelativeAge(row.created_at) : null,
     ]
       .filter(Boolean)
       .join(" | ");
@@ -554,4 +573,41 @@ export class ShadowSearch {
     
     return parts.join("\n");
   }
+}
+
+/**
+ * Format a timestamp as a compact relative age string.
+ *
+ * Examples: "2h ago", "3d ago", "2w ago", "3mo ago", "1y ago"
+ *
+ * Used in search snippets so the LLM can see record age and judge
+ * whether it's relevant for the current query.
+ *
+ * @param timestamp - ISO string or Date object
+ * @returns Relative age string, or empty string if unparseable
+ */
+function formatRelativeAge(timestamp: string | Date): string {
+  const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
+  if (isNaN(date.getTime())) return "";
+
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 0) return "just now";
+
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 60) return `${Math.max(1, minutes)}m ago`;
+
+  const hours = Math.floor(diffMs / 3_600_000);
+  if (hours < 24) return `${hours}h ago`;
+
+  const days = Math.floor(diffMs / 86_400_000);
+  if (days < 14) return `${days}d ago`;
+
+  const weeks = Math.floor(days / 7);
+  if (weeks < 9) return `${weeks}w ago`;
+
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+
+  const years = Math.floor(days / 365);
+  return `${years}y ago`;
 }

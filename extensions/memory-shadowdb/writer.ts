@@ -22,8 +22,7 @@
  * DATA FLOW — retention purge:
  * 1. Runs on service start and optionally on interval
  * 2. DELETE FROM memories WHERE deleted_at < NOW() - INTERVAL 'N days'
- * 3. Optionally: DELETE WHERE last_accessed < NOW() - INTERVAL 'N days' (stale purge)
- * 4. Logs purge counts — no silent data loss
+ * 3. Logs purge counts — no silent data loss
  *
  * DEPENDENCY CHAIN:
  * - types.ts: WriteResult type
@@ -74,7 +73,6 @@ export class ShadowWriter {
   private embedder: EmbeddingClient;
   private autoEmbed: boolean;
   private purgeAfterDays: number;
-  private stalePurgeDays: number;
   private logger: { warn: (msg: string) => void; info: (msg: string) => void };
 
   constructor(params: {
@@ -83,7 +81,6 @@ export class ShadowWriter {
     embedder: EmbeddingClient;
     autoEmbed: boolean;
     purgeAfterDays: number;
-    stalePurgeDays: number;
     logger: { warn: (msg: string) => void; info: (msg: string) => void };
   }) {
     this.pool = params.pool;
@@ -91,7 +88,6 @@ export class ShadowWriter {
     this.embedder = params.embedder;
     this.autoEmbed = params.autoEmbed;
     this.purgeAfterDays = params.purgeAfterDays;
-    this.stalePurgeDays = params.stalePurgeDays;
     this.logger = params.logger;
   }
 
@@ -379,29 +375,23 @@ export class ShadowWriter {
   }
 
   /**
-   * Run retention purge — permanently remove expired soft-deleted records
+   * Run retention purge — permanently remove expired soft-deleted records.
    *
    * This is the ONLY code path that permanently deletes data. It runs:
    * 1. On service start (once)
    * 2. Optionally on a recurring interval
    *
-   * Two purge modes:
-   * - Soft-delete retention: records with deleted_at older than purgeAfterDays
-   * - Stale access purge: records with last_accessed older than stalePurgeDays
-   *   (disabled by default, opt-in only)
+   * Records with `deleted_at` older than `purgeAfterDays` are permanently removed.
    *
    * SECURITY:
-   * - No user input — all thresholds from config
+   * - No user input — threshold from config only
    * - Logged with counts — no silent data loss
-   * - Stale purge only targets non-deleted, non-contradicted records
    *
-   * @returns Purge counts for logging
+   * @returns Purge count for logging
    */
-  async runRetentionPurge(): Promise<{ softDeletePurged: number; stalePurged: number }> {
+  async runRetentionPurge(): Promise<{ softDeletePurged: number }> {
     let softDeletePurged = 0;
-    let stalePurged = 0;
 
-    // 1. Purge soft-deleted records past retention window
     if (this.purgeAfterDays > 0) {
       const result = await this.pool.query(
         `DELETE FROM ${this.table} WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '${this.purgeAfterDays} days' RETURNING id`,
@@ -409,19 +399,11 @@ export class ShadowWriter {
       softDeletePurged = result.rowCount ?? 0;
     }
 
-    // 2. Purge stale records (opt-in, disabled by default)
-    if (this.stalePurgeDays > 0) {
-      const result = await this.pool.query(
-        `DELETE FROM ${this.table} WHERE last_accessed IS NOT NULL AND last_accessed < NOW() - INTERVAL '${this.stalePurgeDays} days' AND deleted_at IS NULL AND contradicted IS NOT TRUE RETURNING id`,
-      );
-      stalePurged = result.rowCount ?? 0;
-    }
-
     this.logger.info(
-      `memory-shadowdb: retention sweep — purged ${softDeletePurged} soft-deleted (>${this.purgeAfterDays}d), ${stalePurged} stale (${this.stalePurgeDays > 0 ? `>${this.stalePurgeDays}d` : "disabled"})`,
+      `memory-shadowdb: retention sweep — purged ${softDeletePurged} soft-deleted (>${this.purgeAfterDays}d)`,
     );
 
-    return { softDeletePurged, stalePurged };
+    return { softDeletePurged };
   }
 
   /**
