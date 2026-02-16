@@ -358,33 +358,33 @@ Here's the question: **if the agent violates this rule before it has a chance to
 
 ### Step 3: Load your primer rules
 
-**Option A: Create a `PRIMER.md` file** with your always-on rules (one rule per section), then tell your agent to read it and insert each into the `primer` table:
+**Option A: Add them during setup.** On fresh installs, the setup script asks if you have always-on rules and walks you through adding them one at a time — key, content, priority. No LLM, no file editing, just paste:
 
-```markdown
-# identity
-You are Shadow, Alex's AI assistant. You run on OpenClaw.
-
-# owner
-Alex Chen lives in Austin, TX. His daughter Maya was born 2020-03-15.
-
-# banned-words
-Never use the words: workout, exercise, cardio, regime. Use specific activity names instead.
-
-# safety
-Never send emails, messages, or make purchases without explicit user confirmation.
 ```
+  Key (e.g. identity, safety, banned-words) or 'done': identity
+  Content: You are Shadow, Alex's AI assistant. You run on OpenClaw.
+  Priority [0]: 0
+  ✓  Added: identity
+
+  Key: safety
+  Content: Never send emails, messages, or make purchases without explicit user confirmation.
+  Priority [10]: 5
+  ✓  Added: safety
+
+  Key: done
+  ✓  Added 2 primer rule(s)
+```
+
+**Option B: Add them later with SQL.** If you skip during setup, you can always insert directly:
 
 ```sql
 INSERT INTO primer (key, content, priority) VALUES
-  ('identity', 'You are Shadow, Alex''s AI assistant. You run on OpenClaw.', 0),
-  ('owner', 'Alex Chen lives in Austin, TX. His daughter Maya was born 2020-03-15.', 10),
-  ('banned-words', 'Never use the words: workout, exercise, cardio, regime. Use specific activity names instead.', 20),
-  ('safety', 'Never send emails, messages, or make purchases without explicit user confirmation.', 5);
+  ('identity', 'You are Shadow, Alex''s AI assistant.', 0),
+  ('safety', 'Never send without explicit user confirmation.', 5),
+  ('banned-words', 'Never use: workout, exercise, cardio, regime.', 20);
 ```
 
-**Option B: Paste rules during setup** — the setup script will ask if you have always-on rules and let you enter them interactively.
-
-**Option C: Skip it** — start with memories only. If you notice your agent forgetting something critical on the first turn of new conversations, that's your sign to add it as a primer rule.
+**Option C: Let your agent do it.** Tell your agent to insert primer rules — it has full DB access. Or just skip primer entirely and start with searchable memories. If you notice your agent forgetting something critical on the first turn of new conversations, that's your sign to add it as a primer rule.
 
 ### The `always` column
 

@@ -836,6 +836,111 @@ fi
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │                                                                            │
+# │   STEP 5.5:  PRIMER RULES (optional, interactive only)                     │
+# │                                                                            │
+# │   Most identity/rules work as searchable memories. But a few things        │
+# │   need to be present before the agent's first thought:                     │
+# │     - Core identity ("You are Shadow, Alex's assistant")                  │
+# │     - Safety rails ("Never send without confirmation")                     │
+# │     - Hard constraints (banned words, communication gates)                 │
+# │                                                                            │
+# │   The litmus test: if the agent violates this rule BEFORE it has a         │
+# │   chance to search, is that a problem? If yes → primer.                    │
+# │                                                                            │
+# └────────────────────────────────────────────────────────────────────────────┘
+
+# Only run primer setup on fresh installs (not updates) and interactive mode
+if ! $IS_UPDATE && ! $AUTO_YES && ! $DRY_RUN; then
+
+  blank
+  echo ""
+  echo "  ┌──────────────────────────────────────────────────────────────────┐"
+  echo "  │                                                                  │"
+  echo "  │   🧬  Primer Rules (optional)                                    │"
+  echo "  │                                                                  │"
+  echo "  │   Most rules work as searchable memories — the agent finds       │"
+  echo "  │   them when relevant. But a few need to be loaded before the     │"
+  echo "  │   agent's first thought:                                         │"
+  echo "  │                                                                  │"
+  echo "  │     • Core identity (\""You are Shadow"\")                           │"
+  echo "  │     • Safety rails (\"Never send without confirmation\")           │"
+  echo "  │     • Banned words, hard constraints                             │"
+  echo "  │                                                                  │"
+  echo "  │   The test: if violating this rule before the agent thinks to    │"
+  echo "  │   search would cause damage, it's a primer rule.                 │"
+  echo "  │                                                                  │"
+  echo "  └──────────────────────────────────────────────────────────────────┘"
+  echo ""
+
+  echo -ne "  ${BOLD}Do you have always-on rules to add?${NC} (y/N): "
+  read -r ADD_PRIMER
+  echo ""
+
+  if [[ "$ADD_PRIMER" =~ ^[Yy] ]]; then
+
+    PRIMER_COUNT=0
+
+    echo "  Enter primer rules one at a time."
+    echo "  Each needs a ${BOLD}key${NC} (short name) and ${BOLD}content${NC} (the rule text)."
+    echo "  Priority: lower number = injected first (0 = highest priority)."
+    echo ""
+    echo "  Type ${BOLD}done${NC} when finished."
+    echo ""
+
+    while true; do
+      echo -ne "  ${BOLD}Key${NC} (e.g. identity, safety, banned-words) or 'done': "
+      read -r PRIMER_KEY
+      [[ "$PRIMER_KEY" == "done" || -z "$PRIMER_KEY" ]] && break
+
+      echo -ne "  ${BOLD}Content${NC}: "
+      read -r PRIMER_CONTENT
+      if [[ -z "$PRIMER_CONTENT" ]]; then
+        warn "Empty content — skipping"
+        echo ""
+        continue
+      fi
+
+      echo -ne "  ${BOLD}Priority${NC} [${PRIMER_COUNT}0]: "
+      read -r PRIMER_PRIORITY
+      PRIMER_PRIORITY="${PRIMER_PRIORITY:-${PRIMER_COUNT}0}"
+
+      # Escape single quotes for SQL
+      ESCAPED_KEY="${PRIMER_KEY//\'/\'\'}"
+      ESCAPED_CONTENT="${PRIMER_CONTENT//\'/\'\'}"
+
+      case "$BACKEND" in
+        postgres)
+          psql "$DB_NAME" -c "INSERT INTO primer (key, content, priority) VALUES ('${ESCAPED_KEY}', '${ESCAPED_CONTENT}', ${PRIMER_PRIORITY}) ON CONFLICT (key) DO UPDATE SET content = EXCLUDED.content, priority = EXCLUDED.priority;" 2>/dev/null
+          ;;
+        sqlite)
+          sqlite3 "$CONN_STRING" "INSERT OR REPLACE INTO primer (key, content, priority) VALUES ('${ESCAPED_KEY}', '${ESCAPED_CONTENT}', ${PRIMER_PRIORITY});" 2>/dev/null
+          ;;
+        mysql)
+          mysql -e "INSERT INTO primer (\`key\`, content, priority) VALUES ('${ESCAPED_KEY}', '${ESCAPED_CONTENT}', ${PRIMER_PRIORITY}) ON DUPLICATE KEY UPDATE content=VALUES(content), priority=VALUES(priority);" "$DB_NAME" 2>/dev/null
+          ;;
+      esac
+
+      PRIMER_COUNT=$((PRIMER_COUNT + 1))
+      ok "Added: ${PRIMER_KEY}"
+      echo ""
+    done
+
+    if [[ $PRIMER_COUNT -gt 0 ]]; then
+      ok "Added ${PRIMER_COUNT} primer rule(s)"
+      detail "These will be injected before the agent's first thought each session."
+    fi
+
+    blank
+  else
+    detail "No problem — you can add primer rules anytime with SQL or ask your agent to do it."
+    detail "See: https://github.com/jamesdwilson/Sh4d0wDB#importing-your-identity"
+    blank
+  fi
+fi
+
+
+# ┌────────────────────────────────────────────────────────────────────────────┐
+# │                                                                            │
 # │   STEP 9 of 9:  RESTART GATEWAY & VERIFY                                  │
 # │                                                                            │
 # └────────────────────────────────────────────────────────────────────────────┘
