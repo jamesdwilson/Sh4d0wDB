@@ -107,23 +107,11 @@ export class SQLiteStore extends MemoryStore {
     `);
 
     // Trigram FTS5 virtual table for substring/fuzzy search
-    const trigramExists = this.db.prepare(
-      `SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`,
-    ).get(`${this.config.table}_trigram`);
-
     this.db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS ${this.config.table}_trigram USING fts5(
         title, content, content=${this.config.table}, content_rowid=id,
         tokenize='trigram'
       );
-    `);
-
-    // Migration: drop old triggers that don't sync the trigram table,
-    // then recreate them. Safe to run every time (IF NOT EXISTS handles steady state).
-    this.db.exec(`
-      DROP TRIGGER IF EXISTS ${this.config.table}_ai;
-      DROP TRIGGER IF EXISTS ${this.config.table}_ad;
-      DROP TRIGGER IF EXISTS ${this.config.table}_au;
     `);
 
     // Triggers to keep both FTS5 tables in sync
@@ -145,21 +133,6 @@ export class SQLiteStore extends MemoryStore {
         INSERT INTO ${this.config.table}_trigram(rowid, title, content) VALUES (new.id, new.title, new.content);
       END;
     `);
-
-    // Backfill trigram table for existing databases (one-time migration)
-    if (!trigramExists) {
-      const count = this.db.prepare(
-        `SELECT COUNT(*) as n FROM ${this.config.table} WHERE deleted_at IS NULL`,
-      ).get() as { n: number };
-
-      if (count.n > 0) {
-        this.db.exec(`
-          INSERT INTO ${this.config.table}_trigram(rowid, title, content)
-            SELECT id, title, content FROM ${this.config.table};
-        `);
-        this.logger.info(`memory-shadowdb: backfilled trigram index for ${count.n} records`);
-      }
-    }
 
     // Vector table (if sqlite-vec is available)
     if (this.hasVec) {
