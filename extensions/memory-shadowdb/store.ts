@@ -138,18 +138,39 @@ export abstract class MemoryStore {
    * @returns Ranked, deduplicated results with snippets and citations
    */
   async search(query: string, maxResults: number, minScore: number): Promise<SearchResult[]> {
+    const searchStart = Date.now();
+    this.logger.info(`memory-shadowdb: search start — query="${query.slice(0, 80)}", maxResults=${maxResults}, minScore=${minScore}`);
+
+    const embedStart = Date.now();
     const embedding = await this.embedder.embed(query, "query");
+    const embedMs = Date.now() - embedStart;
+    this.logger.info(`memory-shadowdb: embedding generated in ${embedMs}ms (dims=${embedding.length})`);
+
     const oversample = maxResults * 5;
 
     // Run all search legs in parallel — backends return [] for unsupported signals
+    const legStart = Date.now();
     const [vectorHits, ftsHits, fuzzyHits] = await Promise.all([
-      this.vectorSearch(query, embedding, oversample).catch(() => [] as RankedHit[]),
-      this.textSearch(query, oversample).catch(() => [] as RankedHit[]),
-      this.fuzzySearch(query, oversample).catch(() => [] as RankedHit[]),
+      this.vectorSearch(query, embedding, oversample).catch((err) => {
+        this.logger.warn(`memory-shadowdb: vectorSearch failed: ${err instanceof Error ? err.message : String(err)}`);
+        return [] as RankedHit[];
+      }),
+      this.textSearch(query, oversample).catch((err) => {
+        this.logger.warn(`memory-shadowdb: textSearch failed: ${err instanceof Error ? err.message : String(err)}`);
+        return [] as RankedHit[];
+      }),
+      this.fuzzySearch(query, oversample).catch((err) => {
+        this.logger.warn(`memory-shadowdb: fuzzySearch failed: ${err instanceof Error ? err.message : String(err)}`);
+        return [] as RankedHit[];
+      }),
     ]);
+    const legMs = Date.now() - legStart;
+    this.logger.info(`memory-shadowdb: search legs completed in ${legMs}ms — vector=${vectorHits.length}, fts=${ftsHits.length}, fuzzy=${fuzzyHits.length}`);
 
     // Merge via RRF
     const merged = this.mergeRRF(vectorHits, ftsHits, fuzzyHits, maxResults, minScore);
+    const totalMs = Date.now() - searchStart;
+    this.logger.info(`memory-shadowdb: search complete in ${totalMs}ms — ${merged.length} results (embed=${embedMs}ms, legs=${legMs}ms)`);
 
     // Format as SearchResult[]
     return merged.map((hit) => {
@@ -250,7 +271,9 @@ export abstract class MemoryStore {
     rowCount: number;
     truncated: boolean;
   } | null> {
+    const primerStart = Date.now();
     const rows = await this.getPrimerRows();
+    this.logger.info(`memory-shadowdb: getPrimerContext — ${rows.length} rows from DB, maxChars=${maxChars}`);
     if (rows.length === 0) return null;
 
     // Format each row as a markdown section: ## {key}\n{content}
@@ -273,6 +296,8 @@ export abstract class MemoryStore {
       ? `${truncateCleanly(fullText, trimmedMax)}\n\n[...primer context truncated...]`
       : fullText;
 
+    const primerMs = Date.now() - primerStart;
+    this.logger.info(`memory-shadowdb: getPrimerContext complete — fullText=${fullText.length} chars, injected=${text.length} chars, truncated=${truncated}, digest=${digest}, ${primerMs}ms`);
     return { text, digest, totalChars: fullText.length, rowCount: sections.length, truncated };
   }
 
@@ -297,14 +322,22 @@ export abstract class MemoryStore {
     const title = sanitizeString(params.title, MAX_TITLE_LENGTH) || null;
     const tags = sanitizeTags(params.tags);
 
+    this.logger.info(`memory-shadowdb: write — category="${category}", title="${title || "(none)}", tags=[${tags.join(",")}], contentLen=${content.length}`);
+    const writeStart = Date.now();
     const newId = await this.insertRecord({ content, category, title, tags });
+    const insertMs = Date.now() - writeStart;
 
     let embedded = false;
     if (this.config.autoEmbed) {
+      const embedStart = Date.now();
       embedded = await this.tryEmbed(newId, content);
+      const embedMs = Date.now() - embedStart;
+      this.logger.info(`memory-shadowdb: write embed — id=${newId}, success=${embedded}, ${embedMs}ms`);
     }
 
+    const totalMs = Date.now() - writeStart;
     const path = `shadowdb/${category}/${newId}`;
+    this.logger.info(`memory-shadowdb: write complete — id=${newId}, embedded=${embedded}, ${totalMs}ms (insert=${insertMs}ms)`);
     return {
       ok: true,
       operation: "write",
@@ -357,15 +390,21 @@ export abstract class MemoryStore {
       throw new Error("At least one field (content, title, category, tags) must be provided");
     }
 
+    this.logger.info(`memory-shadowdb: update — id=${params.id}, fields=[${Object.keys(patch).join(",")}], contentChanged=${contentChanged}`);
+    const updateStart = Date.now();
     await this.updateRecord(params.id, patch);
 
     let embedded = false;
     if (contentChanged && this.config.autoEmbed) {
+      const embedStart = Date.now();
       embedded = await this.tryEmbed(params.id, patch.content as string);
+      this.logger.info(`memory-shadowdb: update embed — id=${params.id}, success=${embedded}, ${Date.now() - embedStart}ms`);
     }
 
+    const totalMs = Date.now() - updateStart;
     const category = (patch.category as string) || existing.category || "general";
     const path = `shadowdb/${category}/${params.id}`;
+    this.logger.info(`memory-shadowdb: update complete — id=${params.id}, embedded=${embedded}, ${totalMs}ms`);
     return {
       ok: true,
       operation: "update",
@@ -388,12 +427,14 @@ export abstract class MemoryStore {
     const path = `shadowdb/${category}/${params.id}`;
 
     if (existing.deleted_at !== null) {
+      this.logger.info(`memory-shadowdb: delete — id=${params.id} already deleted`);
       return {
         ok: true, operation: "delete", id: params.id, path, embedded: false,
         message: `Record ${params.id} already deleted (deleted_at: ${existing.deleted_at})`,
       };
     }
 
+    this.logger.info(`memory-shadowdb: delete — id=${params.id}, category="${category}"`);
     await this.softDeleteRecord(params.id);
 
     const purgeNote = this.config.purgeAfterDays > 0
@@ -419,12 +460,14 @@ export abstract class MemoryStore {
     const path = `shadowdb/${category}/${params.id}`;
 
     if (existing.deleted_at === null) {
+      this.logger.info(`memory-shadowdb: undelete — id=${params.id} not deleted, no-op`);
       return {
         ok: true, operation: "write", id: params.id, path, embedded: false,
         message: `Record ${params.id} is not deleted — no action needed`,
       };
     }
 
+    this.logger.info(`memory-shadowdb: undelete — id=${params.id}, category="${category}"`);
     await this.restoreRecord(params.id);
 
     return {

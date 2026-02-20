@@ -213,7 +213,11 @@ const memoryShadowdbPlugin = {
       api.on("before_agent_start", async (_event, ctx) => {
         try {
           const s = await getStore();
-          const currentModel = (ctx as Record<string, unknown>)?.model as string | undefined;
+          // Model isn't in the hook context (model resolution happens after this hook).
+          // Read from the agent config's primary model, or the session-level override if available.
+          const currentModel =
+            (ctx as Record<string, unknown>)?.model as string | undefined ||
+            api.config?.agents?.defaults?.model?.primary as string | undefined;
           const effectiveMaxChars = resolveMaxCharsForModel(primerCfg, currentModel);
 
           const primer = await s.getPrimerContext(effectiveMaxChars);
@@ -221,6 +225,18 @@ const memoryShadowdbPlugin = {
 
           const sessionKey = (ctx?.sessionKey || "__global__").trim();
           const now = Date.now();
+
+          // Detect session reset (/new): if message history is empty, evict cache
+          // so the primer is re-injected on the first turn of the new session.
+          // Without this, /new clears history but the primerState cache still has
+          // the session key, causing the hook to skip injection (mode=digest/first-run).
+          const eventMessages = (_event as Record<string, unknown>)?.messages;
+          const historyLength = Array.isArray(eventMessages) ? eventMessages.length : -1;
+          if (historyLength === 0) {
+            primerState.delete(sessionKey);
+            api.logger.info(`memory-shadowdb: session reset detected (session=${sessionKey}) — evicting primer cache`);
+          }
+
           const prev = primerState.get(sessionKey);
 
           // Decide whether to inject this turn or skip (let history carry it)
@@ -239,7 +255,10 @@ const memoryShadowdbPlugin = {
               (primerCfg.cacheTtlMs > 0 && now - prev.at >= primerCfg.cacheTtlMs);
           }
 
-          if (!shouldInject) return;
+          if (!shouldInject) {
+            api.logger.info(`memory-shadowdb: primer skipped (cached, session=${sessionKey}, mode=${primerCfg.mode}, age=${prev ? Math.round((now - prev.at) / 1000) + 's' : 'n/a'}, ttl=${Math.round(primerCfg.cacheTtlMs / 1000)}s)`);
+            return;
+          }
 
           // Record that we injected for this session
           primerState.set(sessionKey, { digest: primer.digest, at: now });
@@ -253,6 +272,11 @@ const memoryShadowdbPlugin = {
             for (const key of stale) primerState.delete(key);
           }
 
+          const injectedChars = primer.text.length;
+          api.logger.info(`memory-shadowdb: primer injected (${injectedChars} chars injected, ${primer.totalChars} total in DB, ${primer.rowCount} rows, truncated=${primer.truncated}, model=${currentModel || "default"}, maxChars=${effectiveMaxChars}, session=${sessionKey})`);
+          if (primer.truncated) {
+            api.logger.warn(`memory-shadowdb: primer was truncated from ${primer.totalChars} to ${injectedChars} chars (maxChars=${effectiveMaxChars}). Consider reducing primer content or increasing maxChars for model=${currentModel || "default"}.`);
+          }
           return {
             prependContext:
               `init:\n` +
@@ -289,6 +313,8 @@ const memoryShadowdbPlugin = {
             const max = (params.maxResults as number) ?? maxResultsDefault;
             const min = (params.minScore as number) ?? minScoreDefault;
 
+            api.logger.info(`memory-shadowdb: tool memory_search called — query="${query.slice(0, 80)}", max=${max}, min=${min}`);
+
             try {
               const s = await getStore();
               const results = await s.search(query, max, min);
@@ -298,6 +324,7 @@ const memoryShadowdbPlugin = {
                 snippet: `${r.snippet.trim()}\n\nSource: ${r.citation}`,
               }));
 
+              api.logger.info(`memory-shadowdb: tool memory_search returned ${decorated.length} results`);
               return jsonResult({
                 results: decorated,
                 provider: "shadowdb",
