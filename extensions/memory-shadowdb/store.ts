@@ -258,10 +258,24 @@ export abstract class MemoryStore {
   /**
    * Load primer context from the `primer` table.
    *
-   * Fetches rows ordered by priority, formats as markdown sections,
-   * enforces maxChars budget, and generates a content digest for caching.
+   * Uses PROGRESSIVE FILL (reverse pyramid): rows are ordered by priority
+   * (lowest = most important). Each complete section is added only if it fits
+   * the remaining character budget. This ensures:
    *
-   * @param maxChars - Maximum characters to return (truncation marked in output)
+   * - Small models get only the most critical rows (identity, safety)
+   * - Large models get everything that fits
+   * - Sections are NEVER cut mid-content — you get whole sections or nothing
+   * - Priority ordering means the most important context always wins
+   *
+   * Example with 3000 char budget and rows at priority 0/1/2/3:
+   *   Priority 0 (soul, 222 chars)       → fits ✅ (2778 remaining)
+   *   Priority 0 (core-rules, 603 chars)  → fits ✅ (2175 remaining)
+   *   Priority 1 (nag-system, 890 chars)  → fits ✅ (1285 remaining)
+   *   Priority 1 (tool-rules, 912 chars)  → fits ✅ (373 remaining)
+   *   Priority 1 (beat-cycle, 627 chars)  → SKIP ❌ (over budget)
+   *   Priority 2+ → all skipped
+   *
+   * @param maxChars - Character budget (0 = unlimited)
    * @returns Primer context with text, digest, and metadata; null if no rows
    */
   async getPrimerContext(maxChars: number): Promise<{
@@ -269,6 +283,8 @@ export abstract class MemoryStore {
     digest: string;
     totalChars: number;
     rowCount: number;
+    includedCount: number;
+    skippedKeys: string[];
     truncated: boolean;
   } | null> {
     const primerStart = Date.now();
@@ -277,28 +293,61 @@ export abstract class MemoryStore {
     if (rows.length === 0) return null;
 
     // Format each row as a markdown section: ## {key}\n{content}
-    const sections = rows
+    const formatted = rows
       .map((row) => {
         const key = String(row.key || "primer").trim();
         const content = String(row.content || "").trim();
-        return content ? `## ${key}\n${content}` : "";
+        return content ? { key, section: `## ${key}\n${content}` } : null;
       })
-      .filter(Boolean);
+      .filter((r): r is { key: string; section: string } => r !== null);
 
-    if (sections.length === 0) return null;
+    if (formatted.length === 0) return null;
 
-    const fullText = sections.join("\n\n");
+    // Build full text for digest (so cache invalidation still works when DB changes)
+    const fullText = formatted.map((r) => r.section).join("\n\n");
     const digest = createHash("sha1").update(fullText).digest("hex").slice(0, 16);
 
-    const trimmedMax = Math.max(0, maxChars);
-    const truncated = trimmedMax > 0 && fullText.length > trimmedMax;
-    const text = truncated
-      ? `${truncateCleanly(fullText, trimmedMax)}\n\n[...primer context truncated...]`
-      : fullText;
+    const budget = Math.max(0, maxChars);
+
+    // Progressive fill: add whole sections in priority order until budget exhausted
+    const included: string[] = [];
+    const skippedKeys: string[] = [];
+    let usedChars = 0;
+
+    for (const { key, section } of formatted) {
+      // Cost includes the \n\n separator between sections
+      const separatorCost = included.length > 0 ? 2 : 0;
+      const sectionCost = section.length + separatorCost;
+
+      if (budget > 0 && usedChars + sectionCost > budget) {
+        skippedKeys.push(key);
+        continue;
+      }
+
+      included.push(section);
+      usedChars += sectionCost;
+    }
+
+    if (included.length === 0) return null;
+
+    const text = included.join("\n\n");
+    const truncated = skippedKeys.length > 0;
+
+    if (truncated) {
+      // Append a note so the agent knows some context was omitted
+      const note = `\n\n[primer: ${skippedKeys.length} section(s) omitted due to ${budget} char budget: ${skippedKeys.join(", ")}]`;
+      // Only add note if it fits, otherwise skip it silently
+      if (text.length + note.length <= budget || budget === 0) {
+        const textWithNote = text + note;
+        const primerMs = Date.now() - primerStart;
+        this.logger.info(`memory-shadowdb: getPrimerContext complete — ${included.length}/${formatted.length} sections, ${textWithNote.length}/${fullText.length} chars, skipped=[${skippedKeys.join(",")}], digest=${digest}, ${primerMs}ms`);
+        return { text: textWithNote, digest, totalChars: fullText.length, rowCount: formatted.length, includedCount: included.length, skippedKeys, truncated };
+      }
+    }
 
     const primerMs = Date.now() - primerStart;
-    this.logger.info(`memory-shadowdb: getPrimerContext complete — fullText=${fullText.length} chars, injected=${text.length} chars, truncated=${truncated}, digest=${digest}, ${primerMs}ms`);
-    return { text, digest, totalChars: fullText.length, rowCount: sections.length, truncated };
+    this.logger.info(`memory-shadowdb: getPrimerContext complete — ${included.length}/${formatted.length} sections, ${text.length}/${fullText.length} chars, skipped=[${skippedKeys.join(",")}], digest=${digest}, ${primerMs}ms`);
+    return { text, digest, totalChars: fullText.length, rowCount: formatted.length, includedCount: included.length, skippedKeys, truncated };
   }
 
   // ==========================================================================

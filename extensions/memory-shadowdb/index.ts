@@ -273,9 +273,9 @@ const memoryShadowdbPlugin = {
           }
 
           const injectedChars = primer.text.length;
-          api.logger.info(`memory-shadowdb: primer injected (${injectedChars} chars injected, ${primer.totalChars} total in DB, ${primer.rowCount} rows, truncated=${primer.truncated}, model=${currentModel || "default"}, maxChars=${effectiveMaxChars}, session=${sessionKey})`);
+          api.logger.info(`memory-shadowdb: primer injected (${injectedChars} chars, ${primer.includedCount}/${primer.rowCount} sections, model=${currentModel || "default"}, maxChars=${effectiveMaxChars}, session=${sessionKey})`);
           if (primer.truncated) {
-            api.logger.warn(`memory-shadowdb: primer was truncated from ${primer.totalChars} to ${injectedChars} chars (maxChars=${effectiveMaxChars}). Consider reducing primer content or increasing maxChars for model=${currentModel || "default"}.`);
+            api.logger.warn(`memory-shadowdb: primer budget exceeded — skipped ${primer.skippedKeys.length} section(s): [${primer.skippedKeys.join(", ")}]. Total DB content: ${primer.totalChars} chars, budget: ${effectiveMaxChars}. Model: ${currentModel || "default"}`);
           }
           return {
             prependContext:
