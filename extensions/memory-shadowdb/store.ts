@@ -371,7 +371,7 @@ export abstract class MemoryStore {
     const title = sanitizeString(params.title, MAX_TITLE_LENGTH) || null;
     const tags = sanitizeTags(params.tags);
 
-    this.logger.info(`memory-shadowdb: write — category="${category}", title="${title || "(none)}", tags=[${tags.join(",")}], contentLen=${content.length}`);
+    this.logger.info(`memory-shadowdb: write -- category=${category}, title=${title || "(none)"}, tags=[${tags.join(",")}], contentLen=${content.length}`);
     const writeStart = Date.now();
     const newId = await this.insertRecord({ content, category, title, tags });
     const insertMs = Date.now() - writeStart;
