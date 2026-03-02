@@ -180,23 +180,55 @@ export class PostgresStore extends MemoryStore {
     // ==========================================================================
     // Read operations
     // ==========================================================================
-    async get(id) {
+    async get(id, opts) {
         const sql = `SELECT id, content, category, title, record_type FROM ${this.config.table} WHERE id = $1 AND deleted_at IS NULL`;
         const result = await this.getPool().query(sql, [id]);
         if (result.rows.length === 0)
             return null;
         const row = result.rows[0];
-        return {
-            text: this.formatFullRecord(row),
-            path: `shadowdb/${row.category || "general"}/${row.id}`,
-        };
+        let text = this.formatFullRecord(row);
+        const path = `shadowdb/${row.category || "general"}/${row.id}`;
+        // section: return only the child whose metadata->>'section_name' matches
+        if (opts?.section) {
+            const sectionSql = `
+        SELECT id, content, category, title, record_type
+        FROM ${this.config.table}
+        WHERE parent_id = $1 AND deleted_at IS NULL AND metadata->>'section_name' = $2
+        LIMIT 1
+      `;
+            const sectionResult = await this.getPool().query(sectionSql, [id, opts.section]);
+            if (sectionResult.rows.length > 0) {
+                text = this.formatFullRecord(sectionResult.rows[0]);
+            }
+            else {
+                text += `\n\n[section "${opts.section}" not found]`;
+            }
+            return { text, path };
+        }
+        // include_children: append all child records
+        if (opts?.include_children) {
+            const childSql = `
+        SELECT id, content, category, title, record_type
+        FROM ${this.config.table}
+        WHERE parent_id = $1 AND deleted_at IS NULL
+        ORDER BY priority ASC, id ASC
+      `;
+            const childResult = await this.getPool().query(childSql, [id]);
+            if (childResult.rows.length > 0) {
+                text += "\n\n---\n## Children\n";
+                for (const child of childResult.rows) {
+                    text += `\n### [${child.id}] ${child.title || child.record_type || "child"}\n${child.content}\n`;
+                }
+            }
+        }
+        return { text, path };
     }
-    async getByPath(pathQuery, from, lines) {
+    async getByPath(pathQuery, from, lines, opts) {
         const parts = pathQuery.replace(/^shadowdb\//, "").split("/");
         // Specific record by ID
         if (parts.length >= 2 && /^\d+$/.test(parts[parts.length - 1])) {
             const id = parseInt(parts[parts.length - 1], 10);
-            const record = await this.get(id);
+            const record = await this.get(id, opts);
             if (!record)
                 return { text: `Record ${id} not found`, path: pathQuery };
             if (from || lines) {

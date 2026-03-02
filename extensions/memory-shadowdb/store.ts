@@ -771,10 +771,10 @@ export abstract class MemoryStore {
   // --- Read operations ---
 
   /** Fetch a single record by ID (null if not found or deleted). */
-  abstract get(id: number): Promise<{ text: string; path: string } | null>;
+  abstract get(id: number, opts?: { include_children?: boolean; section?: string }): Promise<{ text: string; path: string } | null>;
 
   /** Fetch by virtual path (category listing or specific record). */
-  abstract getByPath(pathQuery: string, from?: number, lines?: number): Promise<{ text: string; path: string }>;
+  abstract getByPath(pathQuery: string, from?: number, lines?: number, opts?: { include_children?: boolean; section?: string }): Promise<{ text: string; path: string }>;
 
   /** Fetch primer rows ordered by priority. */
   protected abstract getPrimerRows(): Promise<PrimerRow[]>;

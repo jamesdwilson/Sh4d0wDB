@@ -257,12 +257,18 @@ export declare abstract class MemoryStore {
     /** Fuzzy/typo-tolerant search. Return [] if unsupported (e.g., SQLite, MySQL). */
     protected abstract fuzzySearch(query: string, limit: number, filters?: SearchFilters): Promise<RankedHit[]>;
     /** Fetch a single record by ID (null if not found or deleted). */
-    abstract get(id: number): Promise<{
+    abstract get(id: number, opts?: {
+        include_children?: boolean;
+        section?: string;
+    }): Promise<{
         text: string;
         path: string;
     } | null>;
     /** Fetch by virtual path (category listing or specific record). */
-    abstract getByPath(pathQuery: string, from?: number, lines?: number): Promise<{
+    abstract getByPath(pathQuery: string, from?: number, lines?: number, opts?: {
+        include_children?: boolean;
+        section?: string;
+    }): Promise<{
         text: string;
         path: string;
     }>;

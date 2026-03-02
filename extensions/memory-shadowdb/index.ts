@@ -372,19 +372,25 @@ const memoryShadowdbPlugin = {
           label: "Memory Get",
           name: "memory_get",
           description:
-            "Read a specific ShadowDB record by path (shadowdb/{category}/{id}); use after memory_search to pull full content.",
+            "Read a specific ShadowDB record by path (shadowdb/{category}/{id}); use after memory_search to pull full content. Use include_children to fetch child records, or section to fetch a specific child by metadata.section_name.",
           parameters: Type.Object({
             path: Type.String(),
             from: Type.Optional(Type.Number()),
             lines: Type.Optional(Type.Number()),
+            include_children: Type.Optional(Type.Boolean({ description: "Also fetch and append child records (WHERE parent_id = id)" })),
+            section: Type.Optional(Type.String({ description: "Return only child WHERE metadata->>'section_name' = this value" })),
           }),
           execute: async (_toolCallId: string, params: Record<string, unknown>) => {
             const reqPath = (params.path as string)?.trim();
             if (!reqPath) return jsonResult({ path: "", text: "", error: "path required" });
 
+            const opts: { include_children?: boolean; section?: string } = {};
+            if (params.include_children) opts.include_children = true;
+            if (params.section) opts.section = params.section as string;
+
             try {
               const s = await getStore();
-              const result = await s.getByPath(reqPath, params.from as number, params.lines as number);
+              const result = await s.getByPath(reqPath, params.from as number, params.lines as number, opts);
               return jsonResult(result);
             } catch (err) {
               const message = err instanceof Error ? err.message : String(err);

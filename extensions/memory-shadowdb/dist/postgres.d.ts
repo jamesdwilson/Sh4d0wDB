@@ -41,11 +41,17 @@ export declare class PostgresStore extends MemoryStore {
     protected vectorSearch(query: string, embedding: number[], limit: number, filters?: SearchFilters): Promise<RankedHit[]>;
     protected textSearch(query: string, limit: number, filters?: SearchFilters): Promise<RankedHit[]>;
     protected fuzzySearch(query: string, limit: number, filters?: SearchFilters): Promise<RankedHit[]>;
-    get(id: number): Promise<{
+    get(id: number, opts?: {
+        include_children?: boolean;
+        section?: string;
+    }): Promise<{
         text: string;
         path: string;
     } | null>;
-    getByPath(pathQuery: string, from?: number, lines?: number): Promise<{
+    getByPath(pathQuery: string, from?: number, lines?: number, opts?: {
+        include_children?: boolean;
+        section?: string;
+    }): Promise<{
         text: string;
         path: string;
     }>;
