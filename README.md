@@ -368,6 +368,78 @@ These numbers are per agent. Scale to 1,000 agents and file-based memory wastes 
 
 ---
 
+## Skills: The Token Ceiling Problem
+
+OpenClaw's native skill system loads every `SKILL.md` into your system prompt. This creates a hard limit:
+
+| Skill Count | Est. Tokens | Result |
+|-------------|-------------|--------|
+| 5 skills | ~15k tokens | Works fine |
+| 10 skills | ~30k tokens | Context getting tight |
+| 20 skills | ~60k tokens | Most models struggling |
+| 39+ skills | ~120k+ tokens | Broken — can't switch models |
+
+**The "normie" experience:** Install 5 skills, everything works. Install 10, context feels heavy. Install 20, model switching breaks. The framework silently degrades until even fresh `/new` sessions start with 15k-22k tokens of injected bloat.
+
+### Why This Happens
+
+OpenClaw injects skill manifests into every prompt to make tools "always available." This is the same "static injection" problem as identity files — convenience traded against scalability. Every skill you add increases your baseline token cost, whether you use it or not.
+
+### ShadowDB's Alternative: On-Demand Skill Discovery
+
+Skills become searchable memories:
+- Store skill metadata in ShadowDB (`category: skills`)
+- Agent searches when relevant (`m "skill for X"`)
+- Only load what you need, when you need it
+- Scale to hundreds of skills without token bloat
+
+**How it works:**
+1. Set `commands.nativeSkills: false` in `openclaw.json`
+2. Skills remain in `~/.openclaw/workspace/skills/` but aren't auto-loaded
+3. Import skill descriptions to ShadowDB via `memory_write` or SQL
+4. Agent discovers skills via `memory_search` when needed
+
+**Example workflow:**
+```
+User: "What's the weather like?"
+→ Agent searches: m "weather skill"
+→ Finds: "Skill: weather - Weather forecasts via wttr.in"
+→ Reads SKILL.md, uses skill
+→ Total tokens: ~50 for search vs ~15k for static injection
+```
+
+**The trade-off:** The agent must think to search. But this is a feature — it forces intentionality instead of implicit tool availability. You're not paying for 39 skills when you only need 3.
+
+### Implementation
+
+Add to `~/.openclaw/workspace/AGENTS.md`:
+```markdown
+## Tools & Skills
+
+Skills are discovered on-demand via ShadowDB search, not loaded into the system prompt.
+
+When you need a tool:
+1. Search ShadowDB: `m "skill for <task>"`
+2. Check `~/.openclaw/workspace/skills/` if needed
+3. Read SKILL.md and use the skill
+```
+
+Add skills to ShadowDB:
+```sql
+INSERT INTO memories (content, title, category, tags)
+VALUES 
+('Skill: weather - Weather forecasts via wttr.in. Use `weather` command or curl wttr.in/Location', 
+ 'Skill: weather', 'skills', '{"weather","forecast","cli"}'),
+('Skill: github - GitHub CLI operations. Use gh issue list, gh pr view, etc', 
+ 'Skill: github', 'skills', '{"github","git","dev-tools"}');
+```
+
+### Recommendation
+
+If you have more than 5-10 skills, migrate to ShadowDB discovery. The built-in system doesn't scale, and you'll hit invisible walls where model switching breaks, context gets truncated, and the agent becomes slower for no benefit.
+
+---
+
 ## How your identity works
 
 <details>

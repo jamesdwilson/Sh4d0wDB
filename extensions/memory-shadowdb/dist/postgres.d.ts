@@ -1,0 +1,79 @@
+/**
+ * postgres.ts — PostgreSQL backend for MemoryStore
+ *
+ * Implements all abstract methods from MemoryStore using:
+ * - pgvector for vector similarity search (cosine distance)
+ * - tsvector + tsquery for full-text search with BM25-style ranking
+ * - pg_trgm for fuzzy/typo-tolerant matching
+ * - Standard SQL for CRUD, soft-delete, and retention purge
+ *
+ * SECURITY:
+ * - All queries use parameterized SQL ($1, $2, ...) — no user input interpolation
+ * - Table name interpolation is safe: comes from plugin config only (not user input)
+ * - Connection pool capped at 3 to prevent resource exhaustion
+ * - Connection string may contain credentials — never logged
+ */
+import pg from "pg";
+import { MemoryStore, type RankedHit, type PrimerRow, type StoreConfig, type StoreLogger } from "./store.js";
+import type { EmbeddingClient } from "./embedder.js";
+/**
+ * PostgreSQL-backed memory store.
+ *
+ * The richest backend: full vector search, FTS, trigram fuzzy matching.
+ * Requires pgvector and pg_trgm extensions.
+ */
+export declare class PostgresStore extends MemoryStore {
+    private pool;
+    private connectionString;
+    constructor(params: {
+        connectionString: string;
+        embedder: EmbeddingClient;
+        config: StoreConfig;
+        logger: StoreLogger;
+    });
+    private getPool;
+    /**
+     * Expose pool for legacy compatibility (index.ts shared pool pattern).
+     * TODO: Remove once index.ts is fully migrated to use MemoryStore directly.
+     */
+    getSharedPool(): pg.Pool;
+    protected vectorSearch(query: string, embedding: number[], limit: number): Promise<RankedHit[]>;
+    protected textSearch(query: string, limit: number): Promise<RankedHit[]>;
+    protected fuzzySearch(query: string, limit: number): Promise<RankedHit[]>;
+    get(id: number): Promise<{
+        text: string;
+        path: string;
+    } | null>;
+    getByPath(pathQuery: string, from?: number, lines?: number): Promise<{
+        text: string;
+        path: string;
+    }>;
+    protected getPrimerRows(): Promise<PrimerRow[]>;
+    protected insertRecord(params: {
+        content: string;
+        category: string;
+        title: string | null;
+        tags: string[];
+    }): Promise<number>;
+    protected updateRecord(id: number, patch: Record<string, unknown>): Promise<void>;
+    protected softDeleteRecord(id: number): Promise<void>;
+    protected restoreRecord(id: number): Promise<void>;
+    protected fetchExpiredRecords(days: number): Promise<any[]>;
+    protected purgeExpiredRecords(days: number): Promise<number>;
+    protected storeEmbedding(id: number, embedding: number[]): Promise<void>;
+    protected getRecordMeta(id: number): Promise<{
+        id: number;
+        content: string;
+        category: string | null;
+        deleted_at: string | Date | null;
+    } | null>;
+    ping(): Promise<boolean>;
+    close(): Promise<void>;
+    initialize(): Promise<void>;
+    getMetaValue(key: string): Promise<string | null>;
+    setMetaValue(key: string, value: string): Promise<void>;
+    protected getRecordBatch(afterId: number, limit: number): Promise<Array<{
+        id: number;
+        content: string;
+    }>>;
+}
