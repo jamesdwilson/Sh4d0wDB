@@ -416,23 +416,20 @@ const memoryShadowdbPlugin = {
                 const memoryListTool = {
                     name: "memory_list",
                     description: "List and filter ShadowDB records by category, tags, record_type, priority, parent_id, or date range. Returns structured metadata. Use detail_level='full' to include content.",
-                    inputSchema: {
-                        type: "object",
-                        properties: {
-                            category: { type: "string", description: "Filter by category" },
-                            tags: { type: "array", items: { type: "string" }, description: "Filter by tags (all must match)" },
-                            record_type: { type: "string", description: "Filter by record type (atom, section, document, fact, index)" },
-                            parent_id: { type: "number", description: "Filter by parent record ID" },
-                            priority_min: { type: "number", description: "Minimum priority (1=highest, 10=lowest)" },
-                            priority_max: { type: "number", description: "Maximum priority" },
-                            created_after: { type: "string", description: "ISO date filter (created after)" },
-                            created_before: { type: "string", description: "ISO date filter (created before)" },
-                            detail_level: { type: "string", enum: ["summary", "snippet", "full"], description: "summary=metadata only, snippet=excerpt, full=full content" },
-                            limit: { type: "number", description: "Max results (default 50, max 200)" },
-                            offset: { type: "number", description: "Pagination offset" },
-                        },
-                    },
-                    execute: async (params) => {
+                    parameters: Type.Object({
+                        category: Type.Optional(Type.String({ description: "Filter by category" })),
+                        tags: Type.Optional(Type.Array(Type.String(), { description: "Filter by tags (all must match)" })),
+                        record_type: Type.Optional(Type.String({ description: "Filter by record type (atom, section, document, fact, index)" })),
+                        parent_id: Type.Optional(Type.Number({ description: "Filter by parent record ID" })),
+                        priority_min: Type.Optional(Type.Number({ description: "Minimum priority (1=highest, 10=lowest)" })),
+                        priority_max: Type.Optional(Type.Number({ description: "Maximum priority" })),
+                        created_after: Type.Optional(Type.String({ description: "ISO date filter (created after)" })),
+                        created_before: Type.Optional(Type.String({ description: "ISO date filter (created before)" })),
+                        detail_level: Type.Optional(Type.Union([Type.Literal("summary"), Type.Literal("snippet"), Type.Literal("full")], { description: "summary=metadata only, snippet=excerpt, full=full content" })),
+                        limit: Type.Optional(Type.Number({ description: "Max results (default 50, max 200)" })),
+                        offset: Type.Optional(Type.Number({ description: "Pagination offset" })),
+                    }),
+                    execute: async (_toolCallId, params) => {
                         try {
                             const store = await getStore();
                             const results = await store.list({
