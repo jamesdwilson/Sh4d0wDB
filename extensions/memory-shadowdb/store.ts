@@ -365,15 +365,21 @@ export abstract class MemoryStore {
     category?: string;
     title?: string;
     tags?: string[];
+    metadata?: Record<string, unknown>;
+    parent_id?: number;
+    priority?: number;
   }): Promise<WriteResult> {
     const content = validateContent(params.content);
     const category = sanitizeString(params.category, MAX_CATEGORY_LENGTH) || "general";
     const title = sanitizeString(params.title, MAX_TITLE_LENGTH) || null;
     const tags = sanitizeTags(params.tags);
+    const metadata = params.metadata && typeof params.metadata === "object" ? params.metadata : {};
+    const parent_id = typeof params.parent_id === "number" ? params.parent_id : null;
+    const priority = typeof params.priority === "number" ? Math.min(10, Math.max(1, Math.round(params.priority))) : 5;
 
     this.logger.info(`memory-shadowdb: write -- category=${category}, title=${title || "(none)"}, tags=[${tags.join(",")}], contentLen=${content.length}`);
     const writeStart = Date.now();
-    const newId = await this.insertRecord({ content, category, title, tags });
+    const newId = await this.insertRecord({ content, category, title, tags, metadata, parent_id, priority });
     const insertMs = Date.now() - writeStart;
 
     let embedded = false;
@@ -409,6 +415,9 @@ export abstract class MemoryStore {
     title?: string;
     category?: string;
     tags?: string[];
+    metadata?: Record<string, unknown>;
+    parent_id?: number | null;
+    priority?: number;
   }): Promise<WriteResult> {
     const existing = await this.getRecordMeta(params.id);
     if (!existing) throw new Error(`Record ${params.id} not found`);
@@ -433,6 +442,15 @@ export abstract class MemoryStore {
     }
     if (params.tags !== undefined) {
       patch.tags = sanitizeTags(params.tags);
+    }
+    if (params.metadata !== undefined && typeof params.metadata === "object") {
+      patch.metadata = params.metadata;
+    }
+    if (params.parent_id !== undefined) {
+      patch.parent_id = params.parent_id; // null allowed to unset
+    }
+    if (params.priority !== undefined && typeof params.priority === "number") {
+      patch.priority = Math.min(10, Math.max(1, Math.round(params.priority)));
     }
 
     if (Object.keys(patch).length === 0) {
@@ -739,11 +757,29 @@ export abstract class MemoryStore {
   // --- Write operations (raw DB, no validation — base class validates first) ---
 
   /** Insert a new record, return the new ID. */
+  /** List records with optional filters. */
+  abstract list(params: {
+    category?: string;
+    tags?: string[];
+    record_type?: string;
+    parent_id?: number;
+    priority_min?: number;
+    priority_max?: number;
+    created_after?: string;
+    created_before?: string;
+    detail_level?: "summary" | "snippet" | "full";
+    limit?: number;
+    offset?: number;
+  }): Promise<import("./types.js").ListResult[]>;
+
   protected abstract insertRecord(params: {
     content: string;
     category: string;
     title: string | null;
     tags: string[];
+    metadata: Record<string, unknown>;
+    parent_id: number | null;
+    priority: number;
   }): Promise<number>;
 
   /** Update record fields by ID. */

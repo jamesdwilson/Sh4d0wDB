@@ -1,5 +1,6 @@
--- ShadowDB PostgreSQL schema
+-- ShadowDB PostgreSQL schema (v0.3.0)
 -- Memory plugin for OpenClaw — semantic search + FTS + trigram hybrid retrieval.
+-- Multi-resolution memory with structured metadata, parent linking, and priority.
 
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
@@ -22,6 +23,9 @@ CREATE TABLE IF NOT EXISTS memories (
   category TEXT NOT NULL DEFAULT 'general',
   record_type TEXT NOT NULL DEFAULT 'fact',
   tags TEXT[] NOT NULL DEFAULT '{}',
+  metadata JSONB NOT NULL DEFAULT '{}',
+  parent_id BIGINT REFERENCES memories(id) ON DELETE SET NULL,
+  priority INTEGER NOT NULL DEFAULT 5,
   embedding VECTOR(768),
   fts TSVECTOR GENERATED ALWAYS AS (
     to_tsvector('english', coalesce(title, '') || ' ' || coalesce(content, ''))
@@ -39,6 +43,9 @@ CREATE INDEX IF NOT EXISTS memories_deleted_at_idx ON memories(deleted_at) WHERE
 CREATE INDEX IF NOT EXISTS memories_fts_idx ON memories USING GIN (fts);
 CREATE INDEX IF NOT EXISTS memories_content_trgm_idx ON memories USING GIN (content gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS memories_tags_idx ON memories USING GIN (tags);
+CREATE INDEX IF NOT EXISTS memories_metadata_idx ON memories USING GIN (metadata jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS memories_parent_id_idx ON memories(parent_id) WHERE parent_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS memories_priority_idx ON memories(priority);
 CREATE INDEX IF NOT EXISTS memories_embedding_hnsw_idx
   ON memories USING hnsw (embedding vector_cosine_ops)
   WHERE embedding IS NOT NULL;

@@ -217,16 +217,78 @@ export class PostgresStore extends MemoryStore {
     category: string;
     title: string | null;
     tags: string[];
+    metadata: Record<string, unknown>;
+    parent_id: number | null;
+    priority: number;
   }): Promise<number> {
     const sql = `
-      INSERT INTO ${this.config.table} (content, category, title, tags, record_type)
-      VALUES ($1, $2, $3, $4, 'fact')
+      INSERT INTO ${this.config.table} (content, category, title, tags, record_type, metadata, parent_id, priority)
+      VALUES ($1, $2, $3, $4, 'fact', $5::jsonb, $6, $7)
       RETURNING id
     `;
     const result = await this.getPool().query(sql, [
       params.content, params.category, params.title, params.tags,
+      JSON.stringify(params.metadata), params.parent_id, params.priority,
     ]);
     return result.rows[0].id;
+  }
+
+  async list(params: {
+    category?: string;
+    tags?: string[];
+    record_type?: string;
+    parent_id?: number;
+    priority_min?: number;
+    priority_max?: number;
+    created_after?: string;
+    created_before?: string;
+    detail_level?: "summary" | "snippet" | "full";
+    limit?: number;
+    offset?: number;
+  }): Promise<import("./types.js").ListResult[]> {
+    const conditions: string[] = ["deleted_at IS NULL"];
+    const values: unknown[] = [];
+    let idx = 1;
+
+    if (params.category) { conditions.push(`category = $${idx++}`); values.push(params.category); }
+    if (params.record_type) { conditions.push(`record_type = $${idx++}`); values.push(params.record_type); }
+    if (params.parent_id !== undefined) { conditions.push(`parent_id = $${idx++}`); values.push(params.parent_id); }
+    if (params.priority_min !== undefined) { conditions.push(`priority >= $${idx++}`); values.push(params.priority_min); }
+    if (params.priority_max !== undefined) { conditions.push(`priority <= $${idx++}`); values.push(params.priority_max); }
+    if (params.created_after) { conditions.push(`created_at >= $${idx++}`); values.push(params.created_after); }
+    if (params.created_before) { conditions.push(`created_at <= $${idx++}`); values.push(params.created_before); }
+    if (params.tags && params.tags.length > 0) { conditions.push(`tags @> $${idx++}`); values.push(params.tags); }
+
+    const where = conditions.join(" AND ");
+    const lim = Math.min(params.limit ?? 50, 200);
+    const off = params.offset ?? 0;
+    const contentCol = params.detail_level === "full" || params.detail_level === "snippet"
+      ? ", content" : "";
+
+    const sql = `
+      SELECT id, category, title, record_type, priority, parent_id,
+             COALESCE(metadata, '{}') as metadata, created_at, COALESCE(tags, '{}') as tags${contentCol}
+      FROM ${this.config.table}
+      WHERE ${where}
+      ORDER BY priority ASC, created_at DESC
+      LIMIT $${idx++} OFFSET $${idx++}
+    `;
+    values.push(lim, off);
+
+    const result = await this.getPool().query(sql, values);
+    return result.rows.map((row: Record<string, unknown>) => ({
+      id: row.id as number,
+      path: `shadowdb/${row.category || "general"}/${row.id}`,
+      category: row.category as string | null,
+      title: row.title as string | null,
+      record_type: row.record_type as string | null,
+      priority: row.priority as number,
+      parent_id: row.parent_id as number | null,
+      metadata: row.metadata as Record<string, unknown>,
+      created_at: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+      tags: row.tags as string[],
+      ...(contentCol ? { content: row.content as string } : {}),
+    }));
   }
 
   protected async updateRecord(id: number, patch: Record<string, unknown>): Promise<void> {

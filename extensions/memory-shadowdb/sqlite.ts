@@ -338,13 +338,70 @@ export class SQLiteStore extends MemoryStore {
     category: string;
     title: string | null;
     tags: string[];
+    metadata: Record<string, unknown>;
+    parent_id: number | null;
+    priority: number;
   }): Promise<number> {
     const result = this.db.prepare(`
-      INSERT INTO ${this.config.table} (content, category, title, tags, record_type)
-      VALUES (?, ?, ?, ?, 'fact')
-    `).run(params.content, params.category, params.title, JSON.stringify(params.tags));
+      INSERT INTO ${this.config.table} (content, category, title, tags, record_type, metadata, parent_id, priority)
+      VALUES (?, ?, ?, ?, 'fact', ?, ?, ?)
+    `).run(params.content, params.category, params.title, JSON.stringify(params.tags),
+           JSON.stringify(params.metadata), params.parent_id, params.priority);
 
     return Number(result.lastInsertRowid);
+  }
+
+  async list(params: {
+    category?: string;
+    tags?: string[];
+    record_type?: string;
+    parent_id?: number;
+    priority_min?: number;
+    priority_max?: number;
+    created_after?: string;
+    created_before?: string;
+    detail_level?: "summary" | "snippet" | "full";
+    limit?: number;
+    offset?: number;
+  }): Promise<import("./types.js").ListResult[]> {
+    const conditions: string[] = ["deleted_at IS NULL"];
+    const values: unknown[] = [];
+
+    if (params.category) { conditions.push("category = ?"); values.push(params.category); }
+    if (params.record_type) { conditions.push("record_type = ?"); values.push(params.record_type); }
+    if (params.parent_id !== undefined) { conditions.push("parent_id = ?"); values.push(params.parent_id); }
+    if (params.priority_min !== undefined) { conditions.push("priority >= ?"); values.push(params.priority_min); }
+    if (params.priority_max !== undefined) { conditions.push("priority <= ?"); values.push(params.priority_max); }
+    if (params.created_after) { conditions.push("created_at >= ?"); values.push(params.created_after); }
+    if (params.created_before) { conditions.push("created_at <= ?"); values.push(params.created_before); }
+
+    const where = conditions.join(" AND ");
+    const lim = Math.min(params.limit ?? 50, 200);
+    const off = params.offset ?? 0;
+    const contentCol = params.detail_level === "full" || params.detail_level === "snippet" ? ", content" : "";
+
+    const rows = this.db.prepare(`
+      SELECT id, category, title, record_type, priority, parent_id,
+             COALESCE(metadata, '{}') as metadata, created_at, COALESCE(tags, '[]') as tags${contentCol}
+      FROM ${this.config.table}
+      WHERE ${where}
+      ORDER BY priority ASC, created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...values, lim, off) as Record<string, unknown>[];
+
+    return rows.map((row) => ({
+      id: row.id as number,
+      path: `shadowdb/${row.category || "general"}/${row.id}`,
+      category: row.category as string | null,
+      title: row.title as string | null,
+      record_type: row.record_type as string | null,
+      priority: row.priority as number ?? 5,
+      parent_id: row.parent_id as number | null,
+      metadata: JSON.parse(typeof row.metadata === "string" ? row.metadata : "{}"),
+      created_at: String(row.created_at),
+      tags: JSON.parse(typeof row.tags === "string" ? row.tags : "[]"),
+      ...(contentCol ? { content: row.content as string } : {}),
+    }));
   }
 
   protected async updateRecord(id: number, patch: Record<string, unknown>): Promise<void> {
