@@ -927,7 +927,7 @@ export abstract class MemoryStore {
     created_before?: string;
     metadata?: Record<string, unknown>;
     detail_level?: "summary" | "snippet" | "full";
-    sort?: "created_at" | "updated_at" | "priority" | "title";
+    sort?: "created_at" | "updated_at" | "priority" | "title" | string;
     sort_order?: "asc" | "desc";
     limit?: number;
     offset?: number;
