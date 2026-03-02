@@ -144,7 +144,7 @@ export abstract class MemoryStore {
     maxResults: number,
     minScore: number,
     filters?: SearchFilters,
-    detailLevel?: "summary" | "snippet" | "full",
+    detailLevel?: "summary" | "snippet" | "section" | "full",
   ): Promise<SearchResult[]> {
     const searchStart = Date.now();
     this.logger.info(`memory-shadowdb: search start — query="${query.slice(0, 80)}", maxResults=${maxResults}, minScore=${minScore}, filters=${filters ? JSON.stringify(filters) : "none"}, detailLevel=${detailLevel || "snippet"}`);
@@ -195,6 +195,10 @@ export abstract class MemoryStore {
       } else if (level === "full") {
         // Full: complete content, no truncation
         snippet = this.formatFullRecord(hit);
+      } else if (level === "section") {
+        // Section: full content of the most relevant ## heading block (~200-500 tokens)
+        // Falls back to snippet if no heading structure
+        snippet = this.formatSection(hit, query);
       } else {
         // Snippet: current default behavior
         snippet = this.formatSnippet(hit);
@@ -899,6 +903,76 @@ export abstract class MemoryStore {
     parts.push("");
     parts.push(row.content || "");
     return parts.join("\n");
+  }
+
+  /**
+   * Format a section-level result: return the full content up to the most
+   * relevant ## heading block (~200-500 tokens). If no heading structure,
+   * falls back to snippet behavior.
+   *
+   * Selects the best section by counting query term overlaps in each block.
+   */
+  protected formatSection(row: {
+    id: number;
+    content: string;
+    category?: string | null;
+    title?: string | null;
+    record_type?: string | null;
+    created_at?: Date | string | null;
+  }, query: string): string {
+    const content = row.content || "";
+
+    // Split content into sections by ## headings
+    const sectionRegex = /^## .+$/gm;
+    const headingMatches: { index: number; text: string }[] = [];
+    let match: RegExpExecArray | null;
+    while ((match = sectionRegex.exec(content)) !== null) {
+      headingMatches.push({ index: match.index, text: match[0] });
+    }
+
+    // No heading structure — fall back to snippet
+    if (headingMatches.length === 0) {
+      return this.formatSnippet(row);
+    }
+
+    // Extract section blocks (heading + body until next heading or end)
+    const sections: { heading: string; body: string }[] = [];
+    for (let i = 0; i < headingMatches.length; i++) {
+      const start = headingMatches[i].index;
+      const end = i + 1 < headingMatches.length ? headingMatches[i + 1].index : content.length;
+      sections.push({
+        heading: headingMatches[i].text,
+        body: content.slice(start, end).trim(),
+      });
+    }
+
+    // Score each section by query term overlap
+    const queryTerms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
+    let bestIdx = 0;
+    let bestScore = -1;
+
+    for (let i = 0; i < sections.length; i++) {
+      const sectionLower = sections[i].body.toLowerCase();
+      let score = 0;
+      for (const term of queryTerms) {
+        if (sectionLower.includes(term)) score++;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+
+    // Cap at ~2000 chars (~500 tokens)
+    const maxChars = 2000;
+    const sectionText = sections[bestIdx].body.slice(0, maxChars);
+
+    const header = [
+      row.category || null,
+      row.created_at ? formatRelativeAge(row.created_at) : null,
+    ].filter(Boolean).join("|");
+
+    return (header ? `${header}\n` : "") + sectionText;
   }
 
   // ==========================================================================

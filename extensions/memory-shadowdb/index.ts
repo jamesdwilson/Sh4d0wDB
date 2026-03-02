@@ -314,7 +314,7 @@ const memoryShadowdbPlugin = {
             created_after: Type.Optional(Type.String({ description: "ISO date (created after)" })),
             created_before: Type.Optional(Type.String({ description: "ISO date (created before)" })),
             parent_id: Type.Optional(Type.Number({ description: "Filter by parent record ID" })),
-            detail_level: Type.Optional(Type.Union([Type.Literal("summary"), Type.Literal("snippet"), Type.Literal("full")], { description: "summary=title+meta only, snippet=excerpt (default), full=complete content" })),
+            detail_level: Type.Optional(Type.Union([Type.Literal("summary"), Type.Literal("snippet"), Type.Literal("section"), Type.Literal("full")], { description: "summary=title+meta only, snippet=excerpt (default), section=most relevant ## heading block (~200-500 tokens), full=complete content" })),
           }),
           execute: async (_toolCallId: string, params: Record<string, unknown>) => {
             const query = (params.query as string)?.trim();
@@ -335,7 +335,7 @@ const memoryShadowdbPlugin = {
             if (params.created_before) filters.created_before = params.created_before;
             if (params.parent_id !== undefined) filters.parent_id = params.parent_id;
             const hasFilters = Object.keys(filters).length > 0;
-            const detailLevel = params.detail_level as "summary" | "snippet" | "full" | undefined;
+            const detailLevel = params.detail_level as "summary" | "snippet" | "section" | "full" | undefined;
 
             api.logger.info(`memory-shadowdb: tool memory_search called — query="${query.slice(0, 80)}", max=${max}, min=${min}, filters=${hasFilters ? JSON.stringify(filters) : "none"}, detail=${detailLevel || "snippet"}`);
 
