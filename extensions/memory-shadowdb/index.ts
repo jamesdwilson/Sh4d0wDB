@@ -594,7 +594,8 @@ const memoryShadowdbPlugin = {
             "Token-budget-aware context assembly from ShadowDB. Searches broadly, scores by relevance+recency+priority, fills a token budget highest-score first. Returns assembled text with citations.",
           parameters: Type.Object({
             query: Type.String({ description: "What context is needed" }),
-            token_budget: Type.Number({ description: "Max tokens to return (default: 2000)" }),
+            token_budget: Type.Optional(Type.Number({ description: "Max tokens to return. If both token_budget and task_type provided, uses the lesser." })),
+            task_type: Type.Optional(Type.Union([Type.Literal("quick"), Type.Literal("outreach"), Type.Literal("dossier"), Type.Literal("research")], { description: "Preset token budget: quick=500, outreach=2000, dossier=5000, research=10000. Default: outreach" })),
             include_categories: Type.Optional(Type.Array(Type.String(), { description: "Limit to specific categories" })),
             include_tags: Type.Optional(Type.Array(Type.String(), { description: "Require any of these tags" })),
             exclude_categories: Type.Optional(Type.Array(Type.String(), { description: "Skip these categories" })),
@@ -604,15 +605,17 @@ const memoryShadowdbPlugin = {
             const query = (params.query as string)?.trim();
             if (!query) return jsonResult({ error: "query is required" });
 
-            const tokenBudget = (params.token_budget as number) || 2000;
+            const taskType = params.task_type as "quick" | "outreach" | "dossier" | "research" | undefined;
+            const tokenBudget = params.token_budget as number | undefined;
 
-            api.logger.info(`memory-shadowdb: tool memory_assemble called — query="${query.slice(0, 80)}", budget=${tokenBudget}`);
+            api.logger.info(`memory-shadowdb: tool memory_assemble called — query="${query.slice(0, 80)}", task_type=${taskType || "none"}, budget=${tokenBudget ?? "default"}`);
 
             try {
               const s = await getStore();
               const result = await s.assemble({
                 query,
                 token_budget: tokenBudget,
+                task_type: taskType,
                 include_categories: params.include_categories as string[] | undefined,
                 include_tags: params.include_tags as string[] | undefined,
                 exclude_categories: params.exclude_categories as string[] | undefined,

@@ -290,15 +290,43 @@ export abstract class MemoryStore {
    * 3. Fill token budget (approx 4 chars/token) highest score first
    * 4. Return assembled text with citations block
    */
+  /** Token budget defaults for task_type presets */
+  static readonly TASK_TYPE_BUDGETS: Record<string, number> = {
+    quick: 500,
+    outreach: 2000,
+    dossier: 5000,
+    research: 10000,
+  };
+
   async assemble(params: {
     query: string;
-    token_budget: number;
+    token_budget?: number;
+    task_type?: "quick" | "outreach" | "dossier" | "research";
     include_categories?: string[];
     include_tags?: string[];
     exclude_categories?: string[];
     prioritize?: "relevance" | "recency" | "priority";
   }): Promise<AssembleResult> {
-    const budget = Math.max(100, params.token_budget);
+    // Resolve token budget from task_type and/or explicit budget
+    const taskBudget = params.task_type
+      ? MemoryStore.TASK_TYPE_BUDGETS[params.task_type] ?? 2000
+      : undefined;
+    const explicitBudget = params.token_budget;
+
+    let resolvedBudget: number;
+    if (taskBudget !== undefined && explicitBudget !== undefined) {
+      // Both provided: use the lesser of the two
+      resolvedBudget = Math.min(taskBudget, explicitBudget);
+    } else if (explicitBudget !== undefined) {
+      resolvedBudget = explicitBudget;
+    } else if (taskBudget !== undefined) {
+      resolvedBudget = taskBudget;
+    } else {
+      // Neither provided: default to outreach (2000)
+      resolvedBudget = 2000;
+    }
+
+    const budget = Math.max(100, resolvedBudget);
     const charBudget = budget * 4; // ~4 chars per token
 
     // Build filters for the vector search
