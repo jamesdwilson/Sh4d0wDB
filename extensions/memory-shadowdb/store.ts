@@ -761,13 +761,18 @@ export abstract class MemoryStore {
   abstract list(params: {
     category?: string;
     tags?: string[];
+    tags_include?: string[];
+    tags_any?: string[];
     record_type?: string;
     parent_id?: number;
     priority_min?: number;
     priority_max?: number;
     created_after?: string;
     created_before?: string;
+    metadata?: Record<string, unknown>;
     detail_level?: "summary" | "snippet" | "full";
+    sort?: "created_at" | "updated_at" | "priority" | "title";
+    sort_order?: "asc" | "desc";
     limit?: number;
     offset?: number;
   }): Promise<import("./types.js").ListResult[]>;

@@ -236,13 +236,18 @@ export class PostgresStore extends MemoryStore {
   async list(params: {
     category?: string;
     tags?: string[];
+    tags_include?: string[];
+    tags_any?: string[];
     record_type?: string;
     parent_id?: number;
     priority_min?: number;
     priority_max?: number;
     created_after?: string;
     created_before?: string;
+    metadata?: Record<string, unknown>;
     detail_level?: "summary" | "snippet" | "full";
+    sort?: "created_at" | "updated_at" | "priority" | "title";
+    sort_order?: "asc" | "desc";
     limit?: number;
     offset?: number;
   }): Promise<import("./types.js").ListResult[]> {
@@ -257,7 +262,10 @@ export class PostgresStore extends MemoryStore {
     if (params.priority_max !== undefined) { conditions.push(`priority <= $${idx++}`); values.push(params.priority_max); }
     if (params.created_after) { conditions.push(`created_at >= $${idx++}`); values.push(params.created_after); }
     if (params.created_before) { conditions.push(`created_at <= $${idx++}`); values.push(params.created_before); }
-    if (params.tags && params.tags.length > 0) { conditions.push(`tags @> $${idx++}`); values.push(params.tags); }
+    if (params.tags && params.tags.length > 0) { conditions.push(`tags @> $${idx++}::text[]`); values.push(params.tags); }
+    if (params.tags_include && params.tags_include.length > 0) { conditions.push(`tags @> $${idx++}::text[]`); values.push(params.tags_include); }
+    if (params.tags_any && params.tags_any.length > 0) { conditions.push(`tags && $${idx++}::text[]`); values.push(params.tags_any); }
+    if (params.metadata && Object.keys(params.metadata).length > 0) { conditions.push(`metadata @> $${idx++}::jsonb`); values.push(JSON.stringify(params.metadata)); }
 
     const where = conditions.join(" AND ");
     const lim = Math.min(params.limit ?? 50, 200);
@@ -265,12 +273,17 @@ export class PostgresStore extends MemoryStore {
     const contentCol = params.detail_level === "full" || params.detail_level === "snippet"
       ? ", content" : "";
 
+    // Sort — validate column name to prevent SQL injection
+    const allowedSorts = ["created_at", "updated_at", "priority", "title"] as const;
+    const sortCol = allowedSorts.includes(params.sort as any) ? params.sort! : "created_at";
+    const sortDir = params.sort_order === "asc" ? "ASC" : "DESC";
+
     const sql = `
       SELECT id, category, title, record_type, priority, parent_id,
              COALESCE(metadata, '{}') as metadata, created_at, COALESCE(tags, '{}') as tags${contentCol}
       FROM ${this.config.table}
       WHERE ${where}
-      ORDER BY priority ASC, created_at DESC
+      ORDER BY ${sortCol} ${sortDir}
       LIMIT $${idx++} OFFSET $${idx++}
     `;
     values.push(lim, off);
