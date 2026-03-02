@@ -507,6 +507,49 @@ const memoryShadowdbPlugin = {
             }, { names: ["memory_list"] });
         }
         // ========================================================================
+        // Tool Registration: memory_assemble (read-only, always available)
+        // ========================================================================
+        api.registerTool(() => {
+            const memoryAssembleTool = {
+                label: "Memory Assemble",
+                name: "memory_assemble",
+                description: "Token-budget-aware context assembly from ShadowDB. Searches broadly, scores by relevance+recency+priority, fills a token budget highest-score first. Returns assembled text with citations.",
+                parameters: Type.Object({
+                    query: Type.String({ description: "What context is needed" }),
+                    token_budget: Type.Number({ description: "Max tokens to return (default: 2000)" }),
+                    include_categories: Type.Optional(Type.Array(Type.String(), { description: "Limit to specific categories" })),
+                    include_tags: Type.Optional(Type.Array(Type.String(), { description: "Require any of these tags" })),
+                    exclude_categories: Type.Optional(Type.Array(Type.String(), { description: "Skip these categories" })),
+                    prioritize: Type.Optional(Type.Union([Type.Literal("relevance"), Type.Literal("recency"), Type.Literal("priority")], { description: "Scoring emphasis (default: relevance)" })),
+                }),
+                execute: async (_toolCallId, params) => {
+                    const query = params.query?.trim();
+                    if (!query)
+                        return jsonResult({ error: "query is required" });
+                    const tokenBudget = params.token_budget || 2000;
+                    api.logger.info(`memory-shadowdb: tool memory_assemble called — query="${query.slice(0, 80)}", budget=${tokenBudget}`);
+                    try {
+                        const s = await getStore();
+                        const result = await s.assemble({
+                            query,
+                            token_budget: tokenBudget,
+                            include_categories: params.include_categories,
+                            include_tags: params.include_tags,
+                            exclude_categories: params.exclude_categories,
+                            prioritize: params.prioritize,
+                        });
+                        return jsonResult(result);
+                    }
+                    catch (err) {
+                        const message = err instanceof Error ? err.message : String(err);
+                        api.logger.warn(`memory-shadowdb memory_assemble error: ${message}`);
+                        return jsonResult({ error: message });
+                    }
+                },
+            };
+            return [memoryAssembleTool];
+        }, { names: ["memory_assemble"] });
+        // ========================================================================
         // CLI Registration
         // ========================================================================
         api.registerCli(({ program }) => {

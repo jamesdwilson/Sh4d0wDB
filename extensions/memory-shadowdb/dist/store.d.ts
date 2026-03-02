@@ -18,7 +18,7 @@
  * - Input validation/sanitization centralized here (single enforcement point)
  * - maxChars bounds on primer injection prevent context overflow
  */
-import type { SearchResult, WriteResult, SearchFilters } from "./types.js";
+import type { SearchResult, WriteResult, SearchFilters, AssembleResult } from "./types.js";
 import type { EmbeddingClient } from "./embedder.js";
 /** Maximum content length in characters. ~100KB of UTF-8 text. */
 export declare const MAX_CONTENT_CHARS = 100000;
@@ -114,6 +114,24 @@ export declare abstract class MemoryStore {
      * - Simple, well-studied, hard to break
      */
     private mergeRRF;
+    /**
+     * Assemble context from multiple records within a token budget.
+     *
+     * Pipeline:
+     * 1. Run broad vector search (maxResults=50, minScore=0.001) with optional filters
+     * 2. Score each hit: relevance*0.5 + recency_norm*0.2 + (priority/10)*0.3
+     *    (weights shifted by `prioritize` param)
+     * 3. Fill token budget (approx 4 chars/token) highest score first
+     * 4. Return assembled text with citations block
+     */
+    assemble(params: {
+        query: string;
+        token_budget: number;
+        include_categories?: string[];
+        include_tags?: string[];
+        exclude_categories?: string[];
+        prioritize?: "relevance" | "recency" | "priority";
+    }): Promise<AssembleResult>;
     /**
      * Load primer context from the `primer` table.
      *

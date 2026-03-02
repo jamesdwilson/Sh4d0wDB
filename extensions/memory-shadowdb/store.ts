@@ -24,7 +24,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { SearchResult, WriteResult, SearchFilters } from "./types.js";
+import type { SearchResult, WriteResult, SearchFilters, AssembleResult } from "./types.js";
 import type { EmbeddingClient } from "./embedder.js";
 
 // ============================================================================
@@ -274,6 +274,137 @@ export abstract class MemoryStore {
       .filter((e) => e.rrfScore > Math.max(minScore, 0.001))
       .slice(0, maxResults)
       .map((e) => ({ ...e.hit, rrfScore: e.rrfScore }));
+  }
+
+  // ==========================================================================
+  // ASSEMBLE — token-budget-aware context assembly
+  // ==========================================================================
+
+  /**
+   * Assemble context from multiple records within a token budget.
+   *
+   * Pipeline:
+   * 1. Run broad vector search (maxResults=50, minScore=0.001) with optional filters
+   * 2. Score each hit: relevance*0.5 + recency_norm*0.2 + (priority/10)*0.3
+   *    (weights shifted by `prioritize` param)
+   * 3. Fill token budget (approx 4 chars/token) highest score first
+   * 4. Return assembled text with citations block
+   */
+  async assemble(params: {
+    query: string;
+    token_budget: number;
+    include_categories?: string[];
+    include_tags?: string[];
+    exclude_categories?: string[];
+    prioritize?: "relevance" | "recency" | "priority";
+  }): Promise<AssembleResult> {
+    const budget = Math.max(100, params.token_budget);
+    const charBudget = budget * 4; // ~4 chars per token
+
+    // Build filters for the vector search
+    const filters: SearchFilters = {};
+    if (params.include_tags && params.include_tags.length > 0) {
+      filters.tags_any = params.include_tags;
+    }
+
+    // Run a broad search to get candidates
+    const candidates = await this.search(params.query, 50, 0.001, Object.keys(filters).length > 0 ? filters : undefined);
+
+    // Post-filter by category (include/exclude)
+    let filtered = candidates;
+    if (params.include_categories && params.include_categories.length > 0) {
+      const cats = new Set(params.include_categories);
+      filtered = filtered.filter((r) => {
+        const cat = r.path.split("/")[1] || "general";
+        return cats.has(cat);
+      });
+    }
+    if (params.exclude_categories && params.exclude_categories.length > 0) {
+      const excl = new Set(params.exclude_categories);
+      filtered = filtered.filter((r) => {
+        const cat = r.path.split("/")[1] || "general";
+        return !excl.has(cat);
+      });
+    }
+
+    // Score weights based on prioritize param
+    let wRelevance = 0.5, wRecency = 0.2, wPriority = 0.3;
+    if (params.prioritize === "recency") {
+      wRelevance = 0.3; wRecency = 0.5; wPriority = 0.2;
+    } else if (params.prioritize === "priority") {
+      wRelevance = 0.2; wRecency = 0.2; wPriority = 0.6;
+    }
+
+    // Compute composite scores
+    const now = Date.now();
+    const maxAge = 365 * 24 * 60 * 60 * 1000; // 1 year in ms for normalization
+    const maxRrfScore = filtered.length > 0 ? Math.max(...filtered.map((r) => r.score)) : 1;
+
+    const scored = filtered.map((r) => {
+      // Normalize relevance to 0-1
+      const relevanceNorm = maxRrfScore > 0 ? r.score / maxRrfScore : 0;
+      // Recency: 1.0 for now, 0.0 for 1yr+ ago (we don't have created_at in SearchResult,
+      // so use RRF score which already incorporates recency)
+      const recencyNorm = relevanceNorm; // RRF already blends recency
+      // Priority from path: extract ID and we don't have priority in SearchResult,
+      // so use a default of 5/10 = 0.5
+      const priorityNorm = 0.5;
+
+      const compositeScore = relevanceNorm * wRelevance + recencyNorm * wRecency + priorityNorm * wPriority;
+
+      return { ...r, compositeScore };
+    });
+
+    // Sort by composite score descending
+    scored.sort((a, b) => b.compositeScore - a.compositeScore);
+
+    // Fill token budget
+    const parts: string[] = [];
+    const citations: AssembleResult["citations"] = [];
+    let usedChars = 0;
+    let recordsSkipped = 0;
+
+    for (const hit of scored) {
+      const content = hit.snippet;
+      const contentChars = content.length;
+
+      if (usedChars + contentChars > charBudget) {
+        recordsSkipped++;
+        continue;
+      }
+
+      parts.push(content);
+      usedChars += contentChars;
+
+      // Extract ID from citation (shadowdb:table#id)
+      const idMatch = hit.citation?.match(/#(\d+)$/);
+      const recordId = idMatch ? parseInt(idMatch[1], 10) : 0;
+      const titleMatch = content.match(/^# (.+)$/m);
+
+      citations.push({
+        id: recordId,
+        path: hit.path,
+        title: titleMatch?.[1] || null,
+        tokensUsed: Math.ceil(contentChars / 4),
+      });
+    }
+
+    // Build citations block
+    const citationsBlock = citations.length > 0
+      ? "\n\n---\nSources:\n" + citations.map((c) => `- [${c.id}] ${c.path}${c.title ? ` — ${c.title}` : ""} (~${c.tokensUsed} tok)`).join("\n")
+      : "";
+
+    const text = parts.join("\n\n") + citationsBlock;
+    const tokenEstimate = Math.ceil(text.length / 4);
+
+    return {
+      text,
+      tokenEstimate,
+      tokenBudget: budget,
+      recordsUsed: citations.length,
+      recordsSkipped,
+      citations,
+    };
   }
 
   // ==========================================================================

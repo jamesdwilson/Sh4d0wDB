@@ -183,6 +183,22 @@ export type ListResult = {
     content?: string;
 };
 /**
+ * Result of memory_assemble — token-budget-aware context assembly.
+ */
+export type AssembleResult = {
+    text: string;
+    tokenEstimate: number;
+    tokenBudget: number;
+    recordsUsed: number;
+    recordsSkipped: number;
+    citations: Array<{
+        id: number;
+        path: string;
+        title: string | null;
+        tokensUsed: number;
+    }>;
+};
+/**
  * Filters for memory_search — passed through to backend search legs.
  */
 export type SearchFilters = {
