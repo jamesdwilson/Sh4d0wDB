@@ -318,3 +318,105 @@ memory_assemble(
 
 *Spec drafted: March 2, 2026*
 *Origin: Conversation about relationship graphs, event mapping, and context-window scaling*
+
+---
+
+## Implementation Status
+
+### Schema (v0.3.0)
+- ✅ `metadata JSONB` column added
+- ✅ `parent_id` column added
+- ✅ `priority` column added
+- ✅ GIN, parent_id, priority indexes created
+
+### Tool Changes (v0.3.0)
+- ✅ `memory_write` — accepts metadata, parent_id, priority
+- ✅ `memory_update` — accepts metadata, parent_id, priority
+- ✅ `memory_list` — tags_include, tags_any, sort, sort_order, metadata containment filter
+- ✅ `memory_search` — filters (category, record_type, tags_include, tags_any, priority_min/max, created_after/before, parent_id) + detail_level (summary/snippet/full)
+- ✅ `memory_get` — include_children, section (metadata.section_name lookup)
+- ✅ `memory_assemble` — token-budget-aware context assembly with scoring (relevance/recency/priority weighting) and citations
+
+---
+
+## v0.4.0 — Graph Records, Affinity Scoring, task_type Assembly
+
+### Resolved Open Questions (from v0.3.0)
+- `memory_assemble` task_type: **YES — implement preset budgets** (quick=500, outreach=2000, dossier=5000, research=10000). LLM picks task type, runtime provides hard ceiling. Both honored.
+- metadata validation: **freeform JSONB** — no schema enforcement. Category conventions enforced by standing rules, not code.
+- parent_id nesting: **multi-level supported** (document → section → atom) — already works with current schema.
+- Token estimation: **4 chars/token approximation** — fast, good enough at this scale.
+
+### Schema Changes
+None required — v0.3.0 schema already supports everything below.
+
+### Convention: Graph Records
+Store relationship intelligence as atoms in category=graph:
+```
+memory_write(
+  record_type="atom",
+  category="graph",
+  title="Sheridan ↔ Bell",
+  tags=["person:sheridan", "person:bell", "tier:probable"],
+  metadata={
+    "person_a": "sheridan",
+    "person_b": "bell",
+    "confidence": 85,
+    "affinity_score": 78,
+    "affinity_basis": "shared Tyler Chamber, Rotary, community banking",
+    "tier": "probable",
+    "last_verified": "2026-03-02"
+  },
+  content="Signal basis: both Tyler Chamber active, Rotary members, community banking overlap..."
+)
+```
+Query: `memory_list(category="graph", tags_any=["person:sheridan"])`
+
+### Convention: Event Records
+```
+memory_write(
+  record_type="atom",
+  category="events",
+  tags=["event:tyler-energy-summit", "person:sheridan"],
+  metadata={
+    "event": "Tyler Energy Summit",
+    "date": "2026-03-24",
+    "relevance_type": "mention",
+    "signal_value": "community banking presence"
+  }
+)
+```
+
+### Affinity Scoring Tiers
+- 80–100: Natural fit — compatible psych, shared values, same world
+- 50–79: Workable — different styles, mutual respect likely
+- 20–49: Friction risk — personality clash likely
+- <20: Avoid introducing — high probability bad chemistry
+
+### Affinity Basis Signals
+- Same psych type → likely fit
+- Complementary types (Analyst + Accommodator, mentor-mentee) → workable
+- Two Assertives in same space → friction risk
+- Known political/ideological divergence → friction risk
+- Shared cause/community work → natural fit boost
+
+### Authority Sensitivity
+Derivable from psych profile at query time — do NOT pre-compute or store separately.
+- ISTJ/ESTJ/Analyst types: authority_sensitive=high
+- Accommodators/creative: authority_sensitive=low
+- Assertives: authority_sensitive=irrelevant (only care about WIIFM)
+Principle: store raw signals (psych profile), derive inferences at query time.
+
+### Tool Changes (v0.4.0)
+1. `memory_assemble` — add `task_type` param: quick|outreach|dossier|research → maps to token budget defaults. Runtime ceiling still honored.
+2. `memory_list` — add metadata field sorting: `sort="metadata.confidence"` (Postgres: `ORDER BY (metadata->>'confidence')::numeric`)
+3. `memory_search` — add `detail_level: "section"` (currently only summary/snippet/full)
+
+### Implementation Order
+1. Write graph/event/affinity conventions as ShadowDB standing rules
+2. memory_list metadata sort
+3. memory_assemble task_type
+4. memory_search detail_level=section
+5. Start populating graph records for Tyler network
+
+*Spec updated: 2026-03-02*
