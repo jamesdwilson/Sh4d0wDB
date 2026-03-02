@@ -261,9 +261,12 @@ export class MemoryStore {
         const category = sanitizeString(params.category, MAX_CATEGORY_LENGTH) || "general";
         const title = sanitizeString(params.title, MAX_TITLE_LENGTH) || null;
         const tags = sanitizeTags(params.tags);
+        const metadata = params.metadata && typeof params.metadata === "object" ? params.metadata : {};
+        const parent_id = typeof params.parent_id === "number" ? params.parent_id : null;
+        const priority = typeof params.priority === "number" ? Math.min(10, Math.max(1, Math.round(params.priority))) : 5;
         this.logger.info(`memory-shadowdb: write -- category=${category}, title=${title || "(none)"}, tags=[${tags.join(",")}], contentLen=${content.length}`);
         const writeStart = Date.now();
-        const newId = await this.insertRecord({ content, category, title, tags });
+        const newId = await this.insertRecord({ content, category, title, tags, metadata, parent_id, priority });
         const insertMs = Date.now() - writeStart;
         let embedded = false;
         if (this.config.autoEmbed) {
@@ -313,6 +316,15 @@ export class MemoryStore {
         }
         if (params.tags !== undefined) {
             patch.tags = sanitizeTags(params.tags);
+        }
+        if (params.metadata !== undefined && typeof params.metadata === "object") {
+            patch.metadata = params.metadata;
+        }
+        if (params.parent_id !== undefined) {
+            patch.parent_id = params.parent_id; // null allowed to unset
+        }
+        if (params.priority !== undefined && typeof params.priority === "number") {
+            patch.priority = Math.min(10, Math.max(1, Math.round(params.priority)));
         }
         if (Object.keys(patch).length === 0) {
             throw new Error("At least one field (content, title, category, tags) must be provided");

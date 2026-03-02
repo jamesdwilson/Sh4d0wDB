@@ -166,6 +166,23 @@ export type PluginConfig = {
  */
 export type PrimerInjectionMode = "always" | "first-run" | "digest";
 /**
+ * A single record returned by memory_list.
+ */
+export type ListResult = {
+    id: number;
+    path: string;
+    category: string | null;
+    title: string | null;
+    record_type: string | null;
+    priority: number;
+    parent_id: number | null;
+    metadata: Record<string, unknown>;
+    created_at: string;
+    tags: string[];
+    /** Included when detail_level is snippet or full */
+    content?: string;
+};
+/**
  * Write operation result structure
  *
  * Returned by memory_write, memory_update, memory_delete tools.

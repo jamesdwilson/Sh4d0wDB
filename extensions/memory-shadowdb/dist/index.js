@@ -411,6 +411,54 @@ const memoryShadowdbPlugin = {
                 };
                 return [memoryWriteTool, memoryUpdateTool, memoryDeleteTool, memoryUndeleteTool];
             }, { names: ["memory_write", "memory_update", "memory_delete", "memory_undelete"] });
+            // memory_list — filter/browse records by metadata
+            api.registerTool(() => {
+                const memoryListTool = {
+                    name: "memory_list",
+                    description: "List and filter ShadowDB records by category, tags, record_type, priority, parent_id, or date range. Returns structured metadata. Use detail_level='full' to include content.",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            category: { type: "string", description: "Filter by category" },
+                            tags: { type: "array", items: { type: "string" }, description: "Filter by tags (all must match)" },
+                            record_type: { type: "string", description: "Filter by record type (atom, section, document, fact, index)" },
+                            parent_id: { type: "number", description: "Filter by parent record ID" },
+                            priority_min: { type: "number", description: "Minimum priority (1=highest, 10=lowest)" },
+                            priority_max: { type: "number", description: "Maximum priority" },
+                            created_after: { type: "string", description: "ISO date filter (created after)" },
+                            created_before: { type: "string", description: "ISO date filter (created before)" },
+                            detail_level: { type: "string", enum: ["summary", "snippet", "full"], description: "summary=metadata only, snippet=excerpt, full=full content" },
+                            limit: { type: "number", description: "Max results (default 50, max 200)" },
+                            offset: { type: "number", description: "Pagination offset" },
+                        },
+                    },
+                    execute: async (params) => {
+                        try {
+                            const store = await getStore();
+                            const results = await store.list({
+                                category: params.category,
+                                tags: params.tags,
+                                record_type: params.record_type,
+                                parent_id: params.parent_id,
+                                priority_min: params.priority_min,
+                                priority_max: params.priority_max,
+                                created_after: params.created_after,
+                                created_before: params.created_before,
+                                detail_level: params.detail_level,
+                                limit: params.limit,
+                                offset: params.offset,
+                            });
+                            return jsonResult({ count: results.length, results });
+                        }
+                        catch (err) {
+                            const message = err instanceof Error ? err.message : String(err);
+                            api.logger.warn(`memory-shadowdb memory_list error: ${message}`);
+                            return jsonResult({ ok: false, error: message });
+                        }
+                    },
+                };
+                return [memoryListTool];
+            }, { names: ["memory_list"] });
         }
         // ========================================================================
         // CLI Registration

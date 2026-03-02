@@ -260,8 +260,64 @@ export class MySQLStore extends MemoryStore {
     // Write operations
     // ==========================================================================
     async insertRecord(params) {
-        const result = await this.exec(`INSERT INTO ${this.config.table} (content, category, title, tags, record_type) VALUES (?, ?, ?, ?, 'fact')`, [params.content, params.category, params.title, JSON.stringify(params.tags)]);
+        const result = await this.exec(`INSERT INTO ${this.config.table} (content, category, title, tags, record_type, metadata, parent_id, priority) VALUES (?, ?, ?, ?, 'fact', ?, ?, ?)`, [params.content, params.category, params.title, JSON.stringify(params.tags),
+            JSON.stringify(params.metadata), params.parent_id, params.priority]);
         return result.insertId;
+    }
+    async list(params) {
+        const conditions = ["deleted_at IS NULL"];
+        const values = [];
+        if (params.category) {
+            conditions.push("category = ?");
+            values.push(params.category);
+        }
+        if (params.record_type) {
+            conditions.push("record_type = ?");
+            values.push(params.record_type);
+        }
+        if (params.parent_id !== undefined) {
+            conditions.push("parent_id = ?");
+            values.push(params.parent_id);
+        }
+        if (params.priority_min !== undefined) {
+            conditions.push("priority >= ?");
+            values.push(params.priority_min);
+        }
+        if (params.priority_max !== undefined) {
+            conditions.push("priority <= ?");
+            values.push(params.priority_max);
+        }
+        if (params.created_after) {
+            conditions.push("created_at >= ?");
+            values.push(params.created_after);
+        }
+        if (params.created_before) {
+            conditions.push("created_at <= ?");
+            values.push(params.created_before);
+        }
+        const where = conditions.join(" AND ");
+        const lim = Math.min(params.limit ?? 50, 200);
+        const off = params.offset ?? 0;
+        const contentCol = params.detail_level === "full" || params.detail_level === "snippet" ? ", content" : "";
+        const rows = await this.query(`SELECT id, category, title, record_type, priority, parent_id,
+              COALESCE(metadata, '{}') as metadata, created_at, COALESCE(tags, '[]') as tags${contentCol}
+       FROM ${this.config.table}
+       WHERE ${where}
+       ORDER BY priority ASC, created_at DESC
+       LIMIT ? OFFSET ?`, [...values, lim, off]);
+        return rows.map((row) => ({
+            id: row.id,
+            path: `shadowdb/${row.category || "general"}/${row.id}`,
+            category: row.category,
+            title: row.title,
+            record_type: row.record_type,
+            priority: row.priority ?? 5,
+            parent_id: row.parent_id,
+            metadata: JSON.parse(typeof row.metadata === "string" ? row.metadata : "{}"),
+            created_at: String(row.created_at),
+            tags: JSON.parse(typeof row.tags === "string" ? row.tags : "[]"),
+            ...(contentCol ? { content: row.content } : {}),
+        }));
     }
     async updateRecord(id, patch) {
         const setClauses = [];

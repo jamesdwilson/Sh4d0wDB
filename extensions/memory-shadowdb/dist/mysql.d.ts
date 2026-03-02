@@ -69,7 +69,23 @@ export declare class MySQLStore extends MemoryStore {
         category: string;
         title: string | null;
         tags: string[];
+        metadata: Record<string, unknown>;
+        parent_id: number | null;
+        priority: number;
     }): Promise<number>;
+    list(params: {
+        category?: string;
+        tags?: string[];
+        record_type?: string;
+        parent_id?: number;
+        priority_min?: number;
+        priority_max?: number;
+        created_after?: string;
+        created_before?: string;
+        detail_level?: "summary" | "snippet" | "full";
+        limit?: number;
+        offset?: number;
+    }): Promise<import("./types.js").ListResult[]>;
     protected updateRecord(id: number, patch: Record<string, unknown>): Promise<void>;
     protected softDeleteRecord(id: number): Promise<void>;
     protected restoreRecord(id: number): Promise<void>;

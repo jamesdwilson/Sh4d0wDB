@@ -155,6 +155,9 @@ export declare abstract class MemoryStore {
         category?: string;
         title?: string;
         tags?: string[];
+        metadata?: Record<string, unknown>;
+        parent_id?: number;
+        priority?: number;
     }): Promise<WriteResult>;
     /**
      * Update an existing memory record (partial update).
@@ -168,6 +171,9 @@ export declare abstract class MemoryStore {
         title?: string;
         category?: string;
         tags?: string[];
+        metadata?: Record<string, unknown>;
+        parent_id?: number | null;
+        priority?: number;
     }): Promise<WriteResult>;
     /**
      * Soft-delete a record (set deleted_at, never permanent).
@@ -261,11 +267,28 @@ export declare abstract class MemoryStore {
     /** Fetch primer rows ordered by priority. */
     protected abstract getPrimerRows(): Promise<PrimerRow[]>;
     /** Insert a new record, return the new ID. */
+    /** List records with optional filters. */
+    abstract list(params: {
+        category?: string;
+        tags?: string[];
+        record_type?: string;
+        parent_id?: number;
+        priority_min?: number;
+        priority_max?: number;
+        created_after?: string;
+        created_before?: string;
+        detail_level?: "summary" | "snippet" | "full";
+        limit?: number;
+        offset?: number;
+    }): Promise<import("./types.js").ListResult[]>;
     protected abstract insertRecord(params: {
         content: string;
         category: string;
         title: string | null;
         tags: string[];
+        metadata: Record<string, unknown>;
+        parent_id: number | null;
+        priority: number;
     }): Promise<number>;
     /** Update record fields by ID. */
     protected abstract updateRecord(id: number, patch: Record<string, unknown>): Promise<void>;
