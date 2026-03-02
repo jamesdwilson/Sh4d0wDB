@@ -18,7 +18,7 @@
  * - Input validation/sanitization centralized here (single enforcement point)
  * - maxChars bounds on primer injection prevent context overflow
  */
-import type { SearchResult, WriteResult } from "./types.js";
+import type { SearchResult, WriteResult, SearchFilters } from "./types.js";
 import type { EmbeddingClient } from "./embedder.js";
 /** Maximum content length in characters. ~100KB of UTF-8 text. */
 export declare const MAX_CONTENT_CHARS = 100000;
@@ -97,9 +97,11 @@ export declare abstract class MemoryStore {
      * @param query - User's search query
      * @param maxResults - Maximum results to return
      * @param minScore - Minimum RRF score threshold
+     * @param filters - Optional structured filters passed to backend search legs
+     * @param detailLevel - Output detail: summary (no content), snippet (default), full (no truncation)
      * @returns Ranked, deduplicated results with snippets and citations
      */
-    search(query: string, maxResults: number, minScore: number): Promise<SearchResult[]>;
+    search(query: string, maxResults: number, minScore: number, filters?: SearchFilters, detailLevel?: "summary" | "snippet" | "full"): Promise<SearchResult[]>;
     /**
      * Reciprocal Rank Fusion — merge ranked lists from multiple signals.
      *
@@ -249,11 +251,11 @@ export declare abstract class MemoryStore {
         content: string;
     }>>;
     /** Vector similarity search. Return [] if backend doesn't support vectors. */
-    protected abstract vectorSearch(query: string, embedding: number[], limit: number): Promise<RankedHit[]>;
+    protected abstract vectorSearch(query: string, embedding: number[], limit: number, filters?: SearchFilters): Promise<RankedHit[]>;
     /** Full-text keyword search. All backends should support this. */
-    protected abstract textSearch(query: string, limit: number): Promise<RankedHit[]>;
+    protected abstract textSearch(query: string, limit: number, filters?: SearchFilters): Promise<RankedHit[]>;
     /** Fuzzy/typo-tolerant search. Return [] if unsupported (e.g., SQLite, MySQL). */
-    protected abstract fuzzySearch(query: string, limit: number): Promise<RankedHit[]>;
+    protected abstract fuzzySearch(query: string, limit: number, filters?: SearchFilters): Promise<RankedHit[]>;
     /** Fetch a single record by ID (null if not found or deleted). */
     abstract get(id: number): Promise<{
         text: string;

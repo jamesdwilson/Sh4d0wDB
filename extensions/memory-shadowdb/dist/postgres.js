@@ -16,6 +16,55 @@
 import pg from "pg";
 import { MemoryStore } from "./store.js";
 /**
+ * Build additional WHERE conditions from SearchFilters.
+ * Returns { clauses: string[], values: unknown[], nextIdx: number }.
+ * All user values are parameterized — no SQL injection risk.
+ */
+function buildFilterClauses(filters, startIdx) {
+    if (!filters)
+        return { clauses: [], values: [], nextIdx: startIdx };
+    const clauses = [];
+    const values = [];
+    let idx = startIdx;
+    if (filters.category) {
+        clauses.push(`category = $${idx++}`);
+        values.push(filters.category);
+    }
+    if (filters.record_type) {
+        clauses.push(`record_type = $${idx++}`);
+        values.push(filters.record_type);
+    }
+    if (filters.tags_include && filters.tags_include.length > 0) {
+        clauses.push(`tags @> $${idx++}::text[]`);
+        values.push(filters.tags_include);
+    }
+    if (filters.tags_any && filters.tags_any.length > 0) {
+        clauses.push(`tags && $${idx++}::text[]`);
+        values.push(filters.tags_any);
+    }
+    if (filters.priority_min !== undefined) {
+        clauses.push(`priority >= $${idx++}`);
+        values.push(filters.priority_min);
+    }
+    if (filters.priority_max !== undefined) {
+        clauses.push(`priority <= $${idx++}`);
+        values.push(filters.priority_max);
+    }
+    if (filters.created_after) {
+        clauses.push(`created_at >= $${idx++}`);
+        values.push(filters.created_after);
+    }
+    if (filters.created_before) {
+        clauses.push(`created_at <= $${idx++}`);
+        values.push(filters.created_before);
+    }
+    if (filters.parent_id !== undefined) {
+        clauses.push(`parent_id = $${idx++}`);
+        values.push(filters.parent_id);
+    }
+    return { clauses, values, nextIdx: idx };
+}
+/**
  * PostgreSQL-backed memory store.
  *
  * The richest backend: full vector search, FTS, trigram fuzzy matching.
@@ -52,18 +101,21 @@ export class PostgresStore extends MemoryStore {
     // ==========================================================================
     // Search legs
     // ==========================================================================
-    async vectorSearch(query, embedding, limit) {
+    async vectorSearch(query, embedding, limit, filters) {
         const vecLiteral = `[${embedding.join(",")}]`;
+        const baseConds = ["embedding IS NOT NULL", "deleted_at IS NULL"];
+        const { clauses, values, nextIdx } = buildFilterClauses(filters, 3);
+        const allConds = [...baseConds, ...clauses].join(" AND ");
         const sql = `
       SELECT id, content, category, title, record_type, created_at,
              1 - (embedding <=> $1::vector) AS score,
              ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS rank
       FROM ${this.config.table}
-      WHERE embedding IS NOT NULL AND deleted_at IS NULL
+      WHERE ${allConds}
       ORDER BY embedding <=> $1::vector
       LIMIT $2
     `;
-        const result = await this.getPool().query(sql, [vecLiteral, limit]);
+        const result = await this.getPool().query(sql, [vecLiteral, limit, ...values]);
         return result.rows.map((r) => ({
             id: r.id,
             content: r.content,
@@ -75,19 +127,20 @@ export class PostgresStore extends MemoryStore {
             rawScore: parseFloat(r.score),
         }));
     }
-    async textSearch(query, limit) {
+    async textSearch(query, limit, filters) {
+        const baseConds = ["fts IS NOT NULL", "fts @@ plainto_tsquery('english', $1)", "deleted_at IS NULL"];
+        const { clauses, values, nextIdx } = buildFilterClauses(filters, 3);
+        const allConds = [...baseConds, ...clauses].join(" AND ");
         const sql = `
       SELECT id, content, category, title, record_type, created_at,
              ts_rank_cd(fts, plainto_tsquery('english', $1)) AS score,
              ROW_NUMBER() OVER (ORDER BY ts_rank_cd(fts, plainto_tsquery('english', $1)) DESC) AS rank
       FROM ${this.config.table}
-      WHERE fts IS NOT NULL
-        AND fts @@ plainto_tsquery('english', $1)
-        AND deleted_at IS NULL
+      WHERE ${allConds}
       ORDER BY score DESC
       LIMIT $2
     `;
-        const result = await this.getPool().query(sql, [query, limit]);
+        const result = await this.getPool().query(sql, [query, limit, ...values]);
         return result.rows.map((r) => ({
             id: r.id,
             content: r.content,
@@ -99,18 +152,20 @@ export class PostgresStore extends MemoryStore {
             rawScore: parseFloat(r.score),
         }));
     }
-    async fuzzySearch(query, limit) {
+    async fuzzySearch(query, limit, filters) {
+        const baseConds = ["(content % $1 OR content ILIKE '%' || $1 || '%')", "deleted_at IS NULL"];
+        const { clauses, values, nextIdx } = buildFilterClauses(filters, 3);
+        const allConds = [...baseConds, ...clauses].join(" AND ");
         const sql = `
       SELECT id, content, category, title, record_type, created_at,
              similarity(content, $1) AS score,
              ROW_NUMBER() OVER (ORDER BY content <-> $1) AS rank
       FROM ${this.config.table}
-      WHERE (content % $1 OR content ILIKE '%' || $1 || '%')
-        AND deleted_at IS NULL
+      WHERE ${allConds}
       ORDER BY content <-> $1
       LIMIT $2
     `;
-        const result = await this.getPool().query(sql, [query, limit]);
+        const result = await this.getPool().query(sql, [query, limit, ...values]);
         return result.rows.map((r) => ({
             id: r.id,
             content: r.content,

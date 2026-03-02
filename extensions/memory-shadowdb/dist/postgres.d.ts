@@ -16,6 +16,7 @@
 import pg from "pg";
 import { MemoryStore, type RankedHit, type PrimerRow, type StoreConfig, type StoreLogger } from "./store.js";
 import type { EmbeddingClient } from "./embedder.js";
+import type { SearchFilters } from "./types.js";
 /**
  * PostgreSQL-backed memory store.
  *
@@ -37,9 +38,9 @@ export declare class PostgresStore extends MemoryStore {
      * TODO: Remove once index.ts is fully migrated to use MemoryStore directly.
      */
     getSharedPool(): pg.Pool;
-    protected vectorSearch(query: string, embedding: number[], limit: number): Promise<RankedHit[]>;
-    protected textSearch(query: string, limit: number): Promise<RankedHit[]>;
-    protected fuzzySearch(query: string, limit: number): Promise<RankedHit[]>;
+    protected vectorSearch(query: string, embedding: number[], limit: number, filters?: SearchFilters): Promise<RankedHit[]>;
+    protected textSearch(query: string, limit: number, filters?: SearchFilters): Promise<RankedHit[]>;
+    protected fuzzySearch(query: string, limit: number, filters?: SearchFilters): Promise<RankedHit[]>;
     get(id: number): Promise<{
         text: string;
         path: string;

@@ -223,6 +223,21 @@ export type ListResult = {
 };
 
 /**
+ * Filters for memory_search — passed through to backend search legs.
+ */
+export type SearchFilters = {
+  category?: string;
+  record_type?: string;
+  tags_include?: string[];
+  tags_any?: string[];
+  priority_min?: number;
+  priority_max?: number;
+  created_after?: string;
+  created_before?: string;
+  parent_id?: number;
+};
+
+/**
  * Write operation result structure
  *
  * Returned by memory_write, memory_update, memory_delete tools.

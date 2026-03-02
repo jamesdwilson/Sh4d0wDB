@@ -24,7 +24,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { SearchResult, WriteResult } from "./types.js";
+import type { SearchResult, WriteResult, SearchFilters } from "./types.js";
 import type { EmbeddingClient } from "./embedder.js";
 
 // ============================================================================
@@ -135,11 +135,19 @@ export abstract class MemoryStore {
    * @param query - User's search query
    * @param maxResults - Maximum results to return
    * @param minScore - Minimum RRF score threshold
+   * @param filters - Optional structured filters passed to backend search legs
+   * @param detailLevel - Output detail: summary (no content), snippet (default), full (no truncation)
    * @returns Ranked, deduplicated results with snippets and citations
    */
-  async search(query: string, maxResults: number, minScore: number): Promise<SearchResult[]> {
+  async search(
+    query: string,
+    maxResults: number,
+    minScore: number,
+    filters?: SearchFilters,
+    detailLevel?: "summary" | "snippet" | "full",
+  ): Promise<SearchResult[]> {
     const searchStart = Date.now();
-    this.logger.info(`memory-shadowdb: search start — query="${query.slice(0, 80)}", maxResults=${maxResults}, minScore=${minScore}`);
+    this.logger.info(`memory-shadowdb: search start — query="${query.slice(0, 80)}", maxResults=${maxResults}, minScore=${minScore}, filters=${filters ? JSON.stringify(filters) : "none"}, detailLevel=${detailLevel || "snippet"}`);
 
     const embedStart = Date.now();
     const embedding = await this.embedder.embed(query, "query");
@@ -151,15 +159,15 @@ export abstract class MemoryStore {
     // Run all search legs in parallel — backends return [] for unsupported signals
     const legStart = Date.now();
     const [vectorHits, ftsHits, fuzzyHits] = await Promise.all([
-      this.vectorSearch(query, embedding, oversample).catch((err) => {
+      this.vectorSearch(query, embedding, oversample, filters).catch((err) => {
         this.logger.warn(`memory-shadowdb: vectorSearch failed: ${err instanceof Error ? err.message : String(err)}`);
         return [] as RankedHit[];
       }),
-      this.textSearch(query, oversample).catch((err) => {
+      this.textSearch(query, oversample, filters).catch((err) => {
         this.logger.warn(`memory-shadowdb: textSearch failed: ${err instanceof Error ? err.message : String(err)}`);
         return [] as RankedHit[];
       }),
-      this.fuzzySearch(query, oversample).catch((err) => {
+      this.fuzzySearch(query, oversample, filters).catch((err) => {
         this.logger.warn(`memory-shadowdb: fuzzySearch failed: ${err instanceof Error ? err.message : String(err)}`);
         return [] as RankedHit[];
       }),
@@ -172,9 +180,26 @@ export abstract class MemoryStore {
     const totalMs = Date.now() - searchStart;
     this.logger.info(`memory-shadowdb: search complete in ${totalMs}ms — ${merged.length} results (embed=${embedMs}ms, legs=${legMs}ms)`);
 
+    const level = detailLevel || "snippet";
+
     // Format as SearchResult[]
     return merged.map((hit) => {
-      const snippet = this.formatSnippet(hit);
+      let snippet: string;
+      if (level === "summary") {
+        // Summary: title + category + tags + metadata only, NO content
+        const parts: string[] = [];
+        if (hit.title) parts.push(hit.title);
+        if (hit.category) parts.push(`Category: ${hit.category}`);
+        if (hit.record_type) parts.push(`Type: ${hit.record_type}`);
+        snippet = parts.join(" | ") || `Record #${hit.id}`;
+      } else if (level === "full") {
+        // Full: complete content, no truncation
+        snippet = this.formatFullRecord(hit);
+      } else {
+        // Snippet: current default behavior
+        snippet = this.formatSnippet(hit);
+      }
+
       const virtualPath = `shadowdb/${hit.category || "general"}/${hit.id}`;
       return {
         path: virtualPath,
@@ -735,13 +760,13 @@ export abstract class MemoryStore {
   // --- Search legs (return ranked hits for RRF merge) ---
 
   /** Vector similarity search. Return [] if backend doesn't support vectors. */
-  protected abstract vectorSearch(query: string, embedding: number[], limit: number): Promise<RankedHit[]>;
+  protected abstract vectorSearch(query: string, embedding: number[], limit: number, filters?: SearchFilters): Promise<RankedHit[]>;
 
   /** Full-text keyword search. All backends should support this. */
-  protected abstract textSearch(query: string, limit: number): Promise<RankedHit[]>;
+  protected abstract textSearch(query: string, limit: number, filters?: SearchFilters): Promise<RankedHit[]>;
 
   /** Fuzzy/typo-tolerant search. Return [] if unsupported (e.g., SQLite, MySQL). */
-  protected abstract fuzzySearch(query: string, limit: number): Promise<RankedHit[]>;
+  protected abstract fuzzySearch(query: string, limit: number, filters?: SearchFilters): Promise<RankedHit[]>;
 
   // --- Read operations ---
 

@@ -71,11 +71,13 @@ export class MemoryStore {
      * @param query - User's search query
      * @param maxResults - Maximum results to return
      * @param minScore - Minimum RRF score threshold
+     * @param filters - Optional structured filters passed to backend search legs
+     * @param detailLevel - Output detail: summary (no content), snippet (default), full (no truncation)
      * @returns Ranked, deduplicated results with snippets and citations
      */
-    async search(query, maxResults, minScore) {
+    async search(query, maxResults, minScore, filters, detailLevel) {
         const searchStart = Date.now();
-        this.logger.info(`memory-shadowdb: search start — query="${query.slice(0, 80)}", maxResults=${maxResults}, minScore=${minScore}`);
+        this.logger.info(`memory-shadowdb: search start — query="${query.slice(0, 80)}", maxResults=${maxResults}, minScore=${minScore}, filters=${filters ? JSON.stringify(filters) : "none"}, detailLevel=${detailLevel || "snippet"}`);
         const embedStart = Date.now();
         const embedding = await this.embedder.embed(query, "query");
         const embedMs = Date.now() - embedStart;
@@ -84,15 +86,15 @@ export class MemoryStore {
         // Run all search legs in parallel — backends return [] for unsupported signals
         const legStart = Date.now();
         const [vectorHits, ftsHits, fuzzyHits] = await Promise.all([
-            this.vectorSearch(query, embedding, oversample).catch((err) => {
+            this.vectorSearch(query, embedding, oversample, filters).catch((err) => {
                 this.logger.warn(`memory-shadowdb: vectorSearch failed: ${err instanceof Error ? err.message : String(err)}`);
                 return [];
             }),
-            this.textSearch(query, oversample).catch((err) => {
+            this.textSearch(query, oversample, filters).catch((err) => {
                 this.logger.warn(`memory-shadowdb: textSearch failed: ${err instanceof Error ? err.message : String(err)}`);
                 return [];
             }),
-            this.fuzzySearch(query, oversample).catch((err) => {
+            this.fuzzySearch(query, oversample, filters).catch((err) => {
                 this.logger.warn(`memory-shadowdb: fuzzySearch failed: ${err instanceof Error ? err.message : String(err)}`);
                 return [];
             }),
@@ -103,9 +105,29 @@ export class MemoryStore {
         const merged = this.mergeRRF(vectorHits, ftsHits, fuzzyHits, maxResults, minScore);
         const totalMs = Date.now() - searchStart;
         this.logger.info(`memory-shadowdb: search complete in ${totalMs}ms — ${merged.length} results (embed=${embedMs}ms, legs=${legMs}ms)`);
+        const level = detailLevel || "snippet";
         // Format as SearchResult[]
         return merged.map((hit) => {
-            const snippet = this.formatSnippet(hit);
+            let snippet;
+            if (level === "summary") {
+                // Summary: title + category + tags + metadata only, NO content
+                const parts = [];
+                if (hit.title)
+                    parts.push(hit.title);
+                if (hit.category)
+                    parts.push(`Category: ${hit.category}`);
+                if (hit.record_type)
+                    parts.push(`Type: ${hit.record_type}`);
+                snippet = parts.join(" | ") || `Record #${hit.id}`;
+            }
+            else if (level === "full") {
+                // Full: complete content, no truncation
+                snippet = this.formatFullRecord(hit);
+            }
+            else {
+                // Snippet: current default behavior
+                snippet = this.formatSnippet(hit);
+            }
             const virtualPath = `shadowdb/${hit.category || "general"}/${hit.id}`;
             return {
                 path: virtualPath,

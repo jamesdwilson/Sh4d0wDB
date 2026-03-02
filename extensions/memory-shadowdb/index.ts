@@ -305,6 +305,16 @@ const memoryShadowdbPlugin = {
             query: Type.String(),
             maxResults: Type.Optional(Type.Number()),
             minScore: Type.Optional(Type.Number()),
+            category: Type.Optional(Type.String({ description: "Filter by category" })),
+            record_type: Type.Optional(Type.String({ description: "Filter by record_type" })),
+            tags_include: Type.Optional(Type.Array(Type.String(), { description: "Record must have ALL these tags" })),
+            tags_any: Type.Optional(Type.Array(Type.String(), { description: "Record must have ANY of these tags" })),
+            priority_min: Type.Optional(Type.Number({ description: "Minimum priority" })),
+            priority_max: Type.Optional(Type.Number({ description: "Maximum priority" })),
+            created_after: Type.Optional(Type.String({ description: "ISO date (created after)" })),
+            created_before: Type.Optional(Type.String({ description: "ISO date (created before)" })),
+            parent_id: Type.Optional(Type.Number({ description: "Filter by parent record ID" })),
+            detail_level: Type.Optional(Type.Union([Type.Literal("summary"), Type.Literal("snippet"), Type.Literal("full")], { description: "summary=title+meta only, snippet=excerpt (default), full=complete content" })),
           }),
           execute: async (_toolCallId: string, params: Record<string, unknown>) => {
             const query = (params.query as string)?.trim();
@@ -313,11 +323,29 @@ const memoryShadowdbPlugin = {
             const max = (params.maxResults as number) ?? maxResultsDefault;
             const min = (params.minScore as number) ?? minScoreDefault;
 
-            api.logger.info(`memory-shadowdb: tool memory_search called — query="${query.slice(0, 80)}", max=${max}, min=${min}`);
+            // Build optional filters object
+            const filters: Record<string, unknown> = {};
+            if (params.category) filters.category = params.category;
+            if (params.record_type) filters.record_type = params.record_type;
+            if (params.tags_include) filters.tags_include = params.tags_include;
+            if (params.tags_any) filters.tags_any = params.tags_any;
+            if (params.priority_min !== undefined) filters.priority_min = params.priority_min;
+            if (params.priority_max !== undefined) filters.priority_max = params.priority_max;
+            if (params.created_after) filters.created_after = params.created_after;
+            if (params.created_before) filters.created_before = params.created_before;
+            if (params.parent_id !== undefined) filters.parent_id = params.parent_id;
+            const hasFilters = Object.keys(filters).length > 0;
+            const detailLevel = params.detail_level as "summary" | "snippet" | "full" | undefined;
+
+            api.logger.info(`memory-shadowdb: tool memory_search called — query="${query.slice(0, 80)}", max=${max}, min=${min}, filters=${hasFilters ? JSON.stringify(filters) : "none"}, detail=${detailLevel || "snippet"}`);
 
             try {
               const s = await getStore();
-              const results = await s.search(query, max, min);
+              const results = await s.search(
+                query, max, min,
+                hasFilters ? (filters as import("./types.js").SearchFilters) : undefined,
+                detailLevel,
+              );
 
               const decorated = results.map((r) => ({
                 ...r,
