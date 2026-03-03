@@ -317,13 +317,22 @@ const results = decayConfidence(edges, { halfLifeDays: 30, minConfidence: 10 });
 
 ---
 
-## v0.7.0 — Tool Exposure + Intelligence Features (IN PROGRESS)
+## v0.7.0 — ✅ LOGIC COMPLETE (2026-03-03, commit: 6645434)
 
 **Goal:** Wire existing logic to tools + add intelligence features from GRAPH_SPEC.md.
 
-**Status (2026-03-03):** Core logic complete (249/260 tests). Tool wiring remaining.
+**Status:**
+- ✅ Authority sensitivity scoring (9 tests)
+- ✅ Intro framing suggestions (8 tests)
+- ✅ Event-to-contact auto-mapping (10 tests)
+- ✅ Conflict detection logic (5 tests)
+- ✅ Confidence decay logic (5 tests)
+- ✅ Tool handler functions (handleConflictsTool, handleDecayPreviewTool)
+- ❌ Tool registration with OpenClaw plugin system (not yet done)
 
-### 7a. Tool Exposure — `memory_conflicts` tool (LOGIC ✅, TOOL WIRED ❌)
+**249/249 tests passing.**
+
+### 7a. Tool Exposure — `memory_conflicts` tool (LOGIC ✅, TOOL REGISTRATION ❌)
 
 Wire `detectConflicts()` to a tool that James can call to see contradictory edges.
 
@@ -467,6 +476,11 @@ When an event record is written with `category=event`, automatically find and ta
 | v0.5.0: tag namespace enforcement | ✅ | 569c0ec | 2026-03-03 |
 | v0.6.0: conflict detection | ✅ | a2cf409 | 2026-03-03 |
 | v0.6.0: confidence decay | ✅ | 99c8e32 | 2026-03-03 |
+| v0.7.0: authority sensitivity | ✅ | 78d3d4c | 2026-03-03 |
+| v0.7.0: intro framing | ✅ | b74bb10 | 2026-03-03 |
+| v0.7.0: event-to-contact | ✅ | f3f2c49 | 2026-03-03 |
+| v0.7.0: tool handlers | ✅ | 27ee48b | 2026-03-03 |
+| v0.7.0: cleanup | ✅ | 6645434 | 2026-03-03 |
 
 **Current latest commit:** `99c8e32` (as of 2026-03-03)
 
