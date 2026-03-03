@@ -292,7 +292,7 @@ export class PostgresStore extends MemoryStore {
   }): Promise<number> {
     const sql = `
       INSERT INTO ${this.config.table} (content, category, title, tags, record_type, metadata, parent_id, priority)
-      VALUES ($1, $2, $3, $4, 'fact', $5::jsonb, $6, $7)
+      VALUES ($content, $category, $title, $tags, $record_type, $metadata, $parent_id, $priority)
       RETURNING id
     `;
     const result = await this.getPool().query(sql, [
