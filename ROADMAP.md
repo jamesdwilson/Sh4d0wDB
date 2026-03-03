@@ -317,11 +317,13 @@ const results = decayConfidence(edges, { halfLifeDays: 30, minConfidence: 10 });
 
 ---
 
-## v0.7.0 — Tool Exposure + Intelligence Features (BACKLOG)
+## v0.7.0 — Tool Exposure + Intelligence Features (IN PROGRESS)
 
 **Goal:** Wire existing logic to tools + add intelligence features from GRAPH_SPEC.md.
 
-### 7a. Tool Exposure — `memory_conflicts` tool
+**Status (2026-03-03):** Core logic complete (249/260 tests). Tool wiring remaining.
+
+### 7a. Tool Exposure — `memory_conflicts` tool (LOGIC ✅, TOOL WIRED ❌)
 
 Wire `detectConflicts()` to a tool that James can call to see contradictory edges.
 
@@ -344,7 +346,7 @@ filters:
 
 ---
 
-### 7b. Tool Exposure — `memory_decay_preview` tool
+### 7b. Tool Exposure — `memory_decay_preview` tool (LOGIC ✅, TOOL WIRED ❌)
 
 Wire `decayConfidence()` to a preview tool (does NOT auto-apply, just shows what would decay).
 
@@ -367,7 +369,7 @@ dry_run: boolean         // Default true — just preview
 
 ---
 
-### 7c. Authority Sensitivity Scoring
+### 7c. Authority Sensitivity Scoring ✅ COMPLETE (commit: 78d3d4c)
 
 From GRAPH_SPEC.md: derive authority sensitivity from psych profile at query time.
 
@@ -387,7 +389,7 @@ From GRAPH_SPEC.md: derive authority sensitivity from psych profile at query tim
 
 ---
 
-### 7d. Intro Framing Suggestions
+### 7d. Intro Framing Suggestions ✅ COMPLETE (commit: b74bb10)
 
 From GRAPH_SPEC.md: use affinity + friction data to suggest how to frame an introduction.
 
@@ -409,7 +411,7 @@ From GRAPH_SPEC.md: use affinity + friction data to suggest how to frame an intr
 
 ---
 
-### 7e. Event-to-Contact Mapping (stretch)
+### 7e. Event-to-Contact Mapping ✅ COMPLETE (commit: f3f2c49)
 
 When an event record is written with `category=event`, automatically find and tag related contacts.
 
