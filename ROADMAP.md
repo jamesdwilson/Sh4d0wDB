@@ -317,7 +317,7 @@ const results = decayConfidence(edges, { halfLifeDays: 30, minConfidence: 10 });
 
 ---
 
-## v0.7.0 — ✅ LOGIC COMPLETE (2026-03-03, commit: 6645434)
+## v0.7.0 — ✅ COMPLETE (2026-03-03, commit: f6d6c52)
 
 **Goal:** Wire existing logic to tools + add intelligence features from GRAPH_SPEC.md.
 
@@ -328,11 +328,11 @@ const results = decayConfidence(edges, { halfLifeDays: 30, minConfidence: 10 });
 - ✅ Conflict detection logic (5 tests)
 - ✅ Confidence decay logic (5 tests)
 - ✅ Tool handler functions (handleConflictsTool, handleDecayPreviewTool)
-- ❌ Tool registration with OpenClaw plugin system (not yet done)
+- ✅ Tool registration with OpenClaw plugin system
 
 **249/249 tests passing.**
 
-### 7a. Tool Exposure — `memory_conflicts` tool (LOGIC ✅, TOOL REGISTRATION ❌)
+### 7a. Tool Exposure — `memory_conflicts` tool ✅ COMPLETE
 
 Wire `detectConflicts()` to a tool that James can call to see contradictory edges.
 
@@ -355,7 +355,7 @@ filters:
 
 ---
 
-### 7b. Tool Exposure — `memory_decay_preview` tool (LOGIC ✅, TOOL WIRED ❌)
+### 7b. Tool Exposure — `memory_decay_preview` tool ✅ COMPLETE
 
 Wire `decayConfidence()` to a preview tool (does NOT auto-apply, just shows what would decay).
 
@@ -481,6 +481,7 @@ When an event record is written with `category=event`, automatically find and ta
 | v0.7.0: event-to-contact | ✅ | f3f2c49 | 2026-03-03 |
 | v0.7.0: tool handlers | ✅ | 27ee48b | 2026-03-03 |
 | v0.7.0: cleanup | ✅ | 6645434 | 2026-03-03 |
+| v0.7.0: tool registration | ✅ | f6d6c52 | 2026-03-03 |
 
 **Current latest commit:** `99c8e32` (as of 2026-03-03)
 
