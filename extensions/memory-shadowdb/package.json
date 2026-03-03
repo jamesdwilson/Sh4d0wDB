@@ -4,7 +4,8 @@
   "description": "OpenClaw memory plugin with multi-backend support (PostgreSQL, SQLite, MySQL). Hybrid semantic + full-text search.",
   "type": "module",
   "scripts": {
-    "test": "node --test ./index.test.mjs"
+    "test": "node --test ./*.test.mjs",
+    "build": "tsc"
   },
   "dependencies": {
     "@sinclair/typebox": "0.34.48",

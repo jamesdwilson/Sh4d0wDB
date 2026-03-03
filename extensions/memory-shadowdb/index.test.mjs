@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { __test__ } from './index.ts';
+import { __test__ } from './dist/index.js';
 
 const {
   normalizeEmbeddingProvider,
   resolveEmbeddingConfig,
-  resolveStartupInjectionConfig,
+  resolvePrimerConfig,
   validateEmbeddingDimensions,
 } = __test__;
 
@@ -112,15 +112,15 @@ test('validateEmbeddingDimensions enforces configured size', () => {
 });
 
 
-test('resolveStartupInjectionConfig defaults and normalization', () => {
-  const defaults = resolveStartupInjectionConfig({});
+test('resolvePrimerConfig defaults and normalization', () => {
+  const defaults = resolvePrimerConfig({});
   assert.equal(defaults.enabled, true);
   assert.equal(defaults.mode, 'always');
   assert.equal(defaults.maxChars, 4000);
   assert.equal(defaults.cacheTtlMs, 600000);
 
-  const custom = resolveStartupInjectionConfig({
-    startup: {
+  const custom = resolvePrimerConfig({
+    primer: {
       enabled: false,
       mode: 'digest',
       maxChars: 1200,
@@ -132,8 +132,8 @@ test('resolveStartupInjectionConfig defaults and normalization', () => {
   assert.equal(custom.maxChars, 1200);
   assert.equal(custom.cacheTtlMs, 2500);
 
-  const bad = resolveStartupInjectionConfig({
-    startup: {
+  const bad = resolvePrimerConfig({
+    primer: {
       mode: 'weird-mode',
       maxChars: -10,
       cacheTtlMs: -1,

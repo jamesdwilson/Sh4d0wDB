@@ -6,7 +6,7 @@
     "esModuleInterop": true,
     "strict": true,
     "noImplicitAny": false,
-    "paths": {}
+    "paths": {},
     "skipLibCheck": true,
     "outDir": "./dist",
     "rootDir": ".",
