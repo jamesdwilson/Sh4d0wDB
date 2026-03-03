@@ -415,4 +415,35 @@ export class PostgresStore extends MemoryStore {
         const connected = [...visited].filter(s => s !== startSlug);
         return { entity: startSlug, edges: allEdges, connected, hopResults };
     }
+    /**
+     * Query all graph edges (for conflict detection, decay preview).
+     * Public method for tool handlers.
+     */
+    async queryAllGraphEdges(opts) {
+        const conditions = ["category = 'graph'", "record_type = 'atom'"];
+        const params = [];
+        let paramIdx = 1;
+        if (opts?.domain) {
+            conditions.push(`$${paramIdx} = ANY(tags)`);
+            params.push(`domain:${opts.domain}`);
+            paramIdx++;
+        }
+        if (opts?.min_confidence !== undefined) {
+            conditions.push(`(metadata->>'confidence')::int >= $${paramIdx}`);
+            params.push(opts.min_confidence);
+            paramIdx++;
+        }
+        const result = await this.getPool().query(`SELECT id, content, tags, metadata, created_at, updated_at
+       FROM memories
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY id`, params);
+        return result.rows.map((row) => ({
+            id: row.id,
+            content: row.content,
+            tags: row.tags,
+            metadata: row.metadata,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }));
+    }
 }

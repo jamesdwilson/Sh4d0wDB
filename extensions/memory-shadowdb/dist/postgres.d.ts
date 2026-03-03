@@ -33,7 +33,7 @@ export declare class PostgresStore extends MemoryStore {
         config: StoreConfig;
         logger: StoreLogger;
     });
-    private getPool;
+    protected getPool(): pg.Pool;
     /**
      * Expose pool for legacy compatibility (index.ts shared pool pattern).
      * TODO: Remove once index.ts is fully migrated to use MemoryStore directly.
@@ -132,4 +132,12 @@ export declare class PostgresStore extends MemoryStore {
             edges: GraphEdge[];
         }>;
     }>;
+    /**
+     * Query all graph edges (for conflict detection, decay preview).
+     * Public method for tool handlers.
+     */
+    queryAllGraphEdges(opts?: {
+        domain?: string;
+        min_confidence?: number;
+    }): Promise<GraphEdge[]>;
 }

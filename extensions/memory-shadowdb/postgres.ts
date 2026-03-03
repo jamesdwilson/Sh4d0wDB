@@ -46,7 +46,7 @@ export class PostgresStore extends MemoryStore {
   // Connection pool — lazy init, capped at 3
   // ==========================================================================
 
-  private getPool(): pg.Pool {
+  protected getPool(): pg.Pool {
     if (!this.pool) {
       this.pool = new pg.Pool({
         connectionString: this.connectionString,
@@ -529,5 +529,47 @@ export class PostgresStore extends MemoryStore {
     const connected = [...visited].filter(s => s !== startSlug);
 
     return { entity: startSlug, edges: allEdges, connected, hopResults };
+  }
+
+  /**
+   * Query all graph edges (for conflict detection, decay preview).
+   * Public method for tool handlers.
+   */
+  async queryAllGraphEdges(opts?: {
+    domain?: string;
+    min_confidence?: number;
+  }): Promise<GraphEdge[]> {
+    const conditions = ["category = 'graph'", "record_type = 'atom'"];
+    const params: unknown[] = [];
+    let paramIdx = 1;
+
+    if (opts?.domain) {
+      conditions.push(`$${paramIdx} = ANY(tags)`);
+      params.push(`domain:${opts.domain}`);
+      paramIdx++;
+    }
+
+    if (opts?.min_confidence !== undefined) {
+      conditions.push(`(metadata->>'confidence')::int >= $${paramIdx}`);
+      params.push(opts.min_confidence);
+      paramIdx++;
+    }
+
+    const result = await this.getPool().query(
+      `SELECT id, content, tags, metadata, created_at, updated_at
+       FROM memories
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY id`,
+      params,
+    );
+
+    return result.rows.map((row: Record<string, unknown>) => ({
+      id: row.id as number,
+      content: row.content as string,
+      tags: row.tags as string[],
+      metadata: row.metadata as GraphEdge["metadata"],
+      created_at: row.created_at as string,
+      updated_at: row.updated_at as string,
+    }));
   }
 }
