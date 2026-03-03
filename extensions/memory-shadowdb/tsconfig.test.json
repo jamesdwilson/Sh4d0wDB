@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "skipLibCheck": true,
+    "noEmit": false
+  },
+  "include": ["config.ts", "embedder.ts", "store.ts", "postgres.ts", "types.ts", "index.ts"],
+  "exclude": ["node_modules", "dist", "mysql.ts", "sqlite.ts"]
+}
