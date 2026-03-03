@@ -370,6 +370,12 @@ export declare abstract class MemoryStore {
     /** Initialize backend (create tables if needed). */
     abstract initialize(): Promise<void>;
 }
+/**
+ * Truncate text at a clean boundary (section > paragraph > sentence > word).
+ * Walks backward from maxChars to find the best break point.
+ * Falls back to hard cut only if no break found in the last 200 chars.
+ */
+export declare function truncateCleanly(text: string, maxChars: number): string;
 /** Trim and truncate a string. Returns empty string for non-string input. */
 export declare function sanitizeString(value: unknown, maxLength: number): string;
 /** Validate, deduplicate, and bound a tags array. */

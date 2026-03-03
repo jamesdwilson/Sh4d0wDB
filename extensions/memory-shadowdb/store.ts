@@ -1047,7 +1047,7 @@ export abstract class MemoryStore {
  * Walks backward from maxChars to find the best break point.
  * Falls back to hard cut only if no break found in the last 200 chars.
  */
-function truncateCleanly(text: string, maxChars: number): string {
+export function truncateCleanly(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
 
   const slice = text.slice(0, maxChars);
