@@ -483,18 +483,18 @@ When an event record is written with `category=event`, automatically find and ta
 | v0.7.0: cleanup | ✅ | 6645434 | 2026-03-03 |
 | v0.7.0: tool registration | ✅ | f6d6c52 | 2026-03-03 |
 
-**Current latest commit:** `99c8e32` (as of 2026-03-03)
+**Current latest commit:** `be98393` (as of 2026-03-03)
 
 ---
 
 ## Operating Rules (for any agent picking this up)
 
 1. **Read this file first.** Do not infer state from git log alone — ROADMAP is truth.
-2. **Run `npm test` before and after every change.** 194 tests must pass. Red = stop.
+2. **Run `npm test` before and after every change.** 249 tests must pass. Red = stop.
 3. **Compile before committing.** Touched `.ts` files must be recompiled to `dist/` before test run.
 4. **One thing per commit.** No "feat: lots of stuff". Split it.
 5. **Update this file** when a sprint completes or a task is checked off.
-6. **v0.4.0, v0.5.0, v0.6.0 are COMPLETE.** Next work is v0.7.0 (tool exposure + intelligence features).
+6. **v0.4.0, v0.5.0, v0.6.0, v0.7.0 are COMPLETE.** No further work defined. Check with James for next priorities.
 7. **Do not guess on schema or tool interface decisions.** If anything is ambiguous, stop and flag James (+16783694522).
 8. **TDD when possible.** Write failing tests first, then implement.
 9. **GRAPH_SPEC.md is the design authority for graph features.** Read it before touching graph code.
