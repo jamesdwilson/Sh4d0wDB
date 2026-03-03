@@ -268,7 +268,7 @@ export declare abstract class MemoryStore {
      *
      * Selects the best section by counting query term overlaps in each block.
      */
-    protected formatSection(row: {
+    formatSection(row: {
         id: number;
         content: string;
         category?: string | null;
