@@ -331,12 +331,11 @@ write({ content: 'test', tags: ['entity:james-wilson', 'bad:value'] })
 ## Operating Rules (for any agent picking this up)
 
 1. **Read this file first.** Do not infer state from git log alone — ROADMAP is truth.
-2. **Run `npm test` before and after every change.** 136 tests must pass. Red = stop.
+2. **Run `npm test` before and after every change.** 194 tests must pass. Red = stop.
 3. **Compile before committing.** Touched `.ts` files must be recompiled to `dist/` before test run.
 4. **One thing per commit.** No "feat: lots of stuff". Split it.
 5. **Update this file** when a sprint completes or a task is checked off.
-6. **Sprint 3 is next.** Start with `3b` (graph query extraction), not `3a` (that's just a usage convention).
-7. **Do not start Sprint 5 until Sprint 3 is complete and marked here.**
-8. **Do not touch v0.5.0 backlog items** until v0.4.0 is fully done.
-9. **GRAPH_SPEC.md is the design authority for Sprint 3.** Read it fully before writing any graph code.
-10. **If anything is ambiguous, stop and flag James** (+16783694522). Do not guess on schema or tool interface decisions.
+6. **v0.4.0 and v0.5.0 are COMPLETE.** Next work is v0.6.0 backlog items (confidence decay, conflict detection).
+7. **Do not guess on schema or tool interface decisions.** If anything is ambiguous, stop and flag James (+16783694522).
+8. **TDD when possible.** Write failing tests first, then implement.
+9. **GRAPH_SPEC.md is the design authority for graph features.** Read it before touching graph code.
