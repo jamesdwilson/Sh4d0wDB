@@ -243,7 +243,7 @@ export declare abstract class MemoryStore {
      * Format a search result snippet.
      * Compact: category|3d\n{content truncated to 700 chars}
      */
-    protected formatSnippet(row: {
+    formatSnippet(row: {
         id: number;
         content: string;
         category?: string | null;
