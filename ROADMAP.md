@@ -251,35 +251,26 @@ Test:
 
 ---
 
-### Sprint 5: Advanced Query Types 🔴 NOT STARTED — NEXT SPRINT
+### Sprint 5: Advanced Query Types ✅ COMPLETE (2026-03-03, commit: d03bdcf)
 
-**Prerequisite:** Sprint 3 complete
+**What was built:**
+- `metadata-filters.ts` — `buildMetadataFilters()` — typed comparisons (>, >=, <, <=, =, !=) on metadata JSONB fields
+- `filters.ts` — `buildFilterClauses()` now accepts `metadata_filters` param, delegates to `buildMetadataFilters`
+- `list-filters.ts` — `buildListConditions()` now accepts `metadata_filters` param
+- `types.ts` — `SearchFilters` type extended with `metadata_filters` field
+- 13 tests for `buildMetadataFilters`, 4 tests for `buildFilterClauses` integration, 4 tests for `buildListConditions` integration
+- All 177 tests passing
 
-**What this means (best current understanding):**
-
-A structured query interface that lets agents filter records using typed comparisons against metadata fields — not just JSONB containment.
-
-Current state: `metadata @> '{"confidence": 70}'` only does exact match.
-Goal: `metadata.confidence > 70`, `metadata.last_verified < '2026-01-01'`, `metadata.tier = 'vip'`.
-
-**Implementation plan (draft — refine before starting):**
-
-5a. Extend `buildFilterClauses` and `buildListConditions` to accept typed comparisons:
+**Usage pattern:**
 ```
-metadata_filters: Array<{
-  field: string,          // e.g. "confidence"
-  op: "=" | ">" | "<" | ">=" | "<=" | "!=",
-  value: string | number | boolean
-}>
+// In memory_search or memory_list tool call:
+metadata_filters: [
+  { field: 'confidence', op: '>', value: 70 },
+  { field: 'tier', op: '=', value: 'vip' }
+]
 ```
 
-5b. Generate safe parameterized SQL: `(metadata->>'confidence')::numeric > $N`
-
-5c. Expose via `memory_search` and `memory_list` tool parameters.
-
-5d. Unit tests: each operator, numeric cast, string comparison, injection guard on field names.
-
-5e. Commit sequence: one operator at a time, one commit per operator.
+Generates: `(metadata->>'confidence')::numeric > $3 AND metadata->>'tier' = $4`
 
 ---
 
@@ -303,9 +294,9 @@ metadata_filters: Array<{
 | Sprint 2: metadata filters | ✅ | 60c7674 (part of v0.3.0) | 2026-02-12 |
 | Sprint 3: graph intelligence | ✅ | 1957a43 | 2026-03-03 |
 | Sprint 4: multi-resolution retrieval | ✅ | 60c7674 (part of v0.3.0) | 2026-02-12 |
-| Sprint 5: advanced query types | 🔴 not started | — | — |
+| Sprint 5: advanced query types | ✅ | d03bdcf | 2026-03-03 |
 
-**Current latest commit:** `1957a43` (as of 2026-03-03)
+**Current latest commit:** `d03bdcf` (as of 2026-03-03)
 
 ---
 
