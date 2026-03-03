@@ -293,15 +293,31 @@ write({ content: 'test', tags: ['entity:james-wilson', 'bad:value'] })
 // → throws: "Invalid tags: Tag \"bad:value\" has unknown namespace \"bad\""
 ```
 
-**Remaining v0.5.0 backlog items:**
-- Confidence decay (scheduled job)
-- Conflict detection (query for contradictory edges)
-- Event-to-contact mapping automation
-- Relationship graph UI (separate project)
+---
+
+## v0.6.0 — ✅ COMPLETE (2026-03-03)
+
+**What was built:**
+- `conflict-detector.ts` — `detectConflicts()` — finds contradictory edges (knows+tension, allies+rivals)
+- `confidence-decay.ts` — `computeDecayFactor()` + `decayConfidence()` — exponential decay based on `last_verified` age
+- 17 tests across both modules
+- All 212 tests passing
+
+**Conflict detection usage:**
+```javascript
+const conflicts = detectConflicts(edges);
+// [{ entity_a: 'alice', entity_b: 'bob', types: ['knows', 'tension'], edge_ids: [1, 2] }]
+```
+
+**Confidence decay usage:**
+```javascript
+const results = decayConfidence(edges, { halfLifeDays: 30, minConfidence: 10 });
+// [{ id: 1, oldConfidence: 80, newConfidence: 40, decayFactor: 0.5 }]
+```
 
 ---
 
-## v0.6.0 — BACKLOG (not yet defined)
+## v0.7.0 — BACKLOG (not yet defined)
 
 - **Tag namespace enforcement** — reject writes with tags that don't match a namespace prefix (`entity:`, `domain:`, `loc:`, `sector:`, `status:`, `interest:`)
 - **Confidence decay** — scheduled job that lowers confidence on edges where `last_verified` is stale (configurable decay curve)
@@ -323,8 +339,10 @@ write({ content: 'test', tags: ['entity:james-wilson', 'bad:value'] })
 | Sprint 4: multi-resolution retrieval | ✅ | 60c7674 (part of v0.3.0) | 2026-02-12 |
 | Sprint 5: advanced query types | ✅ | d03bdcf | 2026-03-03 |
 | v0.5.0: tag namespace enforcement | ✅ | 569c0ec | 2026-03-03 |
+| v0.6.0: conflict detection | ✅ | a2cf409 | 2026-03-03 |
+| v0.6.0: confidence decay | ✅ | 99c8e32 | 2026-03-03 |
 
-**Current latest commit:** `569c0ec` (as of 2026-03-03)
+**Current latest commit:** `99c8e32` (as of 2026-03-03)
 
 ---
 
