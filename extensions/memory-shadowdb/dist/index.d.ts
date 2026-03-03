@@ -26,7 +26,7 @@
  * - "mysql": MySQL 9.2+ — native vector, FULLTEXT
  */
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { resolveEmbeddingConfig, resolvePrimerConfig, normalizeEmbeddingProvider, validateEmbeddingDimensions, computeEmbeddingFingerprint } from "./config.js";
+import { resolveEmbeddingConfig, resolvePrimerConfig, resolveMaxCharsForModel, normalizeEmbeddingProvider, validateEmbeddingDimensions, computeEmbeddingFingerprint } from "./config.js";
 declare const memoryShadowdbPlugin: {
     id: string;
     name: string;
@@ -40,5 +40,6 @@ export declare const __test__: {
     resolvePrimerConfig: typeof resolvePrimerConfig;
     validateEmbeddingDimensions: typeof validateEmbeddingDimensions;
     computeEmbeddingFingerprint: typeof computeEmbeddingFingerprint;
+    resolveMaxCharsForModel: typeof resolveMaxCharsForModel;
 };
 export default memoryShadowdbPlugin;
