@@ -119,7 +119,7 @@ Delivered:
 
 ---
 
-## v0.4.0 — IN PROGRESS (started 2026-03-03)
+## v0.4.0 — ✅ COMPLETE (2026-03-03)
 
 ### Sprint 1: Baseline Test Infrastructure ✅ COMPLETE (2026-03-03, commit: 9a17eaf)
 
