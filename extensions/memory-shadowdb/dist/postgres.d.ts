@@ -17,6 +17,7 @@ import pg from "pg";
 import { MemoryStore, type RankedHit, type PrimerRow, type StoreConfig, type StoreLogger } from "./store.js";
 import type { EmbeddingClient } from "./embedder.js";
 import type { SearchFilters } from "./types.js";
+import { type GraphEdge } from "./graph-queries.js";
 /**
  * PostgreSQL-backed memory store.
  *
@@ -104,4 +105,31 @@ export declare class PostgresStore extends MemoryStore {
         id: number;
         content: string;
     }>>;
+    /**
+     * Traverse the entity graph from a starting slug.
+     *
+     * Returns all edges touching the entity (1-hop), and optionally recurses
+     * to N hops. Each hop collects the connected entity slugs, then fetches
+     * their edges in turn. Visited set prevents infinite loops.
+     *
+     * @param entitySlug     - Starting entity slug (e.g. "james-wilson")
+     * @param hops           - Number of hops to traverse (default 1, max 3)
+     * @param min_confidence - Minimum edge confidence to include (0-100)
+     * @param relationship_type - Optional filter to specific relationship type
+     * @returns edges[], connected entity slugs[], and raw edge records
+     */
+    graph(params: {
+        entity: string;
+        hops?: number;
+        min_confidence?: number;
+        relationship_type?: string;
+    }): Promise<{
+        entity: string;
+        edges: GraphEdge[];
+        connected: string[];
+        hopResults: Array<{
+            entity: string;
+            edges: GraphEdge[];
+        }>;
+    }>;
 }

@@ -15,55 +15,9 @@
  */
 import pg from "pg";
 import { MemoryStore } from "./store.js";
-/**
- * Build additional WHERE conditions from SearchFilters.
- * Returns { clauses: string[], values: unknown[], nextIdx: number }.
- * All user values are parameterized — no SQL injection risk.
- */
-function buildFilterClauses(filters, startIdx) {
-    if (!filters)
-        return { clauses: [], values: [], nextIdx: startIdx };
-    const clauses = [];
-    const values = [];
-    let idx = startIdx;
-    if (filters.category) {
-        clauses.push(`category = $${idx++}`);
-        values.push(filters.category);
-    }
-    if (filters.record_type) {
-        clauses.push(`record_type = $${idx++}`);
-        values.push(filters.record_type);
-    }
-    if (filters.tags_include && filters.tags_include.length > 0) {
-        clauses.push(`tags @> $${idx++}::text[]`);
-        values.push(filters.tags_include);
-    }
-    if (filters.tags_any && filters.tags_any.length > 0) {
-        clauses.push(`tags && $${idx++}::text[]`);
-        values.push(filters.tags_any);
-    }
-    if (filters.priority_min !== undefined) {
-        clauses.push(`priority >= $${idx++}`);
-        values.push(filters.priority_min);
-    }
-    if (filters.priority_max !== undefined) {
-        clauses.push(`priority <= $${idx++}`);
-        values.push(filters.priority_max);
-    }
-    if (filters.created_after) {
-        clauses.push(`created_at >= $${idx++}`);
-        values.push(filters.created_after);
-    }
-    if (filters.created_before) {
-        clauses.push(`created_at <= $${idx++}`);
-        values.push(filters.created_before);
-    }
-    if (filters.parent_id !== undefined) {
-        clauses.push(`parent_id = $${idx++}`);
-        values.push(filters.parent_id);
-    }
-    return { clauses, values, nextIdx: idx };
-}
+import { buildFilterClauses } from "./filters.js";
+import { buildListConditions, buildSortClause } from "./list-filters.js";
+import { buildEdgeQuery, extractConnectedEntity, normalizeEntitySlug } from "./graph-queries.js";
 /**
  * PostgreSQL-backed memory store.
  *
@@ -287,80 +241,14 @@ export class PostgresStore extends MemoryStore {
         return result.rows[0].id;
     }
     async list(params) {
-        const conditions = ["deleted_at IS NULL"];
-        const values = [];
-        let idx = 1;
-        if (params.category) {
-            conditions.push(`category = $${idx++}`);
-            values.push(params.category);
-        }
-        if (params.record_type) {
-            conditions.push(`record_type = $${idx++}`);
-            values.push(params.record_type);
-        }
-        if (params.parent_id !== undefined) {
-            conditions.push(`parent_id = $${idx++}`);
-            values.push(params.parent_id);
-        }
-        if (params.priority_min !== undefined) {
-            conditions.push(`priority >= $${idx++}`);
-            values.push(params.priority_min);
-        }
-        if (params.priority_max !== undefined) {
-            conditions.push(`priority <= $${idx++}`);
-            values.push(params.priority_max);
-        }
-        if (params.created_after) {
-            conditions.push(`created_at >= $${idx++}`);
-            values.push(params.created_after);
-        }
-        if (params.created_before) {
-            conditions.push(`created_at <= $${idx++}`);
-            values.push(params.created_before);
-        }
-        if (params.tags && params.tags.length > 0) {
-            conditions.push(`tags @> $${idx++}::text[]`);
-            values.push(params.tags);
-        }
-        if (params.tags_include && params.tags_include.length > 0) {
-            conditions.push(`tags @> $${idx++}::text[]`);
-            values.push(params.tags_include);
-        }
-        if (params.tags_any && params.tags_any.length > 0) {
-            conditions.push(`tags && $${idx++}::text[]`);
-            values.push(params.tags_any);
-        }
-        if (params.metadata && Object.keys(params.metadata).length > 0) {
-            conditions.push(`metadata @> $${idx++}::jsonb`);
-            values.push(JSON.stringify(params.metadata));
-        }
+        const { conditions, values, nextIdx } = buildListConditions(params);
+        let idx = nextIdx;
         const where = conditions.join(" AND ");
         const lim = Math.min(params.limit ?? 50, 200);
         const off = params.offset ?? 0;
         const contentCol = params.detail_level === "full" || params.detail_level === "snippet"
             ? ", content" : "";
-        // Sort — validate column name to prevent SQL injection
-        const allowedSorts = ["created_at", "updated_at", "priority", "title"];
-        const sortDir = params.sort_order === "asc" ? "ASC" : "DESC";
-        let orderClause;
-        if (params.sort && params.sort.startsWith("metadata.")) {
-            // Metadata field sort: metadata.fieldName
-            // Sanitize: only allow alphanumeric + underscore in field names
-            const fieldName = params.sort.slice("metadata.".length);
-            if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(fieldName)) {
-                throw new Error(`Invalid metadata sort field: ${fieldName}`);
-            }
-            // Try numeric cast; fall back to text sort on cast failure
-            // Use a CASE expression: if the value parses as numeric, sort numerically; otherwise sort as text
-            orderClause = `ORDER BY
-        CASE WHEN metadata->>'${fieldName}' ~ '^-?[0-9]+(\\.[0-9]+)?$'
-             THEN (metadata->>'${fieldName}')::numeric ELSE NULL END ${sortDir} NULLS LAST,
-        metadata->>'${fieldName}' ${sortDir} NULLS LAST`;
-        }
-        else {
-            const sortCol = allowedSorts.includes(params.sort) ? params.sort : "created_at";
-            orderClause = `ORDER BY ${sortCol} ${sortDir}`;
-        }
+        const orderClause = buildSortClause(params.sort, params.sort_order);
         const sql = `
       SELECT id, category, title, record_type, priority, parent_id,
              COALESCE(metadata, '{}') as metadata, created_at, COALESCE(tags, '{}') as tags${contentCol}
@@ -472,5 +360,59 @@ export class PostgresStore extends MemoryStore {
         const result = await this.getPool().query(`SELECT id, content FROM ${this.config.table} WHERE deleted_at IS NULL AND id > $1 ORDER BY id ASC LIMIT $2`, [afterId, limit]);
         return result.rows;
     }
+    /**
+     * Traverse the entity graph from a starting slug.
+     *
+     * Returns all edges touching the entity (1-hop), and optionally recurses
+     * to N hops. Each hop collects the connected entity slugs, then fetches
+     * their edges in turn. Visited set prevents infinite loops.
+     *
+     * @param entitySlug     - Starting entity slug (e.g. "james-wilson")
+     * @param hops           - Number of hops to traverse (default 1, max 3)
+     * @param min_confidence - Minimum edge confidence to include (0-100)
+     * @param relationship_type - Optional filter to specific relationship type
+     * @returns edges[], connected entity slugs[], and raw edge records
+     */
+    async graph(params) {
+        const startSlug = normalizeEntitySlug(params.entity);
+        const hops = Math.min(params.hops ?? 1, 3);
+        const opts = {
+            min_confidence: params.min_confidence,
+            relationship_type: params.relationship_type,
+            table: this.config.table,
+        };
+        const visited = new Set([startSlug]);
+        const allEdges = [];
+        const hopResults = [];
+        let currentSlugs = [startSlug];
+        for (let hop = 0; hop < hops; hop++) {
+            const nextSlugs = [];
+            for (const slug of currentSlugs) {
+                const { sql, values } = buildEdgeQuery(slug, opts);
+                const result = await this.getPool().query(sql, values);
+                const edges = result.rows.map((row) => ({
+                    id: row.id,
+                    content: row.content,
+                    tags: row.tags,
+                    metadata: row.metadata,
+                }));
+                hopResults.push({ entity: slug, edges });
+                for (const edge of edges) {
+                    if (!allEdges.find(e => e.id === edge.id)) {
+                        allEdges.push(edge);
+                    }
+                    const connected = extractConnectedEntity(edge, slug);
+                    if (connected && !visited.has(connected)) {
+                        visited.add(connected);
+                        nextSlugs.push(connected);
+                    }
+                }
+            }
+            currentSlugs = nextSlugs;
+            if (currentSlugs.length === 0)
+                break;
+        }
+        const connected = [...visited].filter(s => s !== startSlug);
+        return { entity: startSlug, edges: allEdges, connected, hopResults };
+    }
 }
-//# sourceMappingURL=postgres.js.map

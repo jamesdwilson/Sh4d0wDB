@@ -17,6 +17,7 @@
 import pg from "pg";
 import { MemoryStore, type RankedHit, type PrimerRow, type StoreConfig, type StoreLogger } from "./store.js";
 import type { EmbeddingClient } from "./embedder.js";
+import type { SearchFilters } from "./types.js";
 import { buildFilterClauses } from "./filters.js";
 import { buildListConditions, buildSortClause } from "./list-filters.js";
 import { buildEdgeQuery, extractConnectedEntity, normalizeEntitySlug, type GraphEdge } from "./graph-queries.js";
