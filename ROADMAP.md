@@ -317,7 +317,131 @@ const results = decayConfidence(edges, { halfLifeDays: 30, minConfidence: 10 });
 
 ---
 
-## v0.7.0 — BACKLOG (not yet defined)
+## v0.7.0 — Tool Exposure + Intelligence Features (BACKLOG)
+
+**Goal:** Wire existing logic to tools + add intelligence features from GRAPH_SPEC.md.
+
+### 7a. Tool Exposure — `memory_conflicts` tool
+
+Wire `detectConflicts()` to a tool that James can call to see contradictory edges.
+
+**Tool parameters:**
+```
+filters:
+  domain: string       // Optional — filter to domain
+  min_confidence: number  // Optional — only check edges above threshold
+```
+
+**Returns:** Array of conflicts with entity pairs, conflicting types, edge IDs.
+
+**Tests:**
+- Tool returns conflicts for stored edges
+- Tool respects domain filter
+- Tool respects confidence threshold
+- Tool returns empty array for no conflicts
+
+**Commit:** `feat: memory_conflicts tool`
+
+---
+
+### 7b. Tool Exposure — `memory_decay_preview` tool
+
+Wire `decayConfidence()` to a preview tool (does NOT auto-apply, just shows what would decay).
+
+**Tool parameters:**
+```
+half_life_days: number   // Default 30
+min_confidence: number   // Default 0
+dry_run: boolean         // Default true — just preview
+```
+
+**Returns:** Array of edges that would decay, with old/new confidence values.
+
+**Tests:**
+- Tool returns decay preview for stale edges
+- Tool respects half_life_days
+- Tool respects min_confidence floor
+- Tool returns empty for recent edges
+
+**Commit:** `feat: memory_decay_preview tool`
+
+---
+
+### 7c. Authority Sensitivity Scoring
+
+From GRAPH_SPEC.md: derive authority sensitivity from psych profile at query time.
+
+**Function:** `computeAuthoritySensitivity(psychProfile)` → score 0-100
+
+**Rules:**
+- ISTJ/ESTJ/Analyst → high authority sensitivity (weight intro source heavily)
+- ENFP/INFP/Accommodator → low authority sensitivity (deference less important)
+
+**Tests:**
+- Returns high score for ISTJ/Analyst
+- Returns low score for ENFP/Accommodator
+- Returns medium for undefined types
+- Handles missing profile gracefully
+
+**Commit:** `feat: authority sensitivity scoring`
+
+---
+
+### 7d. Intro Framing Suggestions
+
+From GRAPH_SPEC.md: use affinity + friction data to suggest how to frame an introduction.
+
+**Function:** `suggestIntroFraming(entity_a, entity_b, edges, psychProfiles)` → framing string
+
+**Rules:**
+- High affinity (80+): "Natural fit — lead with shared values"
+- Medium affinity (50-79): "Workable — frame as complementary skills"
+- Friction risk (20-49): "Caution — acknowledge tension, frame around common goal"
+- Avoid (<20): "Not recommended — high friction risk"
+
+**Tests:**
+- Returns appropriate framing for each affinity tier
+- Incorporates friction_risks from edge metadata
+- Uses psych profiles to refine framing
+- Handles missing data gracefully
+
+**Commit:** `feat: intro framing suggestions`
+
+---
+
+### 7e. Event-to-Contact Mapping (stretch)
+
+When an event record is written with `category=event`, automatically find and tag related contacts.
+
+**Heuristic:**
+- Extract entities from event content
+- Query for contacts tagged with those entities
+- Add event ID to contact's `related_events` metadata array
+
+**Tests:**
+- Event write triggers entity extraction
+- Entities matched to contacts
+- Contact metadata updated with event reference
+- No action if no matching contacts
+
+**Commit:** `feat: event-to-contact auto-mapping`
+
+---
+
+### v0.7.0 Commit Sequence
+
+1. `roadmap: v0.7.0 defined — tool exposure + intelligence features`
+2. `test(TDD vision): memory_conflicts tool — X failing tests`
+3. `feat: memory_conflicts tool`
+4. `test(TDD vision): memory_decay_preview tool — X failing tests`
+5. `feat: memory_decay_preview tool`
+6. `test(TDD vision): authority sensitivity — X failing tests`
+7. `feat: authority sensitivity scoring`
+8. `test(TDD vision): intro framing — X failing tests`
+9. `feat: intro framing suggestions`
+10. `test(TDD vision): event-to-contact — X failing tests`
+11. `feat: event-to-contact auto-mapping`
+12. `roadmap: v0.7.0 complete`
 
 - **Tag namespace enforcement** — reject writes with tags that don't match a namespace prefix (`entity:`, `domain:`, `loc:`, `sector:`, `status:`, `interest:`)
 - **Confidence decay** — scheduled job that lowers confidence on edges where `last_verified` is stale (configurable decay curve)
@@ -353,7 +477,7 @@ const results = decayConfidence(edges, { halfLifeDays: 30, minConfidence: 10 });
 3. **Compile before committing.** Touched `.ts` files must be recompiled to `dist/` before test run.
 4. **One thing per commit.** No "feat: lots of stuff". Split it.
 5. **Update this file** when a sprint completes or a task is checked off.
-6. **v0.4.0 and v0.5.0 are COMPLETE.** Next work is v0.6.0 backlog items (confidence decay, conflict detection).
+6. **v0.4.0, v0.5.0, v0.6.0 are COMPLETE.** Next work is v0.7.0 (tool exposure + intelligence features).
 7. **Do not guess on schema or tool interface decisions.** If anything is ambiguous, stop and flag James (+16783694522).
 8. **TDD when possible.** Write failing tests first, then implement.
 9. **GRAPH_SPEC.md is the design authority for graph features.** Read it before touching graph code.
