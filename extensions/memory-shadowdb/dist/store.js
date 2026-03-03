@@ -762,7 +762,7 @@ export function truncateCleanly(text, maxChars) {
     return slice;
 }
 /** Validate content: required, non-empty, bounded length. */
-function validateContent(raw) {
+export function validateContent(raw) {
     const content = (typeof raw === "string" ? raw : "").trim();
     if (!content)
         throw new Error("content is required and must not be empty");

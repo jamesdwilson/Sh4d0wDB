@@ -376,6 +376,8 @@ export declare abstract class MemoryStore {
  * Falls back to hard cut only if no break found in the last 200 chars.
  */
 export declare function truncateCleanly(text: string, maxChars: number): string;
+/** Validate content: required, non-empty, bounded length. */
+export declare function validateContent(raw: unknown): string;
 /** Trim and truncate a string. Returns empty string for non-string input. */
 export declare function sanitizeString(value: unknown, maxLength: number): string;
 /** Validate, deduplicate, and bound a tags array. */

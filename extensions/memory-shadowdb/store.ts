@@ -1085,7 +1085,7 @@ export function truncateCleanly(text: string, maxChars: number): string {
 }
 
 /** Validate content: required, non-empty, bounded length. */
-function validateContent(raw: unknown): string {
+export function validateContent(raw: unknown): string {
   const content = (typeof raw === "string" ? raw : "").trim();
   if (!content) throw new Error("content is required and must not be empty");
   if (content.length > MAX_CONTENT_CHARS) {
