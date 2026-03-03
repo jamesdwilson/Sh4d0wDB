@@ -45,6 +45,56 @@ Gives your agent a persistent memory it can search, write, update, and delete �
 | `memory_update` | Edit an existing record |
 | `memory_delete` | Soft-delete (reversible for 30 days) |
 | `memory_undelete` | Undo a delete |
+| `memory_list` | Filter/browse records by metadata |
+| `memory_assemble` | Token-budget-aware context assembly |
+| `memory_graph` | Traverse entity relationship graph (N-hop) |
+| `memory_conflicts` | Detect contradictory relationship edges |
+| `memory_decay_preview` | Preview confidence decay for stale edges |
+
+---
+
+## Graph Intelligence (v0.7.0)
+
+ShadowDB includes built-in relationship intelligence for contact networks:
+
+**Graph traversal** — `memory_graph` traverses entity relationships up to 3 hops:
+```
+memory_graph(entity: "james-wilson", hops: 2)
+→ Returns: connected entities, relationship edges, hop-by-hop paths
+```
+
+**Conflict detection** — `memory_conflicts` finds contradictory relationships:
+```
+memory_conflicts()
+→ Detects: knows+tension, allies+rivals, mentor-mentee+competitors
+→ Returns: entity pairs with conflicting relationship types
+```
+
+**Confidence decay** — `memory_decay_preview` shows which edges need verification:
+```
+memory_decay_preview(half_life_days: 30)
+→ Returns: edges with stale last_verified dates, decayed confidence scores
+```
+
+**Authority sensitivity** — scores how much someone weights intro source (MBTI + Voss type + DISC):
+```
+computeAuthoritySensitivity({ mbti: "ISTJ", voss_type: "Analyst" })
+→ Returns: 95 (high authority sensitivity)
+```
+
+**Intro framing** — suggests how to frame introductions based on affinity:
+```
+suggestIntroFraming("alice", "bob", edges)
+→ Returns: "Natural fit — lead with shared values"
+```
+
+**Event-to-contact mapping** — auto-links events to related contacts:
+```
+mapEventToContacts(eventTags, eventContent, knownEntities, queryFn)
+→ Returns: contact IDs matching event entities
+```
+
+These features use the existing `memories` table with `category=graph` and metadata JSONB — no schema changes required.
 
 ---
 
