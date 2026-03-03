@@ -124,6 +124,11 @@ export class MemoryStore {
                 // Full: complete content, no truncation
                 snippet = this.formatFullRecord(hit);
             }
+            else if (level === "section") {
+                // Section: full content of the most relevant ## heading block (~200-500 tokens)
+                // Falls back to snippet if no heading structure
+                snippet = this.formatSection(hit, query);
+            }
             else {
                 // Snippet: current default behavior
                 snippet = this.formatSnippet(hit);
@@ -202,8 +207,35 @@ export class MemoryStore {
      * 3. Fill token budget (approx 4 chars/token) highest score first
      * 4. Return assembled text with citations block
      */
+    /** Token budget defaults for task_type presets */
+    static TASK_TYPE_BUDGETS = {
+        quick: 500,
+        outreach: 2000,
+        dossier: 5000,
+        research: 10000,
+    };
     async assemble(params) {
-        const budget = Math.max(100, params.token_budget);
+        // Resolve token budget from task_type and/or explicit budget
+        const taskBudget = params.task_type
+            ? MemoryStore.TASK_TYPE_BUDGETS[params.task_type] ?? 2000
+            : undefined;
+        const explicitBudget = params.token_budget;
+        let resolvedBudget;
+        if (taskBudget !== undefined && explicitBudget !== undefined) {
+            // Both provided: use the lesser of the two
+            resolvedBudget = Math.min(taskBudget, explicitBudget);
+        }
+        else if (explicitBudget !== undefined) {
+            resolvedBudget = explicitBudget;
+        }
+        else if (taskBudget !== undefined) {
+            resolvedBudget = taskBudget;
+        }
+        else {
+            // Neither provided: default to outreach (2000)
+            resolvedBudget = 2000;
+        }
+        const budget = Math.max(100, resolvedBudget);
         const charBudget = budget * 4; // ~4 chars per token
         // Build filters for the vector search
         const filters = {};
@@ -674,6 +706,61 @@ export class MemoryStore {
         parts.push("");
         parts.push(row.content || "");
         return parts.join("\n");
+    }
+    /**
+     * Format a section-level result: return the full content up to the most
+     * relevant ## heading block (~200-500 tokens). If no heading structure,
+     * falls back to snippet behavior.
+     *
+     * Selects the best section by counting query term overlaps in each block.
+     */
+    formatSection(row, query) {
+        const content = row.content || "";
+        // Split content into sections by ## headings
+        const sectionRegex = /^## .+$/gm;
+        const headingMatches = [];
+        let match;
+        while ((match = sectionRegex.exec(content)) !== null) {
+            headingMatches.push({ index: match.index, text: match[0] });
+        }
+        // No heading structure — fall back to snippet
+        if (headingMatches.length === 0) {
+            return this.formatSnippet(row);
+        }
+        // Extract section blocks (heading + body until next heading or end)
+        const sections = [];
+        for (let i = 0; i < headingMatches.length; i++) {
+            const start = headingMatches[i].index;
+            const end = i + 1 < headingMatches.length ? headingMatches[i + 1].index : content.length;
+            sections.push({
+                heading: headingMatches[i].text,
+                body: content.slice(start, end).trim(),
+            });
+        }
+        // Score each section by query term overlap
+        const queryTerms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 2);
+        let bestIdx = 0;
+        let bestScore = -1;
+        for (let i = 0; i < sections.length; i++) {
+            const sectionLower = sections[i].body.toLowerCase();
+            let score = 0;
+            for (const term of queryTerms) {
+                if (sectionLower.includes(term))
+                    score++;
+            }
+            if (score > bestScore) {
+                bestScore = score;
+                bestIdx = i;
+            }
+        }
+        // Cap at ~2000 chars (~500 tokens)
+        const maxChars = 2000;
+        const sectionText = sections[bestIdx].body.slice(0, maxChars);
+        const header = [
+            row.category || null,
+            row.created_at ? formatRelativeAge(row.created_at) : null,
+        ].filter(Boolean).join("|");
+        return (header ? `${header}\n` : "") + sectionText;
     }
 }
 // ============================================================================

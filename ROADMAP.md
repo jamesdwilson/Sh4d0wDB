@@ -412,11 +412,17 @@ Principle: store raw signals (psych profile), derive inferences at query time.
 2. `memory_list` — add metadata field sorting: `sort="metadata.confidence"` (Postgres: `ORDER BY (metadata->>'confidence')::numeric`)
 3. `memory_search` — add `detail_level: "section"` (currently only summary/snippet/full)
 
+### Implementation Status (v0.4.0)
+- ✅ `memory_list` — metadata field sorting (`sort="metadata.confidence"`, numeric/text auto-detection)
+- ✅ `memory_assemble` — `task_type` preset budgets (quick=500, outreach=2000, dossier=5000, research=10000; lesser-of rule when both provided)
+- ✅ `memory_search` — `detail_level: "section"` (returns most relevant ## heading block, ~200-500 tokens, falls back to snippet)
+
 ### Implementation Order
 1. Write graph/event/affinity conventions as ShadowDB standing rules
-2. memory_list metadata sort
-3. memory_assemble task_type
-4. memory_search detail_level=section
+2. ~~memory_list metadata sort~~ ✅
+3. ~~memory_assemble task_type~~ ✅
+4. ~~memory_search detail_level=section~~ ✅
 5. Start populating graph records for Tyler network
 
 *Spec updated: 2026-03-02*
+*v0.4.0 implemented: 2026-03-02*

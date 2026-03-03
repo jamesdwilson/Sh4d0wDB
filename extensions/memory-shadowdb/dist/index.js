@@ -254,7 +254,7 @@ const memoryShadowdbPlugin = {
                     created_after: Type.Optional(Type.String({ description: "ISO date (created after)" })),
                     created_before: Type.Optional(Type.String({ description: "ISO date (created before)" })),
                     parent_id: Type.Optional(Type.Number({ description: "Filter by parent record ID" })),
-                    detail_level: Type.Optional(Type.Union([Type.Literal("summary"), Type.Literal("snippet"), Type.Literal("full")], { description: "summary=title+meta only, snippet=excerpt (default), full=complete content" })),
+                    detail_level: Type.Optional(Type.Union([Type.Literal("summary"), Type.Literal("snippet"), Type.Literal("section"), Type.Literal("full")], { description: "summary=title+meta only, snippet=excerpt (default), section=most relevant ## heading block (~200-500 tokens), full=complete content" })),
                 }),
                 execute: async (_toolCallId, params) => {
                     const query = params.query?.trim();
@@ -468,7 +468,7 @@ const memoryShadowdbPlugin = {
                         created_before: Type.Optional(Type.String({ description: "ISO date filter (created before)" })),
                         metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "JSON containment filter (metadata @> value)" })),
                         detail_level: Type.Optional(Type.Union([Type.Literal("summary"), Type.Literal("snippet"), Type.Literal("full")], { description: "summary=metadata only, snippet=excerpt, full=full content" })),
-                        sort: Type.Optional(Type.Union([Type.Literal("created_at"), Type.Literal("updated_at"), Type.Literal("priority"), Type.Literal("title")], { description: "Sort column (default: created_at)" })),
+                        sort: Type.Optional(Type.String({ description: "Sort column: created_at, updated_at, priority, title, or metadata.{field} (e.g. metadata.confidence). Default: created_at" })),
                         sort_order: Type.Optional(Type.Union([Type.Literal("asc"), Type.Literal("desc")], { description: "Sort direction (default: desc)" })),
                         limit: Type.Optional(Type.Number({ description: "Max results (default 50, max 200)" })),
                         offset: Type.Optional(Type.Number({ description: "Pagination offset" })),
@@ -516,7 +516,8 @@ const memoryShadowdbPlugin = {
                 description: "Token-budget-aware context assembly from ShadowDB. Searches broadly, scores by relevance+recency+priority, fills a token budget highest-score first. Returns assembled text with citations.",
                 parameters: Type.Object({
                     query: Type.String({ description: "What context is needed" }),
-                    token_budget: Type.Number({ description: "Max tokens to return (default: 2000)" }),
+                    token_budget: Type.Optional(Type.Number({ description: "Max tokens to return. If both token_budget and task_type provided, uses the lesser." })),
+                    task_type: Type.Optional(Type.Union([Type.Literal("quick"), Type.Literal("outreach"), Type.Literal("dossier"), Type.Literal("research")], { description: "Preset token budget: quick=500, outreach=2000, dossier=5000, research=10000. Default: outreach" })),
                     include_categories: Type.Optional(Type.Array(Type.String(), { description: "Limit to specific categories" })),
                     include_tags: Type.Optional(Type.Array(Type.String(), { description: "Require any of these tags" })),
                     exclude_categories: Type.Optional(Type.Array(Type.String(), { description: "Skip these categories" })),
@@ -526,13 +527,15 @@ const memoryShadowdbPlugin = {
                     const query = params.query?.trim();
                     if (!query)
                         return jsonResult({ error: "query is required" });
-                    const tokenBudget = params.token_budget || 2000;
-                    api.logger.info(`memory-shadowdb: tool memory_assemble called — query="${query.slice(0, 80)}", budget=${tokenBudget}`);
+                    const taskType = params.task_type;
+                    const tokenBudget = params.token_budget;
+                    api.logger.info(`memory-shadowdb: tool memory_assemble called — query="${query.slice(0, 80)}", task_type=${taskType || "none"}, budget=${tokenBudget ?? "default"}`);
                     try {
                         const s = await getStore();
                         const result = await s.assemble({
                             query,
                             token_budget: tokenBudget,
+                            task_type: taskType,
                             include_categories: params.include_categories,
                             include_tags: params.include_tags,
                             exclude_categories: params.exclude_categories,

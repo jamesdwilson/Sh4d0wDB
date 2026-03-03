@@ -341,14 +341,32 @@ export class PostgresStore extends MemoryStore {
             ? ", content" : "";
         // Sort — validate column name to prevent SQL injection
         const allowedSorts = ["created_at", "updated_at", "priority", "title"];
-        const sortCol = allowedSorts.includes(params.sort) ? params.sort : "created_at";
         const sortDir = params.sort_order === "asc" ? "ASC" : "DESC";
+        let orderClause;
+        if (params.sort && params.sort.startsWith("metadata.")) {
+            // Metadata field sort: metadata.fieldName
+            // Sanitize: only allow alphanumeric + underscore in field names
+            const fieldName = params.sort.slice("metadata.".length);
+            if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(fieldName)) {
+                throw new Error(`Invalid metadata sort field: ${fieldName}`);
+            }
+            // Try numeric cast; fall back to text sort on cast failure
+            // Use a CASE expression: if the value parses as numeric, sort numerically; otherwise sort as text
+            orderClause = `ORDER BY
+        CASE WHEN metadata->>'${fieldName}' ~ '^-?[0-9]+(\\.[0-9]+)?$'
+             THEN (metadata->>'${fieldName}')::numeric ELSE NULL END ${sortDir} NULLS LAST,
+        metadata->>'${fieldName}' ${sortDir} NULLS LAST`;
+        }
+        else {
+            const sortCol = allowedSorts.includes(params.sort) ? params.sort : "created_at";
+            orderClause = `ORDER BY ${sortCol} ${sortDir}`;
+        }
         const sql = `
       SELECT id, category, title, record_type, priority, parent_id,
              COALESCE(metadata, '{}') as metadata, created_at, COALESCE(tags, '{}') as tags${contentCol}
       FROM ${this.config.table}
       WHERE ${where}
-      ORDER BY ${sortCol} ${sortDir}
+      ${orderClause}
       LIMIT $${idx++} OFFSET $${idx++}
     `;
         values.push(lim, off);

@@ -101,7 +101,7 @@ export declare abstract class MemoryStore {
      * @param detailLevel - Output detail: summary (no content), snippet (default), full (no truncation)
      * @returns Ranked, deduplicated results with snippets and citations
      */
-    search(query: string, maxResults: number, minScore: number, filters?: SearchFilters, detailLevel?: "summary" | "snippet" | "full"): Promise<SearchResult[]>;
+    search(query: string, maxResults: number, minScore: number, filters?: SearchFilters, detailLevel?: "summary" | "snippet" | "section" | "full"): Promise<SearchResult[]>;
     /**
      * Reciprocal Rank Fusion — merge ranked lists from multiple signals.
      *
@@ -124,9 +124,12 @@ export declare abstract class MemoryStore {
      * 3. Fill token budget (approx 4 chars/token) highest score first
      * 4. Return assembled text with citations block
      */
+    /** Token budget defaults for task_type presets */
+    static readonly TASK_TYPE_BUDGETS: Record<string, number>;
     assemble(params: {
         query: string;
-        token_budget: number;
+        token_budget?: number;
+        task_type?: "quick" | "outreach" | "dossier" | "research";
         include_categories?: string[];
         include_tags?: string[];
         exclude_categories?: string[];
@@ -259,6 +262,21 @@ export declare abstract class MemoryStore {
         title?: string | null;
         record_type?: string | null;
     }): string;
+    /**
+     * Format a section-level result: return the full content up to the most
+     * relevant ## heading block (~200-500 tokens). If no heading structure,
+     * falls back to snippet behavior.
+     *
+     * Selects the best section by counting query term overlaps in each block.
+     */
+    protected formatSection(row: {
+        id: number;
+        content: string;
+        category?: string | null;
+        title?: string | null;
+        record_type?: string | null;
+        created_at?: Date | string | null;
+    }, query: string): string;
     /** Get a metadata value by key from the _meta table. */
     abstract getMetaValue(key: string): Promise<string | null>;
     /** Set a metadata value by key in the _meta table. */
@@ -307,7 +325,7 @@ export declare abstract class MemoryStore {
         created_before?: string;
         metadata?: Record<string, unknown>;
         detail_level?: "summary" | "snippet" | "full";
-        sort?: "created_at" | "updated_at" | "priority" | "title";
+        sort?: "created_at" | "updated_at" | "priority" | "title" | string;
         sort_order?: "asc" | "desc";
         limit?: number;
         offset?: number;
