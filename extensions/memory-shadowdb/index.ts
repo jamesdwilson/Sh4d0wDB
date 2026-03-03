@@ -782,6 +782,7 @@ export const __test__ = {
   resolvePrimerConfig,
   validateEmbeddingDimensions,
   computeEmbeddingFingerprint,
+  resolveMaxCharsForModel,
 };
 
 export default memoryShadowdbPlugin;
