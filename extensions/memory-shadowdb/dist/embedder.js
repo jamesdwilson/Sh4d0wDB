@@ -436,4 +436,3 @@ async function runCommandForEmbedding(params) {
         child.stdin.end();
     });
 }
-//# sourceMappingURL=embedder.js.map

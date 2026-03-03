@@ -169,6 +169,35 @@ export declare abstract class MemoryStore {
         truncated: boolean;
     } | null>;
     /**
+     * Decay confidence on stale graph edges.
+     *
+     * Finds edges where `last_verified` is older than `maxAgeDays` and
+     * reduces their `confidence` by `decayAmount` (floored at 0).
+     *
+     * Used for scheduled confidence decay via cron job.
+     *
+     * @param options.maxAgeDays   - Age threshold in days (edges older than this decay)
+     * @param options.decayAmount  - Amount to subtract from confidence
+     * @param options.dryRun       - If true, returns count without updating
+     * @returns                    { decayed: number }
+     */
+    decayStaleEdges(options: {
+        maxAgeDays: number;
+        decayAmount: number;
+        dryRun?: boolean;
+    }): Promise<{
+        decayed: number;
+    }>;
+    /**
+     * Get stale graph edges older than maxAgeDays.
+     * Implemented by backend (PostgresStore queries category='graph' atoms).
+     */
+    protected getStaleEdges(maxAgeDays: number): Promise<Array<{
+        id: number;
+        confidence?: number;
+        last_verified?: string | null;
+    }>>;
+    /**
      * Create a new memory record.
      *
      * Validates and sanitizes input, delegates to backend insertRecord(),

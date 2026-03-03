@@ -374,6 +374,43 @@ export class MemoryStore {
         this.logger.info(`memory-shadowdb: getPrimerContext complete — ${included.length}/${formatted.length} sections, ${text.length}/${fullText.length} chars, skipped=[${skippedKeys.join(",")}], digest=${digest}, ${primerMs}ms`);
         return { text, digest, totalChars: fullText.length, rowCount: formatted.length, includedCount: included.length, skippedKeys, truncated };
     }
+    /**
+     * Decay confidence on stale graph edges.
+     *
+     * Finds edges where `last_verified` is older than `maxAgeDays` and
+     * reduces their `confidence` by `decayAmount` (floored at 0).
+     *
+     * Used for scheduled confidence decay via cron job.
+     *
+     * @param options.maxAgeDays   - Age threshold in days (edges older than this decay)
+     * @param options.decayAmount  - Amount to subtract from confidence
+     * @param options.dryRun       - If true, returns count without updating
+     * @returns                    { decayed: number }
+     */
+    async decayStaleEdges(options) {
+        const { maxAgeDays, decayAmount, dryRun = false } = options;
+        // Find stale edges (implemented by backend)
+        const staleEdges = await this.getStaleEdges(maxAgeDays);
+        if (dryRun) {
+            return { decayed: staleEdges.length };
+        }
+        let decayed = 0;
+        for (const edge of staleEdges) {
+            const currentConf = typeof edge.confidence === 'number' ? edge.confidence : 100;
+            const newConf = Math.max(0, currentConf - decayAmount);
+            await this.updateRecord(edge.id, { confidence: newConf });
+            decayed++;
+        }
+        return { decayed };
+    }
+    /**
+     * Get stale graph edges older than maxAgeDays.
+     * Implemented by backend (PostgresStore queries category='graph' atoms).
+     */
+    async getStaleEdges(maxAgeDays) {
+        // Default: no-op. Backends override.
+        return [];
+    }
     // ==========================================================================
     // WRITE OPERATIONS — validation + delegation
     // ==========================================================================
