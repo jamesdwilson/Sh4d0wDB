@@ -274,7 +274,34 @@ Generates: `(metadata->>'confidence')::numeric > $3 AND metadata->>'tier' = $4`
 
 ---
 
-## v0.5.0 — BACKLOG (do not start until v0.4.0 is complete)
+## v0.5.0 — ✅ COMPLETE (2026-03-03, commit: 569c0ec)
+
+**What was built:**
+- `tag-validator.ts` — `validateTags()` — validates tag namespace prefixes
+- Valid namespaces: `entity:`, `domain:`, `loc:`, `sector:`, `status:`, `interest:`
+- `StoreConfig.validateTags` option — when true, rejects invalid tags on write
+- 12 tests for `validateTags()`, 5 tests for write() integration
+- All 194 tests passing
+
+**Usage pattern:**
+```javascript
+// In plugin config:
+{ validateTags: true }
+
+// On write, tags are validated:
+write({ content: 'test', tags: ['entity:james-wilson', 'bad:value'] })
+// → throws: "Invalid tags: Tag \"bad:value\" has unknown namespace \"bad\""
+```
+
+**Remaining v0.5.0 backlog items:**
+- Confidence decay (scheduled job)
+- Conflict detection (query for contradictory edges)
+- Event-to-contact mapping automation
+- Relationship graph UI (separate project)
+
+---
+
+## v0.6.0 — BACKLOG (not yet defined)
 
 - **Tag namespace enforcement** — reject writes with tags that don't match a namespace prefix (`entity:`, `domain:`, `loc:`, `sector:`, `status:`, `interest:`)
 - **Confidence decay** — scheduled job that lowers confidence on edges where `last_verified` is stale (configurable decay curve)
@@ -295,8 +322,9 @@ Generates: `(metadata->>'confidence')::numeric > $3 AND metadata->>'tier' = $4`
 | Sprint 3: graph intelligence | ✅ | 1957a43 | 2026-03-03 |
 | Sprint 4: multi-resolution retrieval | ✅ | 60c7674 (part of v0.3.0) | 2026-02-12 |
 | Sprint 5: advanced query types | ✅ | d03bdcf | 2026-03-03 |
+| v0.5.0: tag namespace enforcement | ✅ | 569c0ec | 2026-03-03 |
 
-**Current latest commit:** `d03bdcf` (as of 2026-03-03)
+**Current latest commit:** `569c0ec` (as of 2026-03-03)
 
 ---
 
