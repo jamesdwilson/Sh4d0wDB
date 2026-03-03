@@ -163,7 +163,7 @@ GIN index on `metadata` is in `schema.sql`.
 
 ---
 
-### Sprint 3: Graph Intelligence 🔴 NOT STARTED — NEXT SPRINT
+### Sprint 3: Graph Intelligence ✅ COMPLETE (2026-03-03, commit: 1957a43)
 
 **Prerequisite:** Sprint 1 complete ✅
 
@@ -251,7 +251,7 @@ Test:
 
 ---
 
-### Sprint 5: Advanced Query Types 🔴 NOT STARTED — AFTER SPRINT 3
+### Sprint 5: Advanced Query Types 🔴 NOT STARTED — NEXT SPRINT
 
 **Prerequisite:** Sprint 3 complete
 
@@ -301,11 +301,11 @@ metadata_filters: Array<{
 | Sprint 1: baseline tests | ✅ | 9a17eaf | 2026-03-03 |
 | Sprint 1: extended test suite (136 tests) | ✅ | 9a17eaf→latest | 2026-03-03 |
 | Sprint 2: metadata filters | ✅ | 60c7674 (part of v0.3.0) | 2026-02-12 |
-| Sprint 3: graph intelligence | 🔴 not started | — | — |
+| Sprint 3: graph intelligence | ✅ | 1957a43 | 2026-03-03 |
 | Sprint 4: multi-resolution retrieval | ✅ | 60c7674 (part of v0.3.0) | 2026-02-12 |
 | Sprint 5: advanced query types | 🔴 not started | — | — |
 
-**Current latest commit:** `9a17eaf` (as of 2026-03-03 morning)
+**Current latest commit:** `1957a43` (as of 2026-03-03)
 
 ---
 
