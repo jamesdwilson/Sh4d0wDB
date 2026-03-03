@@ -678,6 +678,82 @@ const memoryShadowdbPlugin = {
     );
 
     // ========================================================================
+    // Tool Registration: memory_conflicts
+    // ========================================================================
+
+    api.registerTool(
+      () => {
+        const memoryConflictsTool = {
+          label: "Memory Conflicts",
+          name: "memory_conflicts",
+          description:
+            "Detect contradictory relationship edges in the graph (e.g. knows+tension, allies+rivals). Use to identify relationship inconsistencies before making introductions or recommendations.",
+          parameters: Type.Object({
+            domain: Type.Optional(Type.String({ description: "Filter to specific domain (e.g. 'civic', 'ma')" })),
+            min_confidence: Type.Optional(Type.Number({ description: "Only check edges above this confidence threshold (0-100)" })),
+          }),
+          execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+            api.logger.info(`memory-shadowdb: tool memory_conflicts called`);
+
+            try {
+              const s = await getStore();
+              const { handleConflictsTool } = await import("./tools.js");
+              const result = await handleConflictsTool(s as any, {
+                domain: params.domain as string | undefined,
+                min_confidence: params.min_confidence as number | undefined,
+              });
+              return jsonResult(result as Record<string, unknown>);
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              api.logger.warn(`memory-shadowdb memory_conflicts error: ${message}`);
+              return jsonResult({ error: message });
+            }
+          },
+        };
+        return [memoryConflictsTool];
+      },
+      { names: ["memory_conflicts"] },
+    );
+
+    // ========================================================================
+    // Tool Registration: memory_decay_preview
+    // ========================================================================
+
+    api.registerTool(
+      () => {
+        const memoryDecayPreviewTool = {
+          label: "Memory Decay Preview",
+          name: "memory_decay_preview",
+          description:
+            "Preview confidence decay for stale relationship edges based on last_verified age. Does NOT modify data — shows what would decay. Use to identify edges needing verification.",
+          parameters: Type.Object({
+            half_life_days: Type.Optional(Type.Number({ description: "Half-life in days (default 30)" })),
+            min_confidence: Type.Optional(Type.Number({ description: "Floor confidence level (default 0)" })),
+          }),
+          execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+            api.logger.info(`memory-shadowdb: tool memory_decay_preview called`);
+
+            try {
+              const s = await getStore();
+              const { handleDecayPreviewTool } = await import("./tools.js");
+              const result = await handleDecayPreviewTool(s as any, {
+                half_life_days: params.half_life_days as number | undefined,
+                min_confidence: params.min_confidence as number | undefined,
+              });
+              return jsonResult(result as Record<string, unknown>);
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              api.logger.warn(`memory-shadowdb memory_decay_preview error: ${message}`);
+              return jsonResult({ error: message });
+            }
+          },
+        };
+        return [memoryDecayPreviewTool];
+      },
+      { names: ["memory_decay_preview"] },
+    );
+
+    // ========================================================================
     // CLI Registration
     // ========================================================================
 
