@@ -1,47 +1,56 @@
 /**
- * authority-sensitivity.test.mjs — TDD vision: authority sensitivity scoring
+ * authority-sensitivity.test.mjs — Unit tests for authority sensitivity scoring
  *
  * v0.7.0: derive authority sensitivity from psych profile at query time.
- * From GRAPH_SPEC.md: ISTJ/ESTJ/Analyst → weight intro source heavily.
- * Tests written before implementation. All fail until authority-sensitivity.ts exists.
  */
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-// import { computeAuthoritySensitivity } from './dist/authority-sensitivity.js';
+import { computeAuthoritySensitivity } from './dist/authority-sensitivity.js';
 
 test('computeAuthoritySensitivity returns high score for ISTJ', () => {
-  assert.ok(false, 'Not yet implemented');
+  const score = computeAuthoritySensitivity({ mbti: 'ISTJ' });
+  assert.ok(score >= 70, `expected >=70, got ${score}`);
 });
 
 test('computeAuthoritySensitivity returns high score for ESTJ', () => {
-  assert.ok(false, 'Not yet implemented');
+  const score = computeAuthoritySensitivity({ mbti: 'ESTJ' });
+  assert.ok(score >= 70, `expected >=70, got ${score}`);
 });
 
 test('computeAuthoritySensitivity returns high score for Analyst (Voss type)', () => {
-  assert.ok(false, 'Not yet implemented');
+  const score = computeAuthoritySensitivity({ voss_type: 'Analyst' });
+  assert.ok(score >= 65, `expected >=65, got ${score}`);
 });
 
 test('computeAuthoritySensitivity returns low score for ENFP', () => {
-  assert.ok(false, 'Not yet implemented');
+  const score = computeAuthoritySensitivity({ mbti: 'ENFP' });
+  assert.ok(score <= 35, `expected <=35, got ${score}`);
 });
 
 test('computeAuthoritySensitivity returns low score for INFP', () => {
-  assert.ok(false, 'Not yet implemented');
+  const score = computeAuthoritySensitivity({ mbti: 'INFP' });
+  assert.ok(score <= 35, `expected <=35, got ${score}`);
 });
 
 test('computeAuthoritySensitivity returns low score for Accommodator (Voss type)', () => {
-  assert.ok(false, 'Not yet implemented');
+  const score = computeAuthoritySensitivity({ voss_type: 'Accommodator' });
+  assert.ok(score <= 40, `expected <=40, got ${score}`);
 });
 
 test('computeAuthoritySensitivity returns medium for undefined MBTI', () => {
-  assert.ok(false, 'Not yet implemented');
+  const score = computeAuthoritySensitivity({ mbti: undefined });
+  assert.ok(score >= 40 && score <= 60, `expected 40-60, got ${score}`);
 });
 
 test('computeAuthoritySensitivity handles missing profile gracefully', () => {
-  assert.ok(false, 'Not yet implemented');
+  const score = computeAuthoritySensitivity(null);
+  assert.equal(score, 50);
 });
 
 test('computeAuthoritySensitivity combines MBTI + Voss type', () => {
-  assert.ok(false, 'Not yet implemented');
+  // ISTJ + Analyst = highest sensitivity
+  const combined = computeAuthoritySensitivity({ mbti: 'ISTJ', voss_type: 'Analyst' });
+  const mbtiOnly = computeAuthoritySensitivity({ mbti: 'ISTJ' });
+  assert.ok(combined > mbtiOnly, `combined ${combined} should be > mbti only ${mbtiOnly}`);
 });
