@@ -277,21 +277,13 @@ export class PostgresStore extends MemoryStore {
     async insertRecord(params) {
         const sql = `
       INSERT INTO ${this.config.table} (content, category, title, tags, record_type, metadata, parent_id, priority)
-      VALUES ($content, $category, $title, $tags, $record_type, $metadata, $parent_id, $priority)
+      VALUES ($1, $2, $3, $4, 'fact', $5::jsonb, $6, $7)
       RETURNING id
     `;
-        const result = await this.getPool().query(sql, {
-      content: params.content,
-      category: params.category,
-      title: params.title,
-      tags: params.tags,
-      record_type: params.record_type || 'fact',
-      metadata: JSON.stringify(params.metadata),
-      parent_id: params.parent_id,
-      priority: params.priority,
-    });
-    return result.rows[0].id;
-  }
+        const result = await this.getPool().query(sql, [
+            params.content, params.category, params.title, params.tags,
+            JSON.stringify(params.metadata), params.parent_id, params.priority,
+        ]);
         return result.rows[0].id;
     }
     async list(params) {
