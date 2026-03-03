@@ -304,6 +304,8 @@ export class PostgresStore extends MemoryStore {
       metadata: JSON.stringify(params.metadata),
       parent_id: params.parent_id,
       priority: params.priority,
+    // DEBUG: Log parameters being passed to INSERT
+    this.logger.info(\`memory-shadowdb: insertRecord params — content=\${JSON.stringify(params.content).slice(0, 50)}..., category=\${params.category}, title=\${params.title || "null"}, parent_id=\${params.parent_id}, priority=\${params.priority}\`);
     });
     return result.rows[0].id;
   }
