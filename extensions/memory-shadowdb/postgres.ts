@@ -19,6 +19,7 @@ import { MemoryStore, type RankedHit, type PrimerRow, type StoreConfig, type Sto
 import type { EmbeddingClient } from "./embedder.js";
 import { buildFilterClauses } from "./filters.js";
 import { buildListConditions, buildSortClause } from "./list-filters.js";
+import { buildEdgeQuery, extractConnectedEntity, normalizeEntitySlug, type GraphEdge } from "./graph-queries.js";
 
 /**
  * PostgreSQL-backed memory store.
@@ -452,5 +453,80 @@ export class PostgresStore extends MemoryStore {
       [afterId, limit],
     );
     return result.rows;
+  }
+
+  /**
+   * Traverse the entity graph from a starting slug.
+   *
+   * Returns all edges touching the entity (1-hop), and optionally recurses
+   * to N hops. Each hop collects the connected entity slugs, then fetches
+   * their edges in turn. Visited set prevents infinite loops.
+   *
+   * @param entitySlug     - Starting entity slug (e.g. "james-wilson")
+   * @param hops           - Number of hops to traverse (default 1, max 3)
+   * @param min_confidence - Minimum edge confidence to include (0-100)
+   * @param relationship_type - Optional filter to specific relationship type
+   * @returns edges[], connected entity slugs[], and raw edge records
+   */
+  async graph(params: {
+    entity: string;
+    hops?: number;
+    min_confidence?: number;
+    relationship_type?: string;
+  }): Promise<{
+    entity: string;
+    edges: GraphEdge[];
+    connected: string[];
+    hopResults: Array<{ entity: string; edges: GraphEdge[] }>;
+  }> {
+    const startSlug = normalizeEntitySlug(params.entity);
+    const hops = Math.min(params.hops ?? 1, 3);
+    const opts = {
+      min_confidence: params.min_confidence,
+      relationship_type: params.relationship_type,
+      table: this.config.table,
+    };
+
+    const visited = new Set<string>([startSlug]);
+    const allEdges: GraphEdge[] = [];
+    const hopResults: Array<{ entity: string; edges: GraphEdge[] }> = [];
+
+    let currentSlugs = [startSlug];
+
+    for (let hop = 0; hop < hops; hop++) {
+      const nextSlugs: string[] = [];
+
+      for (const slug of currentSlugs) {
+        const { sql, values } = buildEdgeQuery(slug, opts);
+        const result = await this.getPool().query(sql, values);
+
+        const edges: GraphEdge[] = result.rows.map((row: Record<string, unknown>) => ({
+          id: row.id as number,
+          content: row.content as string,
+          tags: row.tags as string[],
+          metadata: row.metadata as GraphEdge["metadata"],
+        }));
+
+        hopResults.push({ entity: slug, edges });
+
+        for (const edge of edges) {
+          if (!allEdges.find(e => e.id === edge.id)) {
+            allEdges.push(edge);
+          }
+          const connected = extractConnectedEntity(edge, slug);
+          if (connected && !visited.has(connected)) {
+            visited.add(connected);
+            nextSlugs.push(connected);
+          }
+        }
+      }
+
+      currentSlugs = nextSlugs;
+      if (currentSlugs.length === 0) break;
+    }
+
+    const connected = [...visited].filter(s => s !== startSlug);
+
+    return { entity: startSlug, edges: allEdges, connected, hopResults };
   }
 }
