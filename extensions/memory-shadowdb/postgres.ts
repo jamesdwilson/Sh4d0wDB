@@ -18,6 +18,7 @@ import pg from "pg";
 import { MemoryStore, type RankedHit, type PrimerRow, type StoreConfig, type StoreLogger } from "./store.js";
 import type { EmbeddingClient } from "./embedder.js";
 import { buildFilterClauses } from "./filters.js";
+import { buildListConditions, buildSortClause } from "./list-filters.js";
 
 /**
  * PostgreSQL-backed memory store.
@@ -292,21 +293,8 @@ export class PostgresStore extends MemoryStore {
     limit?: number;
     offset?: number;
   }): Promise<import("./types.js").ListResult[]> {
-    const conditions: string[] = ["deleted_at IS NULL"];
-    const values: unknown[] = [];
-    let idx = 1;
-
-    if (params.category) { conditions.push(`category = $${idx++}`); values.push(params.category); }
-    if (params.record_type) { conditions.push(`record_type = $${idx++}`); values.push(params.record_type); }
-    if (params.parent_id !== undefined) { conditions.push(`parent_id = $${idx++}`); values.push(params.parent_id); }
-    if (params.priority_min !== undefined) { conditions.push(`priority >= $${idx++}`); values.push(params.priority_min); }
-    if (params.priority_max !== undefined) { conditions.push(`priority <= $${idx++}`); values.push(params.priority_max); }
-    if (params.created_after) { conditions.push(`created_at >= $${idx++}`); values.push(params.created_after); }
-    if (params.created_before) { conditions.push(`created_at <= $${idx++}`); values.push(params.created_before); }
-    if (params.tags && params.tags.length > 0) { conditions.push(`tags @> $${idx++}::text[]`); values.push(params.tags); }
-    if (params.tags_include && params.tags_include.length > 0) { conditions.push(`tags @> $${idx++}::text[]`); values.push(params.tags_include); }
-    if (params.tags_any && params.tags_any.length > 0) { conditions.push(`tags && $${idx++}::text[]`); values.push(params.tags_any); }
-    if (params.metadata && Object.keys(params.metadata).length > 0) { conditions.push(`metadata @> $${idx++}::jsonb`); values.push(JSON.stringify(params.metadata)); }
+    const { conditions, values, nextIdx } = buildListConditions(params);
+    let idx = nextIdx;
 
     const where = conditions.join(" AND ");
     const lim = Math.min(params.limit ?? 50, 200);
@@ -314,28 +302,7 @@ export class PostgresStore extends MemoryStore {
     const contentCol = params.detail_level === "full" || params.detail_level === "snippet"
       ? ", content" : "";
 
-    // Sort — validate column name to prevent SQL injection
-    const allowedSorts = ["created_at", "updated_at", "priority", "title"];
-    const sortDir = params.sort_order === "asc" ? "ASC" : "DESC";
-
-    let orderClause: string;
-    if (params.sort && params.sort.startsWith("metadata.")) {
-      // Metadata field sort: metadata.fieldName
-      // Sanitize: only allow alphanumeric + underscore in field names
-      const fieldName = params.sort.slice("metadata.".length);
-      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(fieldName)) {
-        throw new Error(`Invalid metadata sort field: ${fieldName}`);
-      }
-      // Try numeric cast; fall back to text sort on cast failure
-      // Use a CASE expression: if the value parses as numeric, sort numerically; otherwise sort as text
-      orderClause = `ORDER BY
-        CASE WHEN metadata->>'${fieldName}' ~ '^-?[0-9]+(\\.[0-9]+)?$'
-             THEN (metadata->>'${fieldName}')::numeric ELSE NULL END ${sortDir} NULLS LAST,
-        metadata->>'${fieldName}' ${sortDir} NULLS LAST`;
-    } else {
-      const sortCol = allowedSorts.includes(params.sort as string) ? params.sort! : "created_at";
-      orderClause = `ORDER BY ${sortCol} ${sortDir}`;
-    }
+    const orderClause = buildSortClause(params.sort, params.sort_order);
 
     const sql = `
       SELECT id, category, title, record_type, priority, parent_id,
