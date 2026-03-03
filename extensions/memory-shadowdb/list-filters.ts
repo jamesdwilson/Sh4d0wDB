@@ -5,6 +5,8 @@
  * No external dependencies — compiles standalone.
  */
 
+import { buildMetadataFilters, type MetadataFilter } from "./metadata-filters.js";
+
 export interface ListParams {
   category?: string;
   record_type?: string;
@@ -17,6 +19,7 @@ export interface ListParams {
   tags_include?: string[];
   tags_any?: string[];
   metadata?: Record<string, unknown>;
+  metadata_filters?: MetadataFilter[];
   limit?: number;
   offset?: number;
   sort?: string;
@@ -54,6 +57,14 @@ export function buildListConditions(
   if (params.metadata && Object.keys(params.metadata).length > 0) {
     conditions.push(`metadata @> $${idx++}::jsonb`);
     values.push(JSON.stringify(params.metadata));
+  }
+
+  // Sprint 5: typed metadata comparisons
+  if (params.metadata_filters && params.metadata_filters.length > 0) {
+    const meta = buildMetadataFilters(params.metadata_filters, idx);
+    conditions.push(...meta.clauses);
+    values.push(...meta.values);
+    idx = meta.nextIdx;
   }
 
   return { conditions, values, nextIdx: idx };

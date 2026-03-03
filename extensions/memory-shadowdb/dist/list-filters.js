@@ -4,6 +4,7 @@
  * Extracted from postgres.ts to enable isolated unit testing.
  * No external dependencies — compiles standalone.
  */
+import { buildMetadataFilters } from "./metadata-filters.js";
 /**
  * Build WHERE conditions for memory_list queries.
  *
@@ -60,6 +61,13 @@ export function buildListConditions(params, startIdx = 1) {
     if (params.metadata && Object.keys(params.metadata).length > 0) {
         conditions.push(`metadata @> $${idx++}::jsonb`);
         values.push(JSON.stringify(params.metadata));
+    }
+    // Sprint 5: typed metadata comparisons
+    if (params.metadata_filters && params.metadata_filters.length > 0) {
+        const meta = buildMetadataFilters(params.metadata_filters, idx);
+        conditions.push(...meta.clauses);
+        values.push(...meta.values);
+        idx = meta.nextIdx;
     }
     return { conditions, values, nextIdx: idx };
 }

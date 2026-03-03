@@ -6,6 +6,7 @@
  *
  * Used by postgres.ts and testable without pg/mysql/sqlite deps.
  */
+import { buildMetadataFilters } from "./metadata-filters.js";
 /**
  * Build additional WHERE conditions from SearchFilters.
  *
@@ -61,6 +62,13 @@ export function buildFilterClauses(filters, startIdx) {
     if (filters.parent_id !== undefined) {
         clauses.push(`parent_id = $${idx++}`);
         values.push(filters.parent_id);
+    }
+    // Sprint 5: typed metadata comparisons
+    if (filters.metadata_filters && filters.metadata_filters.length > 0) {
+        const meta = buildMetadataFilters(filters.metadata_filters, idx);
+        clauses.push(...meta.clauses);
+        values.push(...meta.values);
+        idx = meta.nextIdx;
     }
     return { clauses, values, nextIdx: idx };
 }

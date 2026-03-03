@@ -4,6 +4,7 @@
  * Extracted from postgres.ts to enable isolated unit testing.
  * No external dependencies — compiles standalone.
  */
+import { type MetadataFilter } from "./metadata-filters.js";
 export interface ListParams {
     category?: string;
     record_type?: string;
@@ -16,6 +17,7 @@ export interface ListParams {
     tags_include?: string[];
     tags_any?: string[];
     metadata?: Record<string, unknown>;
+    metadata_filters?: MetadataFilter[];
     limit?: number;
     offset?: number;
     sort?: string;

@@ -247,6 +247,7 @@ export type SearchFilters = {
   created_after?: string;
   created_before?: string;
   parent_id?: number;
+  metadata_filters?: Array<{ field: string; op: string; value: string | number }>;
 };
 
 /**
