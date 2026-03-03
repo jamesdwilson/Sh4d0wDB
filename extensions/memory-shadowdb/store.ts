@@ -26,6 +26,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import type { SearchResult, WriteResult, SearchFilters, AssembleResult } from "./types.js";
 import type { EmbeddingClient } from "./embedder.js";
+import { mergeRRF } from "./rrf.js";
 
 // ============================================================================
 // Constants — shared validation limits
@@ -176,7 +177,7 @@ export abstract class MemoryStore {
     this.logger.info(`memory-shadowdb: search legs completed in ${legMs}ms — vector=${vectorHits.length}, fts=${ftsHits.length}, fuzzy=${fuzzyHits.length}`);
 
     // Merge via RRF
-    const merged = this.mergeRRF(vectorHits, ftsHits, fuzzyHits, maxResults, minScore);
+    const merged = mergeRRF(vectorHits, ftsHits, fuzzyHits, maxResults, minScore, this.config);
     const totalMs = Date.now() - searchStart;
     this.logger.info(`memory-shadowdb: search complete in ${totalMs}ms — ${merged.length} results (embed=${embedMs}ms, legs=${legMs}ms)`);
 
@@ -228,58 +229,6 @@ export abstract class MemoryStore {
    * - Robust to outliers in any single signal
    * - Simple, well-studied, hard to break
    */
-  private mergeRRF(
-    vectorHits: RankedHit[],
-    ftsHits: RankedHit[],
-    fuzzyHits: RankedHit[],
-    maxResults: number,
-    minScore: number,
-  ): Array<RankedHit & { rrfScore: number }> {
-    // Build a map of id → accumulated RRF score + best metadata
-    const scoreMap = new Map<number, {
-      hit: RankedHit;
-      rrfScore: number;
-    }>();
-
-    const addSignal = (hits: RankedHit[], weight: number) => {
-      for (const hit of hits) {
-        const contribution = weight / (RRF_K + hit.rank);
-        const existing = scoreMap.get(hit.id);
-        if (existing) {
-          existing.rrfScore += contribution;
-        } else {
-          scoreMap.set(hit.id, { hit, rrfScore: contribution });
-        }
-      }
-    };
-
-    addSignal(vectorHits, this.config.vectorWeight);
-    addSignal(ftsHits, this.config.textWeight);
-    addSignal(fuzzyHits, 0.2); // fixed trigram weight
-
-    // Recency boost: newest records get a small rank-based boost.
-    // We rank ALL seen records by created_at (newest first) and apply RRF.
-    const allEntries = [...scoreMap.values()];
-    const byRecency = [...allEntries]
-      .filter((e) => e.hit.created_at != null)
-      .sort((a, b) => {
-        const dateA = a.hit.created_at instanceof Date ? a.hit.created_at : new Date(a.hit.created_at!);
-        const dateB = b.hit.created_at instanceof Date ? b.hit.created_at : new Date(b.hit.created_at!);
-        return dateB.getTime() - dateA.getTime(); // newest first
-      });
-
-    byRecency.forEach((entry, idx) => {
-      entry.rrfScore += this.config.recencyWeight / (RRF_K + idx + 1);
-    });
-
-    // Sort by RRF score descending, apply threshold, return top N
-    return allEntries
-      .sort((a, b) => b.rrfScore - a.rrfScore)
-      .filter((e) => e.rrfScore > Math.max(minScore, 0.001))
-      .slice(0, maxResults)
-      .map((e) => ({ ...e.hit, rrfScore: e.rrfScore }));
-  }
-
   // ==========================================================================
   // ASSEMBLE — token-budget-aware context assembly
   // ==========================================================================

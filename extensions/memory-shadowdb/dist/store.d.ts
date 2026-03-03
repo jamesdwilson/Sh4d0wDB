@@ -113,7 +113,6 @@ export declare abstract class MemoryStore {
      * - Robust to outliers in any single signal
      * - Simple, well-studied, hard to break
      */
-    private mergeRRF;
     /**
      * Assemble context from multiple records within a token budget.
      *
