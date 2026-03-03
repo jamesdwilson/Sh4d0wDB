@@ -24,6 +24,7 @@ import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { mergeRRF } from "./rrf.js";
+import { validateTags } from "./tag-validator.js";
 // ============================================================================
 // Constants — shared validation limits
 // ============================================================================
@@ -387,6 +388,14 @@ export class MemoryStore {
         const category = sanitizeString(params.category, MAX_CATEGORY_LENGTH) || "general";
         const title = sanitizeString(params.title, MAX_TITLE_LENGTH) || null;
         const tags = sanitizeTags(params.tags);
+        // v0.5.0: validate tag namespaces if enabled
+        if (this.config.validateTags) {
+            const validation = validateTags(tags);
+            if (!validation.valid) {
+                const reasons = validation.invalid.map(t => t.reason).join("; ");
+                throw new Error(`Invalid tags: ${reasons}`);
+            }
+        }
         const metadata = params.metadata && typeof params.metadata === "object" ? params.metadata : {};
         const parent_id = typeof params.parent_id === "number" ? params.parent_id : null;
         const priority = typeof params.priority === "number" ? Math.min(10, Math.max(1, Math.round(params.priority))) : 5;

@@ -72,6 +72,8 @@ export interface StoreConfig {
     autoEmbed: boolean;
     /** Days before soft-deleted records are permanently purged (0 = never) */
     purgeAfterDays: number;
+    /** Whether to validate tag namespaces on write (default: false) */
+    validateTags?: boolean;
 }
 /**
  * Abstract memory store — the contract all backends implement.
