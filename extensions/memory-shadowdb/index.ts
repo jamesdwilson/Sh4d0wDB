@@ -634,6 +634,49 @@ const memoryShadowdbPlugin = {
       { names: ["memory_assemble"] },
     );
 
+    api.registerTool(
+      () => {
+        const memoryGraphTool = {
+          label: "Memory Graph",
+          name: "memory_graph",
+          description:
+            "Traverse the entity relationship graph in ShadowDB. Given an entity slug (e.g. 'james-wilson'), returns all relationship edges and connected entities up to N hops away. Use for relationship mapping, intro framing, and affinity scoring.",
+          parameters: Type.Object({
+            entity: Type.String({ description: "Entity slug to start from (e.g. 'james-wilson', 'reece-dewoody')" }),
+            hops: Type.Optional(Type.Number({ description: "Number of hops to traverse (default 1, max 3)" })),
+            min_confidence: Type.Optional(Type.Number({ description: "Minimum edge confidence 0-100 (default 0 = include all)" })),
+            relationship_type: Type.Optional(Type.String({ description: "Filter to specific relationship type (e.g. 'knows', 'tension', 'co-investors')" })),
+          }),
+          execute: async (_toolCallId: string, params: Record<string, unknown>) => {
+            const entity = (params.entity as string)?.trim();
+            if (!entity) return jsonResult({ error: "entity is required" });
+
+            api.logger.info(`memory-shadowdb: tool memory_graph called — entity="${entity}", hops=${params.hops ?? 1}`);
+
+            try {
+              const s = await getStore();
+              if (typeof (s as unknown as { graph: unknown }).graph !== "function") {
+                return jsonResult({ error: "memory_graph requires PostgreSQL backend" });
+              }
+              const result = await (s as unknown as { graph: (p: Record<string, unknown>) => Promise<unknown> }).graph({
+                entity,
+                hops: params.hops as number | undefined,
+                min_confidence: params.min_confidence as number | undefined,
+                relationship_type: params.relationship_type as string | undefined,
+              });
+              return jsonResult(result as Record<string, unknown>);
+            } catch (err) {
+              const message = err instanceof Error ? err.message : String(err);
+              api.logger.warn(`memory-shadowdb memory_graph error: ${message}`);
+              return jsonResult({ error: message });
+            }
+          },
+        };
+        return [memoryGraphTool];
+      },
+      { names: ["memory_graph"] },
+    );
+
     // ========================================================================
     // CLI Registration
     // ========================================================================
