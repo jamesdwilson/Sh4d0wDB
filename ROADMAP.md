@@ -487,6 +487,447 @@ When an event record is written with `category=event`, automatically find and ta
 
 ---
 
+## v0.8.0 — Write Durability & Idle Recovery (IN PROGRESS)
+
+**Status:** Planning complete, implementation pending
+**Started:** 2026-03-04
+**Goal:** Eliminate silent write loss during idle periods and plugin restarts
+
+### Problem Analysis
+
+**Observed behavior:**
+- Records occasionally disappear without error
+- Loss correlates with idle periods (5+ minutes between writes)
+- Loss may correlate with plugin restarts
+- Tool returns success with ID, but record not found later
+
+**Root cause hypotheses (in priority order):**
+
+1. **Database connection pool exhaustion** (HIGH PROBABILITY)
+   - PostgreSQL connection pools close idle connections (default: 10-30s)
+   - First write after idle: stale connection → timeout/failure
+   - Plugin may restart before write completes
+   - Evidence: check PG logs for connection timeouts
+
+2. **Embedding service sleep (Ollama)** (MEDIUM PROBABILITY)
+   - Ollama unloads models after 5m inactivity
+   - First embedding attempt: slow load → timeout
+   - Write continues with `embedded: false`, but may hang long enough to trigger plugin restart
+   - Evidence: check Ollama logs, ShadowDB logs for embedding timeouts
+
+3. **Agent hallucination** (MEDIUM PROBABILITY)
+   - Agent claims "Recorded" without actually calling `memory_write`
+   - No tool call = no error = silent failure
+   - Evidence: check OpenClaw logs for tool calls vs claimed records
+
+4. **Transaction timeout during idle** (LOW PROBABILITY)
+   - PostgreSQL `idle_in_transaction_session_timeout` may abort long-running transactions
+   - If write opens transaction but doesn't commit fast enough
+   - Evidence: check `SHOW idle_in_transaction_session_timeout;`
+
+5. **Plugin health check failures** (LOW PROBABILITY)
+   - OpenClaw restarts plugin if heartbeat misses
+   - Slow embedding → missed heartbeat → restart mid-write
+   - Evidence: correlation between restart timestamps and missing records
+
+### Industry Standards Research
+
+#### 1. Write-Ahead Logging (WAL) — PostgreSQL, SQLite Standard
+
+**How it works:**
+- Before modifying database, append operation intent to separate log file
+- Log contains: timestamp, operation type, payload hash, expected ID
+- After successful DB write, append completion record
+- On startup, scan for incomplete operations (pending without completion)
+
+**Pros:**
+- Battle-tested, used by all major databases
+- Enables recovery from crashes mid-write
+- Minimal performance overhead (sequential writes)
+
+**Cons:**
+- Requires log rotation
+- Adds disk I/O
+- Must handle log corruption
+
+**Implementation in ShadowDB:**
+```typescript
+// Before DB write
+const pendingPath = `${process.env.HOME}/.shadowdb/pending-writes.jsonl`;
+const entry = {
+  timestamp: new Date().toISOString(),
+  operationId: randomUUID(),
+  operation: 'write',
+  category: params.category,
+  contentHash: hashContent(params.content),
+  status: 'pending'
+};
+appendFileSync(pendingPath, JSON.stringify(entry) + '\n');
+
+// After DB write succeeds
+const completedPath = `${process.env.HOME}/.shadowdb/completed-writes.jsonl`;
+appendFileSync(completedPath, JSON.stringify({ ...entry, id: result.id, status: 'complete' }) + '\n');
+```
+
+#### 2. Database Audit Tables — Enterprise Standard
+
+**How it works:**
+- Create separate audit table with triggers on main table
+- Trigger fires AFTER INSERT/UPDATE/DELETE
+- Audit record includes: operation, record_id, timestamp, user, success flag
+- Independent of application code, guaranteed to fire if DB write succeeds
+
+**Pros:**
+- Cannot be bypassed by application
+- Queryable for debugging
+- Survives application crashes
+
+**Cons:**
+- More DB overhead
+- Doesn't catch pre-DB failures (connection issues)
+- Requires schema migration
+
+**Implementation in ShadowDB:**
+```sql
+CREATE TABLE memory_audit (
+  id BIGSERIAL PRIMARY KEY,
+  operation TEXT NOT NULL,
+  record_id BIGINT,
+  timestamp TIMESTAMP DEFAULT NOW(),
+  success BOOLEAN DEFAULT true,
+  error_message TEXT
+);
+
+CREATE OR REPLACE FUNCTION audit_memory_write()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO memory_audit (operation, record_id)
+  VALUES ('insert', NEW.id);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER memories_audit_trigger
+AFTER INSERT ON memories
+FOR EACH ROW EXECUTE FUNCTION audit_memory_write();
+```
+
+#### 3. Idempotent Operations with Operation IDs — REST/MQ Standard
+
+**How it works:**
+- Each write includes unique operation ID (UUID)
+- Store operation ID in record metadata
+- On retry, check if operation ID already exists
+- Prevents duplicate writes, enables safe retries
+
+**Pros:**
+- Safe to retry failed operations
+- Detects duplicates
+- Works across restarts
+
+**Cons:**
+- Requires metadata field for operation ID
+- Must handle concurrent operations with same ID
+
+**Implementation in ShadowDB:**
+```typescript
+async write(params, operationId = randomUUID()) {
+  // Check for duplicate
+  const existing = await this.pool.query(
+    'SELECT id FROM memories WHERE metadata->>\'operationId\' = $1',
+    [operationId]
+  );
+  if (existing.rows.length > 0) {
+    return existing.rows[0]; // Already written
+  }
+  
+  // Proceed with write
+  const result = await this.insertRecord({ ...params, metadata: { ...params.metadata, operationId } });
+  return result;
+}
+```
+
+#### 4. Graceful Shutdown Handlers — Process Management Standard
+
+**How it works:**
+- Catch SIGTERM/SIGINT signals
+- Track in-flight operations
+- Wait for operations to complete before exiting
+- Reject new operations during shutdown
+
+**Pros:**
+- Prevents mid-write process kills
+- Standard practice for production services
+
+**Cons:**
+- Requires timeout (can't wait forever)
+- Doesn't help with hard kills (SIGKILL)
+
+**Implementation in ShadowDB:**
+```typescript
+class PostgresStore {
+  private inFlightOps = new Map<string, Promise<any>>();
+  private shuttingDown = false;
+  
+  constructor() {
+    process.on('SIGTERM', () => this.gracefulShutdown());
+    process.on('SIGINT', () => this.gracefulShutdown());
+  }
+  
+  async gracefulShutdown() {
+    this.shuttingDown = true;
+    const timeout = setTimeout(() => process.exit(1), 5000);
+    await Promise.all(Array.from(this.inFlightOps.values()));
+    clearTimeout(timeout);
+    process.exit(0);
+  }
+  
+  async write(params) {
+    if (this.shuttingDown) throw new Error('Shutting down');
+    const opId = randomUUID();
+    const promise = this._write(params);
+    this.inFlightOps.set(opId, promise);
+    try {
+      return await promise;
+    } finally {
+      this.inFlightOps.delete(opId);
+    }
+  }
+}
+```
+
+#### 5. Connection Pool Health Checks — Production Standard
+
+**How it works:**
+- Periodically validate connections in pool
+- Before idle period ends, ping database
+- Detect stale connections before they cause failures
+
+**Pros:**
+- Prevents connection timeout failures
+- Standard practice for long-running services
+
+**Cons:**
+- Adds periodic load
+- Doesn't help if DB is unreachable
+
+**Implementation in ShadowDB:**
+```typescript
+// Periodic health check (every 5m)
+setInterval(async () => {
+  try {
+    await this.pool.query('SELECT 1');
+    this.logger.info('Connection pool health: OK');
+  } catch (err) {
+    this.logger.warn(`Connection pool health: FAILED - ${err.message}`);
+  }
+}, 300_000);
+
+// Connection validation on checkout
+const pool = new Pool({
+  connectionString,
+  connectionTimeoutMillis: 5000,
+  idleTimeoutMillis: 10000,
+  // Validate connection before use
+  allowExitOnIdle: false
+});
+```
+
+#### 6. Startup Recovery Procedures — Database Standard
+
+**How it works:**
+- On startup, scan for incomplete operations
+- Retry or flag for manual review
+- Log recovery actions
+
+**Pros:**
+- Catches orphaned writes from crashes
+- Enables manual intervention
+
+**Cons:**
+- Must distinguish between failed and incomplete
+- May duplicate operations if not idempotent
+
+**Implementation in ShadowDB:**
+```typescript
+async startupRecovery() {
+  const pendingPath = `${process.env.HOME}/.shadowdb/pending-writes.jsonl`;
+  if (!existsSync(pendingPath)) return;
+  
+  const pending = readFileSync(pendingPath, 'utf-8')
+    .split('\n')
+    .filter(Boolean)
+    .map(JSON.parse)
+    .filter(e => e.status === 'pending');
+  
+  const orphans = pending.filter(e => 
+    Date.now() - new Date(e.timestamp).getTime() > 60_000 // >1min old
+  );
+  
+  if (orphans.length > 0) {
+    this.logger.warn(`Found ${orphans.length} orphaned writes from previous session`);
+    // Option A: Retry
+    // Option B: Log for manual review
+  }
+}
+```
+
+### Recommended Implementation Plan
+
+**Phase 1: Observability (Week 1)**
+- Add write lifecycle logging with operation IDs
+- Add connection pool health checks
+- Add embedding timeout protection
+- **Goal:** Visibility into where writes fail
+
+**Phase 2: Write-Ahead Log (Week 2)**
+- Implement pending-writes.jsonl
+- Implement completed-writes.jsonl
+- Add startup recovery check
+- **Goal:** Catch incomplete operations
+
+**Phase 3: Idempotency (Week 3)**
+- Add operationId to metadata
+- Implement duplicate detection
+- Enable safe retries
+- **Goal:** Safe retry of failed operations
+
+**Phase 4: Database Audit (Week 4)**
+- Create memory_audit table
+- Add triggers for INSERT/UPDATE/DELETE
+- Queryable audit log
+- **Goal:** Independent verification of writes
+
+**Phase 5: Graceful Shutdown (Week 5)**
+- Track in-flight operations
+- SIGTERM/SIGINT handlers
+- Timeout-based shutdown
+- **Goal:** Prevent mid-write process kills
+
+### Tradeoffs
+
+**Why not just use PostgreSQL WAL?**
+- PostgreSQL's WAL is internal, not accessible to application
+- Would require superuser access to cluster
+- Our WAL is application-level for agent operations
+
+**Why not distributed consensus (Raft/Paxos)?**
+- ShadowDB is single-node, no need for distributed coordination
+- Adds massive complexity for no benefit
+- PostgreSQL replication handles HA separately
+
+**Why not event sourcing?**
+- Event sourcing is architectural, not durability feature
+- Would require rewrite of entire plugin
+- Overkill for current use case
+
+**Why JSONL files instead of SQLite for WAL?**
+- JSONL is append-only, no corruption risk
+- Human-readable for debugging
+- No additional dependencies
+- Easy rotation (delete old files)
+
+### Testing Strategy
+
+**Unit tests:**
+- Write-Ahead Log: test pending/completed append
+- Idempotency: test duplicate detection
+- Startup recovery: test orphan detection
+- Graceful shutdown: test in-flight tracking
+
+**Integration tests:**
+- Kill process mid-write, verify recovery
+- Idle connection timeout simulation
+- Embedding timeout simulation
+- Concurrent write stress test
+
+**Observability tests:**
+- Verify logging on write lifecycle
+- Verify health check execution
+- Verify audit table population
+
+### Success Metrics
+
+**Quantitative:**
+- Zero silent write losses over 30-day period
+- 100% of writes have operation IDs
+- 100% of writes have audit records
+- <100ms overhead per write
+
+**Qualitative:**
+- Agent can verify writes via returned ID
+- James can query audit table for write history
+- Recovery procedure works after hard kill
+- Logs provide clear visibility into write failures
+
+### Implementation Checklist
+
+**Phase 1: Observability**
+- [ ] Add operationId to all write operations
+- [ ] Add write lifecycle logging (START/DB_SUCCESS/EMBED_START/EMBED_SUCCESS/COMPLETE)
+- [ ] Add connection pool health check (5m interval)
+- [ ] Add embedding timeout (30s max)
+- [ ] Test: verify logs appear for each stage
+
+**Phase 2: Write-Ahead Log**
+- [ ] Create pending-writes.jsonl
+- [ ] Create completed-writes.jsonl
+- [ ] Append to pending before DB write
+- [ ] Append to completed after success
+- [ ] Add log rotation (keep last 1000 entries)
+- [ ] Test: verify entries appear in correct files
+
+**Phase 3: Startup Recovery**
+- [ ] Scan pending-writes.jsonl on startup
+- [ ] Identify orphans (>1min old, no completion)
+- [ ] Log orphan count on startup
+- [ ] Test: kill process mid-write, verify detection
+
+**Phase 4: Idempotency**
+- [ ] Add operationId to metadata field
+- [ ] Check for duplicate operationId before write
+- [ ] Return existing record if duplicate found
+- [ ] Test: verify duplicate detection works
+
+**Phase 5: Database Audit**
+- [ ] Create memory_audit table
+- [ ] Add AFTER INSERT trigger
+- [ ] Add AFTER UPDATE trigger
+- [ ] Add AFTER DELETE trigger
+- [ ] Test: verify audit records appear
+
+**Phase 6: Graceful Shutdown**
+- [ ] Track in-flight operations in Map
+- [ ] Add SIGTERM handler
+- [ ] Add SIGINT handler
+- [ ] Wait for in-flight ops (5s timeout)
+- [ ] Test: verify clean shutdown with pending writes
+
+### v0.8.0 Commit Sequence
+
+1. `roadmap: v0.8.0 — write durability & idle recovery`
+2. `feat(durability): add operationId to write operations`
+3. `feat(durability): add write lifecycle logging`
+4. `feat(durability): add connection pool health checks`
+5. `feat(durability): add embedding timeout protection`
+6. `test(durability): verify lifecycle logging`
+7. `feat(durability): implement pending-writes.jsonl`
+8. `feat(durability): implement completed-writes.jsonl`
+9. `feat(durability): add log rotation`
+10. `test(durability): verify WAL files`
+11. `feat(durability): add startup recovery check`
+12. `test(durability): verify orphan detection`
+13. `feat(durability): add idempotency check`
+14. `test(durability): verify duplicate detection`
+15. `feat(durability): create memory_audit table`
+16. `feat(durability): add audit triggers`
+17. `test(durability): verify audit records`
+18. `feat(durability): add graceful shutdown handlers`
+19. `test(durability): verify clean shutdown`
+20. `roadmap: v0.8.0 complete`
+
+---
+
 ## Operating Rules (for any agent picking this up)
 
 1. **Read this file first.** Do not infer state from git log alone — ROADMAP is truth.

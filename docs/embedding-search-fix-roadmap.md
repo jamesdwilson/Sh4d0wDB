@@ -21,6 +21,29 @@ The `memory_search` tool completely failed to find Beth Womack despite:
 
 ## Root Cause Analysis
 
+### ✅ ROOT CAUSE IDENTIFIED
+
+**Embedding dilution from long content**
+
+The nomic-embed-text model produces embeddings that **average over the entire document**, causing long records to lose semantic precision for specific entities.
+
+**Evidence:**
+```
+Query: "search_query: Beth Womack"
+
+Similarity to Beth documents:
+  Short: 'Beth Womack' → 0.766
+  Medium: 'Beth Womack is a close contact...' → 0.745  
+  Long: 'Beth Womack — Full Dossier with psych profile...' → 0.612
+
+Dilution effect: 0.15 (20% reduction!)
+```
+
+**Why Planka wins:**
+- Planka record (ID 5842) is short (~100 chars): similarity 0.768
+- Beth's full dossier (ID 10466) is long (~5000 chars): similarity 0.559
+- **0.21 gap** in favor of the wrong record
+
 ### Evidence Gathered
 
 1. **Records exist with embeddings**
@@ -36,8 +59,9 @@ The `memory_search` tool completely failed to find Beth Womack despite:
    Both return all Beth records correctly.
 
 3. **memory_search returns wrong results**
-   - Result: Generic Planka kanban board entries (0.013 confidence)
+   - Result: Generic Planka kanban board entries (0.768 similarity)
    - Expected: Beth Womack records (should have high relevance)
+   - Actual: Beth records have 0.56 similarity (too low)
    - Config: `minScore: 0.005`, `maxResults: 3`
 
 4. **Config check**
@@ -45,24 +69,15 @@ The `memory_search` tool completely failed to find Beth Womack despite:
    - Model: nomic-embed-text
    - Dimensions: 768
    - Embedding URL: http://localhost:11434
+   - **Embedding field: content** (not title!)
 
-### Likely Root Causes
+### Confirmed Root Cause
 
-1. **Query embedding generation broken**
-   - The search tool might not be generating proper embeddings for "Beth Womack"
-   - Or it's using cached/incorrect query embeddings
+**Content-based embeddings dilute semantic precision for long documents.**
 
-2. **Search algorithm issue**
-   - The tool might be getting stuck on cached/low-confidence results
-   - OR: The search algorithm doesn't prioritize Beth despite 30 matching records
+The plugin embeds the full `content` field, not just the `title`. When Beth's dossier is 5000 chars with detailed psych profiles, linguistic fingerprints, and communication logs, the "Beth Womack" signal gets diluted.
 
-3. **Result filtering too aggressive**
-   - `minScore: 0.005` is low, but maybe results are being filtered at a higher level
-   - OR: The tool stops early when it finds "enough" results (maxResults: 3)
-
-4. **Embedding pipeline failure**
-   - The Ollama service might not be responding correctly
-   - Or the embedding generation for query vs document is inconsistent
+**Solution:** Embed **titles** for high-recall entity search, or use hybrid title+content scoring
 
 ---
 
