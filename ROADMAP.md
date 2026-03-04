@@ -482,8 +482,11 @@ When an event record is written with `category=event`, automatically find and ta
 | v0.7.0: tool handlers | ✅ | 27ee48b | 2026-03-03 |
 | v0.7.0: cleanup | ✅ | 6645434 | 2026-03-03 |
 | v0.7.0: tool registration | ✅ | f6d6c52 | 2026-03-03 |
+| v0.8.0: OperationsLog (Phase 4 idempotency) | ✅ | a1248d0 | 2026-03-04 |
+| v0.8.0: idempotency tests | ✅ | 81ba8fe | 2026-03-04 |
+| v0.8.0: roadmap Phase 4 complete | ✅ | a7ae016 | 2026-03-04 |
 
-**Current latest commit:** `be98393` (as of 2026-03-03)
+**Current latest commit:** `a7ae016` (as of 2026-03-04)
 
 ---
 
