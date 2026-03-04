@@ -883,11 +883,11 @@ async startupRecovery() {
 - [x] Log orphan count on startup
 - [x] Test: kill process mid-write, verify detection
 
-**Phase 4: Idempotency**
-- [ ] Add operationId to metadata field
-- [ ] Check for duplicate operationId before write
-- [ ] Return existing record if duplicate found
-- [ ] Test: verify duplicate detection works
+**Phase 4: Idempotency** ✅ COMPLETE
+- [x] Add operationId to metadata field
+- [x] Check for duplicate operationId before write
+- [x] Return existing record if duplicate found
+- [x] Test: verify duplicate detection works (4 tests passing)
 
 **Phase 5: Database Audit**
 - [ ] Create memory_audit table
