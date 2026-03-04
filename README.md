@@ -689,6 +689,41 @@ Full schema with indexes: [`schema.sql`](schema.sql) (Postgres version)
 
 ## Config reference
 
+---
+
+## Write Durability (v0.8.0)
+
+ShadowDB v0.8.0 adds comprehensive write durability features to prevent silent data loss during idle periods and plugin restarts:
+
+**Operations log** — Tracks all write/update/delete operations with IDs:
+- Pending → complete/error lifecycle tracking
+- Detects: tool never called (no log), write failed (error log), write succeeded (complete log)
+- Location: `~/.shadowdb/operations.log` (or `SHADOWDB_LOG_DIR`)
+
+**Embedding timeout** — Prevents hangs during idle periods (30s):
+- Wraps embedding operations in timeout
+- Continues without embedding if timeout
+- Prevents plugin restarts mid-embedding
+
+**Connection pool health checks** — Catches stale connections (5m interval):
+- Periodic `SELECT 1` queries validate connections
+- Logs failures before they cause write errors
+- Detects idle connection exhaustion
+
+**Startup recovery** — Detects orphaned writes on plugin start:
+- Scans operations log for pending operations > 1min old
+- Logs warnings with details of orphaned operations
+- Enables post-mortem debugging
+
+All features are opt-in via environment variables:
+```bash
+export SHADOWDB_LOG_DIR="$HOME/.shadowdb"  # Operations log directory
+```
+
+---
+
+## Config reference
+
 <details>
 <summary>All available settings</summary>
 
