@@ -21,6 +21,8 @@
 
 import { createHash } from "node:crypto";
 import { writeFileSync, mkdirSync } from "node:fs";
+import { randomUUID } from "crypto";
+import { OperationsLog } from "./durability-ops-log.js";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -562,6 +564,9 @@ export abstract class MemoryStore {
     parent_id?: number;
     priority?: number;
   }): Promise<WriteResult> {
+    const operationId = randomUUID();
+    const opsLog = new OperationsLog(operationId);
+    
     const content = validateContent(params.content);
     const category = sanitizeString(params.category, MAX_CATEGORY_LENGTH) || "general";
     const title = sanitizeString(params.title, MAX_TITLE_LENGTH) || null;
@@ -582,8 +587,21 @@ export abstract class MemoryStore {
     const priority = typeof params.priority === "number" ? Math.min(10, Math.max(1, Math.round(params.priority))) : 5;
 
     this.logger.info(`memory-shadowdb: write -- category=${category}, title=${title || "(none)"}, record_type=${record_type}, tags=[${tags.join(",")}], contentLen=${content.length}`);
+    
+    // Log pending operation
+    await opsLog.appendPending('write', category);
+    
     const writeStart = Date.now();
-    const newId = await this.insertRecord({ content, category, title, tags, metadata, record_type, parent_id, priority });
+    let newId: number;
+    
+    try {
+      newId = await this.insertRecord({ content, category, title, tags, metadata, record_type, parent_id, priority });
+    } catch (err) {
+      // Log error
+      await opsLog.appendError('write', category, err instanceof Error ? err.message : String(err));
+      throw err;
+    }
+    
     const insertMs = Date.now() - writeStart;
 
     let embedded = false;
@@ -597,6 +615,10 @@ export abstract class MemoryStore {
     const totalMs = Date.now() - writeStart;
     const path = `shadowdb/${category}/${newId}`;
     this.logger.info(`memory-shadowdb: write complete — id=${newId}, embedded=${embedded}, ${totalMs}ms (insert=${insertMs}ms)`);
+    
+    // Log completed operation
+    await opsLog.appendComplete('write', newId, category);
+    
     return {
       ok: true,
       operation: "write",

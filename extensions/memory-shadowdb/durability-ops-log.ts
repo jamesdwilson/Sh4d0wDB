@@ -18,7 +18,7 @@
  * ```
  */
 
-import { writeFileSync, existsSync, unlinkSync } from 'node:fs';
+import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'crypto';
@@ -47,13 +47,12 @@ export class OperationsLog {
     this.operationId = operationId;
 
     // Ensure log directory exists
-    const logDirParent = this.logPath.substring(0, this.logPath.lastIndexOf('/'));
-    if (!existsSync(logDirParent)) {
-      try {
-        require('fs').mkdirSync(logDirParent, { recursive: true });
-      } catch (err) {
-        // Silently fail if permission denied
+    try {
+      if (!existsSync(logDir)) {
+        mkdirSync(logDir, { recursive: true });
       }
+    } catch (err) {
+      // Silently fail if permission denied
     }
   }
 
