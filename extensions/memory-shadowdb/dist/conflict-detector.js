@@ -99,4 +99,3 @@ export function detectConflicts(edges) {
     }
     return conflicts;
 }
-//# sourceMappingURL=conflict-detector.js.map

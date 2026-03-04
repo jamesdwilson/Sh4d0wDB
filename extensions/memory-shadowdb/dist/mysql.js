@@ -392,4 +392,3 @@ export class MySQLStore extends MemoryStore {
         return await this.query(`SELECT id, content FROM ${this.config.table} WHERE deleted_at IS NULL AND id > ? ORDER BY id ASC LIMIT ?`, [afterId, limit]);
     }
 }
-//# sourceMappingURL=mysql.js.map

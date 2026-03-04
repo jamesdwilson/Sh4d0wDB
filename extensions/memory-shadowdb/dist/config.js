@@ -355,4 +355,3 @@ export function computeEmbeddingFingerprint(cfg) {
     const input = `${cfg.provider}:${cfg.model}:${cfg.dimensions}:${hasTaskPrefix}`;
     return createHash("sha256").update(input).digest("hex").slice(0, 16);
 }
-//# sourceMappingURL=config.js.map

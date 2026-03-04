@@ -57,4 +57,3 @@ export async function mapEventToContacts(eventTags, eventContent, knownEntities,
     }
     return matches;
 }
-//# sourceMappingURL=event-to-contact.js.map

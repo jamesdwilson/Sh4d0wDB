@@ -425,4 +425,3 @@ export class SQLiteStore extends MemoryStore {
         return this.db.prepare(`SELECT id, content FROM ${this.config.table} WHERE deleted_at IS NULL AND id > ? ORDER BY id ASC LIMIT ?`).all(afterId, limit);
     }
 }
-//# sourceMappingURL=sqlite.js.map

@@ -712,6 +712,17 @@ const memoryShadowdbPlugin = {
                 const s = await getStore();
                 // Initialize backend (create tables for SQLite/MySQL, no-op for Postgres)
                 await s.initialize();
+                // Run startup recovery scan for orphaned writes
+                try {
+                    const { initializeStartupRecovery } = await import('./startup-recovery.js');
+                    const orphanCount = await initializeStartupRecovery();
+                    if (orphanCount > 0) {
+                        api.logger.warn(`memory-shadowdb: startup recovery: ${orphanCount} orphaned write(s) detected`);
+                    }
+                }
+                catch (err) {
+                    api.logger.warn(`memory-shadowdb: startup recovery failed: ${String(err)}`);
+                }
                 const ok = await s.ping();
                 if (ok) {
                     api.logger.info(`memory-shadowdb: ${backend} connection verified`);
@@ -794,4 +805,3 @@ export const __test__ = {
     resolveMaxCharsForModel,
 };
 export default memoryShadowdbPlugin;
-//# sourceMappingURL=index.js.map

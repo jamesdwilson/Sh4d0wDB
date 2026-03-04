@@ -64,4 +64,3 @@ export function computeAuthoritySensitivity(profile) {
     // Clamp to 0-100
     return Math.max(0, Math.min(100, Math.round(score)));
 }
-//# sourceMappingURL=authority-sensitivity.js.map

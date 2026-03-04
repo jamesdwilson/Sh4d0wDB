@@ -60,4 +60,3 @@ export function mergeRRF(vectorHits, ftsHits, fuzzyHits, maxResults, minScore, c
         .slice(0, maxResults)
         .map((e) => ({ ...e.hit, rrfScore: e.rrfScore }));
 }
-//# sourceMappingURL=rrf.js.map

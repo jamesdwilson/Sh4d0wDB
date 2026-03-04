@@ -53,6 +53,36 @@ export class PostgresStore extends MemoryStore {
         return this.getPool();
     }
     // ==========================================================================
+    // Health check — validate connections during idle periods
+    // ==========================================================================
+    /**
+     * Periodic health check to validate the connection pool is responsive.
+     * Call `SELECT 1` to catch stale connections before they cause write failures.
+     */
+    async healthCheck() {
+        try {
+            await this.getPool().query('SELECT 1');
+            this.logger.info('memory-shadowdb: health check: OK');
+            return true;
+        }
+        catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.logger.warn(`memory-shadowdb: health check FAILED - ${message}`);
+            return false;
+        }
+    }
+    /**
+     * Start periodic health checks (every 5 minutes).
+     * Helps catch stale connections during idle periods.
+     */
+    startHealthChecks() {
+        setInterval(() => {
+            this.healthCheck().catch(err => {
+                this.logger.warn(`memory-shadowdb: health check error: ${err}`);
+            });
+        }, 300_000); // 5 minutes
+    }
+    // ==========================================================================
     // Search legs
     // ==========================================================================
     async vectorSearch(query, embedding, limit, filters) {
@@ -447,4 +477,3 @@ export class PostgresStore extends MemoryStore {
         }));
     }
 }
-//# sourceMappingURL=postgres.js.map

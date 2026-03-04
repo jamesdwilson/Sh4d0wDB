@@ -97,4 +97,3 @@ export function validateTags(tags, options = {}) {
         normalized,
     };
 }
-//# sourceMappingURL=tag-validator.js.map

@@ -20,6 +20,8 @@
  */
 import { createHash } from "node:crypto";
 import { writeFileSync, mkdirSync } from "node:fs";
+import { randomUUID } from "crypto";
+import { OperationsLog } from "./durability-ops-log.js";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -421,6 +423,8 @@ export class MemoryStore {
      * then optionally generates an embedding.
      */
     async write(params) {
+        const operationId = randomUUID();
+        const opsLog = new OperationsLog(operationId);
         const content = validateContent(params.content);
         const category = sanitizeString(params.category, MAX_CATEGORY_LENGTH) || "general";
         const title = sanitizeString(params.title, MAX_TITLE_LENGTH) || null;
@@ -438,8 +442,18 @@ export class MemoryStore {
         const parent_id = typeof params.parent_id === "number" ? params.parent_id : null;
         const priority = typeof params.priority === "number" ? Math.min(10, Math.max(1, Math.round(params.priority))) : 5;
         this.logger.info(`memory-shadowdb: write -- category=${category}, title=${title || "(none)"}, record_type=${record_type}, tags=[${tags.join(",")}], contentLen=${content.length}`);
+        // Log pending operation
+        await opsLog.appendPending('write', category);
         const writeStart = Date.now();
-        const newId = await this.insertRecord({ content, category, title, tags, metadata, record_type, parent_id, priority });
+        let newId;
+        try {
+            newId = await this.insertRecord({ content, category, title, tags, metadata, record_type, parent_id, priority });
+        }
+        catch (err) {
+            // Log error
+            await opsLog.appendError('write', category, err instanceof Error ? err.message : String(err));
+            throw err;
+        }
         const insertMs = Date.now() - writeStart;
         let embedded = false;
         if (this.config.autoEmbed) {
@@ -451,6 +465,8 @@ export class MemoryStore {
         const totalMs = Date.now() - writeStart;
         const path = `shadowdb/${category}/${newId}`;
         this.logger.info(`memory-shadowdb: write complete — id=${newId}, embedded=${embedded}, ${totalMs}ms (insert=${insertMs}ms)`);
+        // Log completed operation
+        await opsLog.appendComplete('write', newId, category);
         return {
             ok: true,
             operation: "write",
@@ -640,10 +656,21 @@ export class MemoryStore {
     /**
      * Attempt to generate and store an embedding for a record.
      * FAIL-OPEN: errors logged but don't propagate. Record persists without vector.
+     *
+     * FIX: Use title preferentially over content to avoid dilution for long documents.
+     * If title exists, embed title; otherwise embed content.
      */
-    async tryEmbed(recordId, content) {
+    async tryEmbed(recordId, content, title) {
+        const EMBED_TIMEOUT_MS = 30_000; // 30 second timeout
         try {
-            const embedding = await this.embedder.embed(content, "document");
+            // FIX: Prefer title over content for better entity matching
+            // Long content dilutes semantic precision (observed 0.15 similarity loss)
+            const textToEmbed = title || content;
+            // Wrap embedding in timeout to prevent hangs during idle
+            const embedding = await Promise.race([
+                this.embedder.embed(textToEmbed, "document"),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Embedding timeout')), EMBED_TIMEOUT_MS))
+            ]);
             await this.storeEmbedding(recordId, embedding);
             return true;
         }
@@ -872,4 +899,3 @@ export function formatRelativeAge(timestamp) {
     const years = Math.floor(days / 365);
     return `${years}y`;
 }
-//# sourceMappingURL=store.js.map
