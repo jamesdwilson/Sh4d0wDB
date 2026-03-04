@@ -18,7 +18,7 @@
  * ```
  */
 
-import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { writeFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'crypto';
@@ -142,6 +142,44 @@ export class OperationsLog {
    */
   getOperationId(): string {
     return this.operationId;
+  }
+
+  /**
+   * Scan for orphaned pending operations (> 1 minute old)
+   * @returns Array of orphaned operations
+   */
+  scanOrphans(): OperationsLogEntry[] {
+    try {
+      if (!existsSync(this.logPath)) {
+        return [];
+      }
+
+      const recentTime = Date.now() - 60_000; // 1 minute ago
+      const orphans: OperationsLogEntry[] = [];
+
+      const lines = readFileSync(this.logPath, 'utf-8').trim().split('\n');
+      
+      lines.forEach(line => {
+        try {
+          const entry: OperationsLogEntry = JSON.parse(line);
+          
+          // Only flag pending operations as orphans
+          if (entry.status === 'pending') {
+            const entryTime = new Date(entry.timestamp).getTime();
+            if (entryTime < recentTime) {
+              orphans.push(entry);
+            }
+          }
+        } catch (err) {
+          // Skip invalid JSON lines
+          // continue; // Don't need continue here, we're in forEach
+        }
+      });
+
+      return orphans;
+    } catch (err) {
+      return [];
+    }
   }
 }
 
