@@ -854,11 +854,21 @@ export abstract class MemoryStore {
    * If title exists, embed title; otherwise embed content.
    */
   protected async tryEmbed(recordId: number, content: string, title?: string | null): Promise<boolean> {
+    const EMBED_TIMEOUT_MS = 30_000; // 30 second timeout
+    
     try {
       // FIX: Prefer title over content for better entity matching
       // Long content dilutes semantic precision (observed 0.15 similarity loss)
       const textToEmbed = title || content;
-      const embedding = await this.embedder.embed(textToEmbed, "document");
+      
+      // Wrap embedding in timeout to prevent hangs during idle
+      const embedding = await Promise.race([
+        this.embedder.embed(textToEmbed, "document"),
+        new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('Embedding timeout')), EMBED_TIMEOUT_MS)
+        )
+      ]);
+      
       await this.storeEmbedding(recordId, embedding);
       return true;
     } catch (err) {
