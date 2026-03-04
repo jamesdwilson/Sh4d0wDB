@@ -422,6 +422,8 @@ const memoryShadowdbPlugin = {
               category: Type.Optional(Type.String({ description: 'Category (default: "general")' })),
               title: Type.Optional(Type.String({ description: "Human-readable title" })),
               tags: Type.Optional(Type.Array(Type.String(), { description: "Searchable tags (max 50)" })),
+              record_type: Type.Optional(Type.String({ description: "Record type (atom, section, document, fact, index). Default: fact" })),
+              metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "JSON metadata. Use for graph edges: {entity_a, entity_b, relationship_type, confidence, last_verified}" })),
             }),
             execute: async (_toolCallId: string, params: Record<string, unknown>) => {
               try {
@@ -431,6 +433,8 @@ const memoryShadowdbPlugin = {
                   category: params.category as string | undefined,
                   title: params.title as string | undefined,
                   tags: params.tags as string[] | undefined,
+                  record_type: params.record_type as string | undefined,
+                  metadata: params.metadata as Record<string, unknown> | undefined,
                 });
                 return jsonResult(result as unknown as Record<string, unknown>);
               } catch (err) {

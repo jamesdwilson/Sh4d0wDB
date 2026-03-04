@@ -63,3 +63,4 @@ export function decayConfidence(edges, options = {}) {
     }
     return results;
 }
+//# sourceMappingURL=confidence-decay.js.map

@@ -15,6 +15,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
     "@types/pg": "^8.11.0",
+    "openclaw": "file:../../../../../../opt/homebrew/lib/node_modules/openclaw",
     "typescript": "^5.9.3"
   },
   "openclaw": {

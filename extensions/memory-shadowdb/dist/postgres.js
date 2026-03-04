@@ -231,11 +231,11 @@ export class PostgresStore extends MemoryStore {
     async insertRecord(params) {
         const sql = `
       INSERT INTO ${this.config.table} (content, category, title, tags, record_type, metadata, parent_id, priority)
-      VALUES ($1, $2, $3, $4, 'fact', $5::jsonb, $6, $7)
+      VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
       RETURNING id
     `;
         const result = await this.getPool().query(sql, [
-            params.content, params.category, params.title, params.tags,
+            params.content, params.category, params.title, params.tags, params.record_type,
             JSON.stringify(params.metadata), params.parent_id, params.priority,
         ]);
         return result.rows[0].id;
@@ -447,3 +447,4 @@ export class PostgresStore extends MemoryStore {
         }));
     }
 }
+//# sourceMappingURL=postgres.js.map

@@ -209,6 +209,7 @@ export declare abstract class MemoryStore {
         title?: string;
         tags?: string[];
         metadata?: Record<string, unknown>;
+        record_type?: string;
         parent_id?: number;
         priority?: number;
     }): Promise<WriteResult>;
@@ -366,6 +367,7 @@ export declare abstract class MemoryStore {
         title: string | null;
         tags: string[];
         metadata: Record<string, unknown>;
+        record_type: string;
         parent_id: number | null;
         priority: number;
     }): Promise<number>;

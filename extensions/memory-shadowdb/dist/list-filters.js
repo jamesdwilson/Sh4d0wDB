@@ -100,3 +100,4 @@ export function buildSortClause(sort, sort_order) {
     const sortCol = ALLOWED_SORTS.includes(sort) ? sort : "created_at";
     return `ORDER BY ${sortCol} ${sortDir}`;
 }
+//# sourceMappingURL=list-filters.js.map

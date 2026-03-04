@@ -82,3 +82,4 @@ export function suggestIntroFraming(entity_a, entity_b, edges, profiles) {
     }
     return { affinity, tier, framing, risks: frictionRisks, suggestions };
 }
+//# sourceMappingURL=intro-framing.js.map

@@ -260,7 +260,7 @@ export class MySQLStore extends MemoryStore {
     // Write operations
     // ==========================================================================
     async insertRecord(params) {
-        const result = await this.exec(`INSERT INTO ${this.config.table} (content, category, title, tags, record_type, metadata, parent_id, priority) VALUES (?, ?, ?, ?, 'fact', ?, ?, ?)`, [params.content, params.category, params.title, JSON.stringify(params.tags),
+        const result = await this.exec(`INSERT INTO ${this.config.table} (content, category, title, tags, record_type, metadata, parent_id, priority) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [params.content, params.category, params.title, JSON.stringify(params.tags), params.record_type,
             JSON.stringify(params.metadata), params.parent_id, params.priority]);
         return result.insertId;
     }
@@ -392,3 +392,4 @@ export class MySQLStore extends MemoryStore {
         return await this.query(`SELECT id, content FROM ${this.config.table} WHERE deleted_at IS NULL AND id > ? ORDER BY id ASC LIMIT ?`, [afterId, limit]);
     }
 }
+//# sourceMappingURL=mysql.js.map

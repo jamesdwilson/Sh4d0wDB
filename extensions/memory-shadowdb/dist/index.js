@@ -356,6 +356,8 @@ const memoryShadowdbPlugin = {
                         category: Type.Optional(Type.String({ description: 'Category (default: "general")' })),
                         title: Type.Optional(Type.String({ description: "Human-readable title" })),
                         tags: Type.Optional(Type.Array(Type.String(), { description: "Searchable tags (max 50)" })),
+                        record_type: Type.Optional(Type.String({ description: "Record type (atom, section, document, fact, index). Default: fact" })),
+                        metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "JSON metadata. Use for graph edges: {entity_a, entity_b, relationship_type, confidence, last_verified}" })),
                     }),
                     execute: async (_toolCallId, params) => {
                         try {
@@ -365,6 +367,8 @@ const memoryShadowdbPlugin = {
                                 category: params.category,
                                 title: params.title,
                                 tags: params.tags,
+                                record_type: params.record_type,
+                                metadata: params.metadata,
                             });
                             return jsonResult(result);
                         }
@@ -790,3 +794,4 @@ export const __test__ = {
     resolveMaxCharsForModel,
 };
 export default memoryShadowdbPlugin;
+//# sourceMappingURL=index.js.map

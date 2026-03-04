@@ -293,8 +293,8 @@ export class SQLiteStore extends MemoryStore {
     async insertRecord(params) {
         const result = this.db.prepare(`
       INSERT INTO ${this.config.table} (content, category, title, tags, record_type, metadata, parent_id, priority)
-      VALUES (?, ?, ?, ?, 'fact', ?, ?, ?)
-    `).run(params.content, params.category, params.title, JSON.stringify(params.tags), JSON.stringify(params.metadata), params.parent_id, params.priority);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(params.content, params.category, params.title, JSON.stringify(params.tags), params.record_type, JSON.stringify(params.metadata), params.parent_id, params.priority);
         return Number(result.lastInsertRowid);
     }
     async list(params) {
@@ -425,3 +425,4 @@ export class SQLiteStore extends MemoryStore {
         return this.db.prepare(`SELECT id, content FROM ${this.config.table} WHERE deleted_at IS NULL AND id > ? ORDER BY id ASC LIMIT ?`).all(afterId, limit);
     }
 }
+//# sourceMappingURL=sqlite.js.map

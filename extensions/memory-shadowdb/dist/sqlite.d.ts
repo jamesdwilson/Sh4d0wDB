@@ -62,6 +62,7 @@ export declare class SQLiteStore extends MemoryStore {
         title: string | null;
         tags: string[];
         metadata: Record<string, unknown>;
+        record_type: string;
         parent_id: number | null;
         priority: number;
     }): Promise<number>;

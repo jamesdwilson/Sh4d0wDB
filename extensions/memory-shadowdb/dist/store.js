@@ -434,11 +434,12 @@ export class MemoryStore {
             }
         }
         const metadata = params.metadata && typeof params.metadata === "object" ? params.metadata : {};
+        const record_type = sanitizeString(params.record_type, 50) || "fact";
         const parent_id = typeof params.parent_id === "number" ? params.parent_id : null;
         const priority = typeof params.priority === "number" ? Math.min(10, Math.max(1, Math.round(params.priority))) : 5;
-        this.logger.info(`memory-shadowdb: write -- category=${category}, title=${title || "(none)"}, tags=[${tags.join(",")}], contentLen=${content.length}`);
+        this.logger.info(`memory-shadowdb: write -- category=${category}, title=${title || "(none)"}, record_type=${record_type}, tags=[${tags.join(",")}], contentLen=${content.length}`);
         const writeStart = Date.now();
-        const newId = await this.insertRecord({ content, category, title, tags, metadata, parent_id, priority });
+        const newId = await this.insertRecord({ content, category, title, tags, metadata, record_type, parent_id, priority });
         const insertMs = Date.now() - writeStart;
         let embedded = false;
         if (this.config.autoEmbed) {
@@ -871,3 +872,4 @@ export function formatRelativeAge(timestamp) {
     const years = Math.floor(days / 365);
     return `${years}y`;
 }
+//# sourceMappingURL=store.js.map

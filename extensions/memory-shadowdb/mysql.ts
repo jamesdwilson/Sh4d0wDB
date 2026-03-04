@@ -308,12 +308,13 @@ export class MySQLStore extends MemoryStore {
     title: string | null;
     tags: string[];
     metadata: Record<string, unknown>;
+    record_type: string;
     parent_id: number | null;
     priority: number;
   }): Promise<number> {
     const result = await this.exec(
-      `INSERT INTO ${this.config.table} (content, category, title, tags, record_type, metadata, parent_id, priority) VALUES (?, ?, ?, ?, 'fact', ?, ?, ?)`,
-      [params.content, params.category, params.title, JSON.stringify(params.tags),
+      `INSERT INTO ${this.config.table} (content, category, title, tags, record_type, metadata, parent_id, priority) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [params.content, params.category, params.title, JSON.stringify(params.tags), params.record_type,
        JSON.stringify(params.metadata), params.parent_id, params.priority],
     );
     return result.insertId;
