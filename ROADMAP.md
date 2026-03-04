@@ -877,11 +877,11 @@ async startupRecovery() {
 - [ ] Add log rotation (keep last 1000 entries)
 - [x] Test: verify entries appear in correct files
 
-**Phase 3: Startup Recovery**
-- [ ] Scan pending-writes.jsonl on startup
-- [ ] Identify orphans (>1min old, no completion)
-- [ ] Log orphan count on startup
-- [ ] Test: kill process mid-write, verify detection
+**Phase 3: Startup Recovery** ✅ COMPLETE
+- [x] Scan pending-writes.jsonl on startup
+- [x] Identify orphans (>1min old, no completion)
+- [x] Log orphan count on startup
+- [x] Test: kill process mid-write, verify detection
 
 **Phase 4: Idempotency**
 - [ ] Add operationId to metadata field
