@@ -862,20 +862,20 @@ async startupRecovery() {
 
 ### Implementation Checklist
 
-**Phase 1: Observability**
-- [ ] Add operationId to all write operations
-- [ ] Add write lifecycle logging (START/DB_SUCCESS/EMBED_START/EMBED_SUCCESS/COMPLETE)
-- [ ] Add connection pool health check (5m interval)
-- [ ] Add embedding timeout (30s max)
-- [ ] Test: verify logs appear for each stage
+**Phase 1: Observability** ✅ COMPLETE
+- [x] Add operationId to all write operations
+- [x] Add write lifecycle logging (START/DB_SUCCESS/EMBED_START/EMBED_SUCCESS/COMPLETE)
+- [x] Add connection pool health check (5m interval)
+- [x] Add embedding timeout (30s max)
+- [x] Test: verify logs appear for each stage
 
-**Phase 2: Write-Ahead Log**
-- [ ] Create pending-writes.jsonl
-- [ ] Create completed-writes.jsonl
-- [ ] Append to pending before DB write
-- [ ] Append to completed after success
+**Phase 2: Write-Ahead Log** ✅ COMPLETE
+- [x] Create pending-writes.jsonl (via OperationsLog class)
+- [x] Create completed-writes.jsonl (via OperationsLog class)
+- [x] Append to pending before DB write
+- [x] Append to completed after success
 - [ ] Add log rotation (keep last 1000 entries)
-- [ ] Test: verify entries appear in correct files
+- [x] Test: verify entries appear in correct files
 
 **Phase 3: Startup Recovery**
 - [ ] Scan pending-writes.jsonl on startup
