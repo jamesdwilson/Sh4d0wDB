@@ -39,6 +39,16 @@ export declare class PostgresStore extends MemoryStore {
      * TODO: Remove once index.ts is fully migrated to use MemoryStore directly.
      */
     getSharedPool(): pg.Pool;
+    /**
+     * Periodic health check to validate the connection pool is responsive.
+     * Call `SELECT 1` to catch stale connections before they cause write failures.
+     */
+    healthCheck(): Promise<boolean>;
+    /**
+     * Start periodic health checks (every 5 minutes).
+     * Helps catch stale connections during idle periods.
+     */
+    startHealthChecks(): void;
     protected vectorSearch(query: string, embedding: number[], limit: number, filters?: SearchFilters): Promise<RankedHit[]>;
     protected textSearch(query: string, limit: number, filters?: SearchFilters): Promise<RankedHit[]>;
     protected fuzzySearch(query: string, limit: number, filters?: SearchFilters): Promise<RankedHit[]>;

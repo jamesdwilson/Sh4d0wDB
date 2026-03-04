@@ -261,8 +261,11 @@ export declare abstract class MemoryStore {
     /**
      * Attempt to generate and store an embedding for a record.
      * FAIL-OPEN: errors logged but don't propagate. Record persists without vector.
+     *
+     * FIX: Use title preferentially over content to avoid dilution for long documents.
+     * If title exists, embed title; otherwise embed content.
      */
-    protected tryEmbed(recordId: number, content: string): Promise<boolean>;
+    protected tryEmbed(recordId: number, content: string, title?: string | null): Promise<boolean>;
     /**
      * Re-embed all non-deleted records with the current embedding configuration.
      * Cursor-based iteration to keep memory bounded. Errors are logged and skipped.
