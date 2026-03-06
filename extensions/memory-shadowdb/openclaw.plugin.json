@@ -116,6 +116,10 @@
             "type": "number",
             "description": "Weight for recency in RRF ranking. Small value = tiebreaker only. Default: 0.15"
           },
+          "minVectorScore": {
+            "type": "number",
+            "description": "Minimum cosine similarity threshold for vector search candidates before RRF merge. Range 0.0–1.0. Default: 0 (no filtering). Raise to ~0.4–0.6 to suppress low-relevance vector hits."
+          },
           "maxChars": {
             "type": "number",
             "description": "Default max chars for tool result output. Applied when no model pattern matches."
