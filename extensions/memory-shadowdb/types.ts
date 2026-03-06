@@ -116,17 +116,38 @@ export type PluginConfig = {
   
   /** Search behavior configuration */
   search?: {
-    /** Maximum number of results to return */
+    /**
+     * Maximum number of results to return after RRF scoring.
+     * With large corpora (5k+ records), low values cause good records to be
+     * dropped before ranking. Default: 15. Increase for very large DBs.
+     */
     maxResults?: number;
     
-    /** Minimum score threshold for results */
+    /** Minimum score threshold for results. Default: 0.005. */
     minScore?: number;
     
-    /** Weight for vector similarity in RRF scoring */
+    /**
+     * Weight for vector similarity in RRF scoring. Default: 0.5.
+     * Increase for concept/semantic-heavy queries; decrease for name-heavy
+     * corpora where FTS outperforms embeddings (proper names embed poorly
+     * with models like nomic-embed-text).
+     */
     vectorWeight?: number;
     
-    /** Weight for full-text search in RRF scoring */
+    /**
+     * Weight for full-text search in RRF scoring. Default: 0.5.
+     * Increase for contact/name-heavy corpora where exact-match FTS is
+     * more reliable than vector similarity for proper nouns.
+     */
     textWeight?: number;
+
+    /**
+     * Minimum cosine similarity threshold for vector search results.
+     * Vector hits below this score are excluded before RRF merge.
+     * Prevents low-relevance records from polluting results via the vector leg.
+     * Value range: 0.0–1.0 (cosine similarity). Default: 0 (no filtering).
+     */
+    minVectorScore?: number;
 
     /**
      * Weight for recency in RRF scoring.

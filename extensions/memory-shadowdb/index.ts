@@ -106,16 +106,25 @@ const memoryShadowdbPlugin = {
     const connectionString = resolveConnectionString(pluginCfg);
     const embeddingCfg = resolveEmbeddingConfig(pluginCfg);
     const tableName = pluginCfg.table || "memories";
-    const maxResultsDefault = pluginCfg.search?.maxResults ?? 6;
+    // maxResults: how many candidates survive RRF scoring.
+    // With large DBs (5k+ records), 6 is too few — good records get cut before
+    // ranking. 15 is a safe default; increase further for very large corpora.
+    const maxResultsDefault = pluginCfg.search?.maxResults ?? 15;
     // RRF scores are much smaller than raw similarity scores.
     // With k=60 and weights summing to ~1.35, the theoretical max RRF score
     // for a rank-1 result across all signals is ~0.022. A threshold of 0.15
     // would filter out everything. Default 0.005 = "appeared in at least one
     // signal with reasonable rank."
     const minScoreDefault = pluginCfg.search?.minScore ?? 0.005;
-    const vectorWeight = pluginCfg.search?.vectorWeight ?? 0.7;
-    const textWeight = pluginCfg.search?.textWeight ?? 0.3;
+    // Weight balance: vector embeddings excel at semantic/conceptual queries
+    // but are weak for proper names (nomic-embed-text treats names as opaque
+    // tokens). FTS/text search is more reliable for exact name matches.
+    // 0.5/0.5 is a balanced default; bias toward vectorWeight for
+    // concept-heavy corpora, toward textWeight for contact/name-heavy corpora.
+    const vectorWeight = pluginCfg.search?.vectorWeight ?? 0.5;
+    const textWeight = pluginCfg.search?.textWeight ?? 0.5;
     const recencyWeight = pluginCfg.search?.recencyWeight ?? 0.15;
+    const minVectorScore = pluginCfg.search?.minVectorScore ?? 0;
     const primerCfg = resolvePrimerConfig(pluginCfg);
 
     const writesCfg = {
@@ -131,6 +140,7 @@ const memoryShadowdbPlugin = {
       vectorWeight,
       textWeight,
       recencyWeight,
+      minVectorScore,
       autoEmbed: writesCfg.autoEmbed,
       purgeAfterDays: writesCfg.purgeAfterDays,
     };
