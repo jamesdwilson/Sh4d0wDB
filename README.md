@@ -821,6 +821,19 @@ Flat files have a poisonous-tree problem: one bad write compounds into every fut
 
 ---
 
+## Operational Scripts
+
+The [`scripts/`](scripts/) directory contains tools for monitoring and maintaining a ShadowDB deployment. See **[scripts/SCRIPTS.md](scripts/SCRIPTS.md)** for full documentation.
+
+Key scripts:
+- **`db-health-check.py`** — daily baseline comparison, cron-friendly
+- **`db-integrity-suite.py`** — weekly pg_amcheck + checksum + baseline suite
+- Unit tests in `test_db_health_check.py` / `test_db_integrity_suite.py` (44 tests, fully mocked)
+
+All scripts use environment variables — no hardcoded paths or credentials.
+
+---
+
 ## Contributing
 
 PRs welcome — from agents and humans alike. If your AI opened the PR, great. If you wrote it yourself, that's cool too. Open an issue first if it's a big change. See the [roadmap](#roadmap-brainstorm) for ideas under consideration.
