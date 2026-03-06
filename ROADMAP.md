@@ -178,23 +178,23 @@ GIN index on `metadata` is in `schema.sql`.
 Edges are written via `memory_write` with this shape:
 ```json
 {
-  "content": "James Wilson knows Reece DeWoody via Tyler civic network. Observed: shared TMM meeting. Confidence: 70.",
+  "content": "Alice knows Bob via shared professional network. Observed: co-attended industry event. Confidence: 70.",
   "category": "graph",
   "record_type": "atom",
-  "tags": ["entity:james-wilson", "entity:reece-dewoody", "domain:civic", "loc:tyler-tx"],
+  "tags": ["entity:alice", "entity:bob", "domain:professional"],
   "metadata": {
-    "entity_a": "james-wilson",
+    "entity_a": "alice",
     "entity_a_type": "person",
-    "entity_b": "reece-dewoody",
+    "entity_b": "bob",
     "entity_b_type": "person",
     "relationship_type": "knows",
     "evidence_type": "observed",
     "confidence": 70,
     "affinity_score": 65,
-    "affinity_basis": "Shared civic focus, compatible communication styles",
-    "signal_basis": "Co-attended TMM funding meeting 2026-03-03",
+    "affinity_basis": "Shared professional focus, compatible communication styles",
+    "signal_basis": "Co-attended industry event 2026-01-01",
     "depth": 1,
-    "last_verified": "2026-03-03"
+    "last_verified": "2026-01-01"
   },
   "priority": 7
 }
@@ -1009,6 +1009,6 @@ function resolveContextWindow(api: OpenClawPluginAPI, modelId: string): number |
 4. **One thing per commit.** No "feat: lots of stuff". Split it.
 5. **Update this file** when a sprint completes or a task is checked off.
 6. **v0.4.0, v0.5.0, v0.6.0, v0.7.0 are COMPLETE.** No further work defined. Check with James for next priorities.
-7. **Do not guess on schema or tool interface decisions.** If anything is ambiguous, stop and flag James (+16783694522).
+7. **Do not guess on schema or tool interface decisions.** If anything is ambiguous, stop and flag the project owner.
 8. **TDD when possible.** Write failing tests first, then implement.
-9. **GRAPH_SPEC.md is the design authority for graph features.** Read it before touching graph code.
+9. **GRAPH_SPEC.md is the design authority for graph features.** Read it before touching graph code. (Local only — not in repo.)

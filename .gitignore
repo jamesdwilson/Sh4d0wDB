@@ -1,18 +1,15 @@
 # Editor
+# Node
+# OS
+# Python
+# Temp
+*.log
+*.pyc
+.DS_Store
 .idea/
 .vscode/
-
-# OS
-.DS_Store
-
-# Node
-node_modules/
-*.log
-
-# Python
-__pycache__/
-*.pyc
-
-# Temp
 /tmp/
+GRAPH_SPEC.md
+__pycache__/
 db-backups/
+node_modules/
