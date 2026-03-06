@@ -931,6 +931,76 @@ async startupRecovery() {
 
 ---
 
+---
+
+## v0.9.0 — Model-Aware Context Budgeting (PLANNED)
+
+### Problem
+
+`maxChars` and `maxCharsByModel` require hardcoding model name patterns and character limits.
+This is fragile: patterns can miss models, limits go stale as models change, and new models require manual config updates.
+The plugin already has access to `api.config` which contains the full model registry including `contextWindow` per model.
+
+### Goal
+
+Automatically derive memory result character budgets from the active model's declared context window — no hardcoding required. `maxCharsByModel` becomes an optional override for edge cases only.
+
+### Design
+
+**Runtime flow:**
+1. At tool call time, plugin reads active model id from context (already available as `currentModel`)
+2. Looks up `contextWindow` for that model in `api.config.models.providers[provider].models`
+3. Applies a configurable fraction (default: `contextBudgetFraction: 0.15`) to derive `effectiveMaxChars`
+4. `maxChars` serves as the floor/fallback when model is unknown or contextWindow is absent
+5. `maxCharsByModel` overrides remain for specific edge cases (e.g. local models with odd limits)
+
+**New config field (optional):**
+```json
+"search": {
+  "contextBudgetFraction": 0.15
+}
+```
+
+**Precedence (highest to lowest):**
+1. `maxCharsByModel` pattern match (explicit override)
+2. `contextWindow * contextBudgetFraction` (auto-derived)
+3. `maxChars` (static fallback)
+4. Hardcoded default (4000)
+
+**Model lookup:**
+```ts
+function resolveContextWindow(api: OpenClawPluginAPI, modelId: string): number | undefined {
+  const providers = api.config?.models?.providers ?? {};
+  for (const provider of Object.values(providers)) {
+    const match = provider.models?.find((m: any) => m.id === modelId);
+    if (match?.contextWindow) return match.contextWindow;
+  }
+  return undefined;
+}
+```
+
+### Files to touch
+- `index.ts` — `resolveMaxCharsForModel` call site, pass `api` + `currentModel`
+- `resolve-maxchars.ts` (or inline) — add `contextWindow` param, derive from fraction
+- `resolve-maxchars.test.mjs` — add tests for auto-derived path + fallback chain
+- `types.ts` — add `contextBudgetFraction?: number` to search config
+- `openclaw.plugin.json` — add `contextBudgetFraction` to search schema
+- `ROADMAP.md` — mark complete when done
+
+### Testing
+- Auto-derive when contextWindow known: `contextWindow=200000, fraction=0.15 → 30000`
+- Fallback to `maxChars` when contextWindow unknown
+- `maxCharsByModel` pattern still wins when set
+- No regression on existing `resolve-maxchars.test.mjs` cases
+
+### Success Metrics
+- Zero hardcoded model patterns needed for standard deployments
+- Works correctly for all models in the OpenClaw model registry
+- `maxCharsByModel` still functions as override
+- All existing tests green
+
+---
+
 ## Operating Rules (for any agent picking this up)
 
 1. **Read this file first.** Do not infer state from git log alone — ROADMAP is truth.
