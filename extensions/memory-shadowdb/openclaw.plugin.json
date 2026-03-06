@@ -15,7 +15,11 @@
     "properties": {
       "backend": {
         "type": "string",
-        "enum": ["postgres", "sqlite", "mysql"],
+        "enum": [
+          "postgres",
+          "sqlite",
+          "mysql"
+        ],
         "description": "Database backend: postgres (default), sqlite (zero-config), or mysql (9.2+)"
       },
       "connectionString": {
@@ -32,45 +36,119 @@
         "properties": {
           "provider": {
             "type": "string",
-            "enum": ["ollama", "openai", "openai-compatible", "voyage", "gemini", "command"],
+            "enum": [
+              "ollama",
+              "openai",
+              "openai-compatible",
+              "voyage",
+              "gemini",
+              "command"
+            ],
             "description": "Embedding provider"
           },
-          "apiKey": { "type": "string" },
-          "model": { "type": "string" },
-          "dimensions": { "type": "number" },
-          "ollamaUrl": { "type": "string", "description": "Ollama API endpoint (default: http://localhost:11434)" },
-          "baseUrl": { "type": "string", "description": "Provider base URL override" },
-          "headers": { "type": "object", "additionalProperties": { "type": "string" } },
-          "voyageInputType": { "type": "string", "enum": ["query", "document"] },
-          "geminiTaskType": { "type": "string" },
-          "command": { "type": "string" },
-          "commandArgs": { "type": "array", "items": { "type": "string" } },
-          "commandTimeoutMs": { "type": "number" }
+          "apiKey": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "dimensions": {
+            "type": "number"
+          },
+          "ollamaUrl": {
+            "type": "string",
+            "description": "Ollama API endpoint (default: http://localhost:11434)"
+          },
+          "baseUrl": {
+            "type": "string",
+            "description": "Provider base URL override"
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "voyageInputType": {
+            "type": "string",
+            "enum": [
+              "query",
+              "document"
+            ]
+          },
+          "geminiTaskType": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "commandArgs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "commandTimeoutMs": {
+            "type": "number"
+          }
         }
       },
-      "table": { "type": "string" },
+      "table": {
+        "type": "string"
+      },
       "search": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "maxResults": { "type": "number" },
-          "minScore": { "type": "number" },
-          "vectorWeight": { "type": "number" },
-          "textWeight": { "type": "number" },
-          "recencyWeight": { "type": "number", "description": "Weight for recency in RRF ranking. Small value = tiebreaker only. Default: 0.15" }
+          "maxResults": {
+            "type": "number"
+          },
+          "minScore": {
+            "type": "number"
+          },
+          "vectorWeight": {
+            "type": "number"
+          },
+          "textWeight": {
+            "type": "number"
+          },
+          "recencyWeight": {
+            "type": "number",
+            "description": "Weight for recency in RRF ranking. Small value = tiebreaker only. Default: 0.15"
+          },
+          "maxChars": {
+            "type": "number",
+            "description": "Default max chars for tool result output. Applied when no model pattern matches."
+          },
+          "maxCharsByModel": {
+            "type": "object",
+            "description": "Per-model char budget for memory_search and memory_assemble results. Pattern-matched against active model id (first match wins). E.g. {\"local/\": 3000, \"claude\": 12000}",
+            "additionalProperties": {
+              "type": "number"
+            }
+          }
         }
       },
       "writes": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "enabled": { "type": "boolean", "description": "Master gate for write tools (memory_write, memory_update, memory_delete). Default: false." },
-          "autoEmbed": { "type": "boolean", "description": "Auto-generate embedding on write/update. Default: true." },
+          "enabled": {
+            "type": "boolean",
+            "description": "Master gate for write tools (memory_write, memory_update, memory_delete). Default: false."
+          },
+          "autoEmbed": {
+            "type": "boolean",
+            "description": "Auto-generate embedding on write/update. Default: true."
+          },
           "retention": {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "purgeAfterDays": { "type": "number", "description": "Permanently remove soft-deleted records after N days (default: 30, 0 = never)" }
+              "purgeAfterDays": {
+                "type": "number",
+                "description": "Permanently remove soft-deleted records after N days (default: 30, 0 = never)"
+              }
             }
           }
         }
@@ -79,11 +157,30 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "enabled": { "type": "boolean" },
-          "mode": { "type": "string", "enum": ["always", "first-run", "digest"] },
-          "maxChars": { "type": "number" },
-          "cacheTtlMs": { "type": "number" },
-          "maxCharsByModel": { "type": "object", "description": "Model substring -> maxChars overrides. First matching pattern wins.", "additionalProperties": { "type": "number" } }
+          "enabled": {
+            "type": "boolean"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "always",
+              "first-run",
+              "digest"
+            ]
+          },
+          "maxChars": {
+            "type": "number"
+          },
+          "cacheTtlMs": {
+            "type": "number"
+          },
+          "maxCharsByModel": {
+            "type": "object",
+            "description": "Model substring -> maxChars overrides. First matching pattern wins.",
+            "additionalProperties": {
+              "type": "number"
+            }
+          }
         }
       }
     }
