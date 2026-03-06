@@ -59,7 +59,7 @@ export function loadShadowDbConfig(configPath) {
  * 3. DATABASE_URL environment variable
  * 4. ~/.shadowdb.json postgres.connection_string
  * 5. ~/.shadowdb.json postgres.{host,port,user,password,database}
- * 6. Fallback: local socket connection
+ * 6. Error — no silent fallback
  *
  * SECURITY NOTES:
  * - The returned string may contain credentials (postgresql://user:pass@host/db)
@@ -93,16 +93,16 @@ export function resolveConnectionString(pluginCfg) {
         // Build connection string from components
         const host = pg.host || "localhost";
         const port = pg.port || 5432;
-        const user = pg.user || process.env.USER || "postgres";
+        const user = pg.user || "postgres";
         const db = pg.database || "shadow";
         // SECURITY: Password is URL-encoded to handle special characters
         // and only included if present. Never log the password value.
         const password = pg.password ? `:${encodeURIComponent(pg.password)}` : "";
         return `postgresql://${user}${password}@${host}:${port}/${db}`;
     }
-    // 4. Fallback: local Unix socket connection (no network, no password)
-    // Assumes PostgreSQL is running locally with peer auth
-    return `postgresql:///${process.env.USER || "shadow"}`;
+    // No config found — fail loudly rather than guess from environment
+    throw new Error("memory-shadowdb: no database configuration found. " +
+        "Set connectionString in plugin config or create ~/.shadowdb.json with a postgres section.");
 }
 /**
  * Normalize embedding provider string to canonical type
@@ -355,3 +355,4 @@ export function computeEmbeddingFingerprint(cfg) {
     const input = `${cfg.provider}:${cfg.model}:${cfg.dimensions}:${hasTaskPrefix}`;
     return createHash("sha256").update(input).digest("hex").slice(0, 16);
 }
+//# sourceMappingURL=config.js.map
