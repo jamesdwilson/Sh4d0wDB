@@ -145,11 +145,17 @@ export class EmbeddingClient {
         // nomic-embed-text uses task prefixes: "search_query: " for queries,
         // "search_document: " for documents. Other models ignore unknown prefixes.
         const prompt = taskPrefix ? `${taskPrefix}${truncated}` : truncated;
-        const response = await fetch(`${this.ollamaUrl.replace(/\/$/, "")}/api/embeddings`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", ...this.headers },
-            body: JSON.stringify({ model: this.model, prompt }),
-        });
+        const ollamaUrl = `${this.ollamaUrl.replace(/\/$/, "")}/api/embeddings`;
+        let response;
+        try {
+            response = await fetch(ollamaUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...this.headers },
+                body: JSON.stringify({ model: this.model, prompt }),
+            });
+        } catch (fetchErr) {
+            throw new Error(`Ollama unreachable at ${ollamaUrl} (model: ${this.model}): ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}. Check that Ollama is running.`);
+        }
         if (!response.ok) {
             throw new Error(`Ollama embedding failed: ${response.status} ${response.statusText}`);
         }
