@@ -118,7 +118,7 @@
           },
           "minVectorScore": {
             "type": "number",
-            "description": "Minimum cosine similarity threshold for vector search candidates before RRF merge. Range 0.0–1.0. Default: 0 (no filtering). Raise to ~0.4–0.6 to suppress low-relevance vector hits."
+            "description": "Minimum cosine similarity threshold for vector search candidates before RRF merge. Range 0.0\u20131.0. Default: 0 (no filtering). Raise to ~0.4\u20130.6 to suppress low-relevance vector hits."
           },
           "maxChars": {
             "type": "number",
@@ -184,6 +184,37 @@
             "additionalProperties": {
               "type": "number"
             }
+          }
+        }
+      },
+      "reranker": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Qwen3-Reranker cross-encoder via embed-rerank service. Degrades gracefully if service is unreachable.",
+        "properties": {
+          "baseUrl": {
+            "type": "string",
+            "description": "Base URL of embed-rerank service. Default: http://127.0.0.1:9000"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable/disable reranking. Default: true"
+          },
+          "timeoutMs": {
+            "type": "number",
+            "description": "HTTP timeout in ms. Default: 3000"
+          },
+          "minCandidates": {
+            "type": "number",
+            "description": "Minimum candidates before reranking. Default: 3"
+          },
+          "rerankTopK": {
+            "type": "number",
+            "description": "RRF candidates sent to reranker. Clamped [1,100]. Default: 30"
+          },
+          "model": {
+            "type": "string",
+            "description": "Model id sent to reranker service. Default: reranker"
           }
         }
       }
