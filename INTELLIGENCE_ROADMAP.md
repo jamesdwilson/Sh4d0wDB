@@ -48,6 +48,7 @@
 - [ ] `resolveParties()` fuzzy-matches against existing ShadowDB contacts — passes unit tests
 - [ ] Full backfill run: last 365 days ingested, interestingness ≥6 kept
 - [ ] Ingestion is idempotent — re-running produces zero duplicates (keyed on gmail message id)
+- [ ] `write()` deduplication via `operationId` in metadata implemented — fixes pre-existing RED test in `duplicate-detection-integration.test.mjs`
 - [ ] Each ingested email creates: 1 `documents` row + N `memories` chunk rows
 - [ ] Party names linked to existing contact records where matched
 - [ ] `ingestion_runs` audit row written for every run (started, finished, counts, status)
