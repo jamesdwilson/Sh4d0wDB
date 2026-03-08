@@ -224,20 +224,30 @@ The principle: if the guardrails are more complex than the feature, you've lost 
 ## How search works
 
 <details>
-<summary>Hybrid ranking with multiple signals</summary>
+<summary>Three-stage retrieval pipeline with optional cross-encoder reranking</summary>
 
-Every search combines multiple signals to find the best matches. What's available depends on your backend:
+Every search runs a three-stage pipeline:
+
+**Stage 1 — Parallel candidate retrieval**
 
 | Signal | Postgres | SQLite | MySQL | What it measures |
 |--------|----------|--------|-------|-----------------|
-| Vector similarity | ✓ (weight: `0.7`) | ✓ (sqlite-vec) | ✓ (9.2+) | Semantic meaning via embeddings |
-| Full-text search | ✓ (weight: `0.3`) | ✓ (FTS5) | ✓ (FULLTEXT) | Keyword/phrase matches |
+| Vector similarity | ✓ (weight: `0.5`) | ✓ (sqlite-vec) | ✓ (9.2+) | Semantic meaning via embeddings |
+| Full-text search | ✓ (weight: `0.5`) | ✓ (FTS5) | ✓ (FULLTEXT) | Keyword/phrase matches |
 | Trigram similarity | ✓ (weight: `0.2`) | ✓ (FTS5 trigram) | ✓ (ngram parser) | Fuzzy/substring matching |
 | Recency boost | ✓ (weight: `0.15`) | ✓ | ✓ | Newer records boosted slightly |
 
-With Postgres, signals are merged via Reciprocal Rank Fusion (RRF) — each signal produces a ranked list, and RRF combines them without needing score normalization. All weights are configurable.
+**Stage 2 — Reciprocal Rank Fusion (RRF)**
 
-Recency is intentionally low — it's a tiebreaker, not a dominant signal.
+Signals are merged via RRF — each produces a ranked list, RRF combines them without score normalization. Top 30 candidates are passed to Stage 3.
+
+**Stage 3 — Cross-encoder reranking (optional, Postgres only)**
+
+If a reranker service is configured (`reranker.baseUrl`), the top-30 RRF candidates are sent to a cross-encoder that reads query + each document together and outputs P(relevant) ∈ [0,1]. This is fundamentally more accurate than bi-encoder cosine similarity — it's the difference between "finds something similar" and "finds the right thing."
+
+Tested with [Qwen3-Reranker-0.6B](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B) via [embed-rerank](https://github.com/joonsoome/embed-rerank) on Apple Silicon. Degrades gracefully (returns RRF order) if service is unreachable or times out.
+
+All weights are configurable. Recency is intentionally low — it's a tiebreaker, not a dominant signal.
 
 </details>
 

@@ -1,7 +1,7 @@
 # ShadowDB Reranker Integration — Implementation Roadmap
 
 **Created:** 2026-03-07  
-**Status:** Pre-implementation — roadmap + TDD spec  
+**Status:** ✅ COMPLETE — shipped 2026-03-07  
 **DB Backup:** `backups/shadow_backup_20260307_182322.sql`  
 **Goal:** Wire Qwen3-Reranker-0.6B into the `memory_search` query path so every search benefits from cross-encoder precision scoring.
 
@@ -306,14 +306,19 @@ chore: update openclaw.json to enable reranker  [after all tests pass]
 
 ## Definition of Done
 
-- [ ] All tests in `reranker.test.mjs` pass
-- [ ] `npm test` passes with no regressions in existing test suite
-- [ ] `memory_search` returns reranked results when embed-rerank service is running
-- [ ] `memory_search` returns correct (RRF-ranked) results when service is down
-- [ ] Reranker latency logged at INFO level (timing visible in logs)
-- [ ] `openclaw.json` updated with `reranker` config block
-- [ ] All code in strict TypeScript with no `any`
-- [ ] All commits made after corresponding tests pass
+- [x] All tests in `reranker.test.mjs` pass — 23/23
+- [x] `npm test` passes with no regressions — 301/302 (1 pre-existing RED)
+- [x] `memory_search` returns reranked results when embed-rerank service is running
+- [x] `memory_search` returns correct (RRF-ranked) results when service is down
+- [x] Reranker latency logged at INFO level (timing visible in logs)
+- [x] `openclaw.json` updated with `reranker` config block
+- [x] All code in strict TypeScript with no `any`
+- [x] All commits made after corresponding tests pass
+
+## Shipped Commits
+- `223f5ee` feat(reranker): add reranker module — 23 tests passing, zero throws, graceful degradation
+- `bc47fb0` feat(store): wire rerankCandidates into search() — reranker active after RRF merge
+- `6a64016` feat(schema): add reranker to plugin configSchema — fixes additionalProperties validation error
 
 ---
 

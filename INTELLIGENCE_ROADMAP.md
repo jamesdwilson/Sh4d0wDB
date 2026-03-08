@@ -553,10 +553,11 @@ CREATE SCHEMA IF NOT EXISTS shadow_test;
 ## Prereqs Checklist
 
 - [x] Qwen3-Embedding-4B working (oMLX port 8000)
-- [x] Qwen3-Reranker-0.6B working (embed-rerank port 9000)  
-- [x] embed-rerank LaunchAgent installed (auto-starts)
-- [x] Re-embedding in progress (7,842 records)
-- [ ] Re-embedding complete + HNSW index rebuilt
-- [ ] DB backup confirmed: `backups/shadow_backup_20260307_182322.sql`
-- [ ] Open questions answered
+- [x] Qwen3-Reranker-0.6B working (embed-rerank port 9000)
+- [x] embed-rerank LaunchAgent installed (auto-starts on boot)
+- [x] Re-embedding complete — 7,842/7,842 records, 2560d, Qwen3 task prefix
+- [x] DB backup confirmed: `backups/shadow_backup_20260307_182322.sql` (251MB)
+- [x] Reranker wired into memory_search — 23 tests, graceful degradation
+- [ ] HNSW/IVFFlat index — blocked: pgvector 0.8.x caps HNSW at 2000d; sequential scan acceptable at current record count (~7,842), revisit at 50K+
+- [ ] Open questions answered (Gmail scope, contract folder, LLM for scoring, alert channel, decay on existing records)
 - [ ] This roadmap reviewed and approved by James
