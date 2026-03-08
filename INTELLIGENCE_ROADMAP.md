@@ -352,6 +352,74 @@ P[number]: [Specific outcome statement]
 
 ---
 
+## Architecture: Before Phase 2 Starts
+
+Two structural gaps must be closed before implementing any new intelligence
+module. Both are spec'd in full in `extensions/memory-shadowdb/ARCHITECTURE.md`.
+
+### Gap 1: LLM Context Tier Routing
+
+The current `LlmClient` is a flat `{ complete(prompt): Promise<string> }`.
+It has no concept of context window size, JSON mode, or model selection.
+
+Scoring a 200-token email and running a 50K-token cross-reference analysis
+are fundamentally different operations — they need different models.
+Routing both through the same interface silently produces garbage when the
+task exceeds the model's context window.
+
+**Fix:** `TieredLlmClient` extends `LlmClient` (backward compatible) and adds:
+- `LlmTier` enum: `FLASH` (≤4K) | `STANDARD` (≤32K) | `DEEP` (≤128K) | `MASSIVE`
+- `LlmTask` type: prompt + tier + outputFormat + maxTokens + disableThinking
+- `LlmRouter` class: selects model by tier, fallback chain, JSON mode wiring
+- All existing callers continue to work via `complete()` (treated as FLASH)
+
+**Task → Tier mapping:**
+| Task | Tier |
+|------|------|
+| `scoreInterestingness` | FLASH |
+| `extractBehavioralSignals` | STANDARD |
+| `crossReferenceDocument` | DEEP |
+| `detectNetworkOpportunities` | DEEP |
+| `generateOpportunityBriefing` | STANDARD |
+| `extractContractTerms` | STANDARD |
+
+### Gap 2: Source Heterogeneity (`DataSource<T>`)
+
+`MessageFetcher` is great for message streams (email, iMessage, LinkedIn DMs).
+It's wrong for entity registries and event logs:
+
+| Source Type | Shape | Examples |
+|-------------|-------|---------|
+| Message stream | Timestamped text from/to parties | Gmail, iMessage, LinkedIn DMs |
+| Entity registry | Structured records with fields | Apple Contacts, Crunchbase, HubSpot |
+| Event log | Time-bounded structured events | Calendar, Eventbrite |
+| Document store | Files with metadata | Contracts, Notion, Obsidian |
+
+**Fix:** `DataSource<T>` generic interface alongside `MessageFetcher`:
+```typescript
+interface DataSource<T> {
+  readonly sourceId: string;
+  readonly displayName: string;
+  readonly category: string;
+  getUpdatedRecords(watermark: Date | null): Promise<T[]>;
+  getRecordId(record: T): string;
+  extractContent(record: T): ExtractedContent | null;
+}
+```
+
+Adding Crunchbase = implement `DataSource<CrunchbaseEntity>`.
+Adding Apple Contacts = implement `DataSource<AppleContact>`.
+Nothing else in the pipeline changes.
+
+### Implementation Order (TDD, both gaps)
+
+1. `llm-router.test.mjs` written → `llm-router.ts` implemented → commit
+2. `data-source.test.mjs` written → `data-source.ts` implemented → commit
+3. Callers updated: `phase1-scoring`, `phase3-contact-signal` accept `TieredLlmClient`
+4. First `DataSource<T>` impl: `AppleContactsSource`
+
+---
+
 ## Cross-Cutting Requirements
 
 ### Staleness Enforcement
