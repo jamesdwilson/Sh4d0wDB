@@ -643,10 +643,10 @@ test('G1: Request exceeding timeoutMs is treated as model failure, triggers fall
 
 test('G2: Default timeout is 30000ms (configured in router defaults)', () => {
   // Verify the default is sane — not too short (drops valid slow requests) or infinite.
-  // We test this by inspecting the router's config rather than waiting 30 seconds.
+  // We test this by inspecting router.timeoutMs after constructing with no timeoutMs.
   const { client } = mockHttp();
-  const router = new LlmRouter(routerConfig([model()]), client); // no timeoutMs = uses default
-  // Router must expose defaultTimeoutMs or we check it via a config getter
+  // Pass config without timeoutMs — must NOT use the routerConfig() helper (which sets 5000)
+  const router = new LlmRouter({ models: [model()] }, client);
   assert.ok(
     typeof router.timeoutMs === 'number' && router.timeoutMs === 30_000,
     `default timeoutMs should be 30000, got: ${router.timeoutMs}`,
