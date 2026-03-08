@@ -20,6 +20,89 @@
 
 ---
 
+## Definition of Done — All Phases
+
+### Phase 0: Foundation (Schema + Types + Scoring)
+- [ ] Migrations 001–005 applied to `shadow` database, all reversible
+- [ ] `memories` table has: `confidence`, `confidence_decay_rate`, `last_verified_at`, `is_timeless`, `source`, `source_id`, `relevance_tier`
+- [ ] `documents` table exists with indexes on `source`, `source_id`, `date`, `parties`
+- [ ] `pattern_events` table exists with indexes on `type`, `detected_at`, `unresolved`
+- [ ] `ingestion_runs` audit table exists
+- [ ] Existing timeless records (`rule`, `directive`, `playbook`, system categories) have `is_timeless=TRUE`
+- [ ] Existing contacts/dossiers have `confidence_decay_rate=0.0039` (half-life 180d)
+- [ ] `computeRecordConfidence()` passes all unit tests
+- [ ] `assignRelevanceTier()` passes all unit tests
+- [ ] `computeFinalScore()` passes all unit tests
+- [ ] `resolveDecayProfile()` passes all unit tests
+- [ ] `filterByTier()` passes all unit tests — timeless records always included
+- [ ] Tier/confidence weights applied in `memory_search` results (not just stored)
+- [ ] DB backup taken before and after migrations
+- [ ] All migrations committed, all test files committed
+
+### Phase 1: Gmail Ingestion
+- [ ] `gog` CLI can fetch emails + attachments for last 365 days
+- [ ] `extractGmailContent()` strips HTML, quoted replies, footers — passes unit tests
+- [ ] `passesEntityFilter()` correctly identifies emails with named entities — passes unit tests (≥5 true, ≥5 false fixtures)
+- [ ] `scoreInterestingness()` returns 0–10 float, uses local LLM, mocked in tests
+- [ ] `chunkDocument()` produces ≤400-token chunks with 100-token overlap — passes unit tests
+- [ ] `resolveParties()` fuzzy-matches against existing ShadowDB contacts — passes unit tests
+- [ ] Full backfill run: last 365 days ingested, interestingness ≥6 kept
+- [ ] Ingestion is idempotent — re-running produces zero duplicates (keyed on gmail message id)
+- [ ] Each ingested email creates: 1 `documents` row + N `memories` chunk rows
+- [ ] Party names linked to existing contact records where matched
+- [ ] `ingestion_runs` audit row written for every run (started, finished, counts, status)
+- [ ] Ongoing cron: every 6 hours, new mail only
+- [ ] Integration test: ingest 5 fixture emails, verify DB state
+
+### Phase 2: PDF / Contract Ingestion
+- [ ] `extractPdfContent()` extracts text from PDF preserving section structure — passes unit tests with 3 fixture PDFs
+- [ ] `extractContractTerms()` identifies parties, dates, dollar values, obligation verbs — passes unit tests
+- [ ] Folder watcher configured for `~/Documents/Contracts/` (and user-configured paths)
+- [ ] Contracts scored at threshold ≥7 (higher bar than email)
+- [ ] Section-aware chunking: splits at headers/page boundaries
+- [ ] Idempotent: re-processing same file produces zero duplicates (keyed on file path hash)
+- [ ] Integration test: ingest 2 fixture contracts, verify DB state
+
+### Phase 3: Cross-Reference + Pattern Detection
+- [ ] `crossReferenceDocument()` runs on every new ingest — passes integration test
+- [ ] `classifyPassageRelationship()` correctly classifies contradiction vs confirmation vs drift — passes unit tests with 6 fixture pairs
+- [ ] `generateIntelligenceBrief()` produces structured brief from unresolved `pattern_events` — passes unit test
+- [ ] Pattern events stored in `pattern_events` table with correct type, confidence, record_ids
+- [ ] High-confidence patterns (≥0.80) trigger immediate SMS alert to James
+- [ ] Weekly cron: surface top 5 unresolved patterns as intelligence brief
+- [ ] Pattern types covered: `contradiction`, `relationship_graph`, `temporal_drift`, `recurring_term`
+- [ ] Integration test: ingest 2 related documents, verify pattern detected and stored
+
+### Phase 4: LinkedIn Ingestion
+- [ ] Browser scrape extracts LinkedIn messages from last 90 days
+- [ ] Message threads preserved as single units (not chunked mid-thread)
+- [ ] Entity filter + interestingness score applied (threshold ≥6)
+- [ ] Idempotent: keyed on thread URL + timestamp
+- [ ] Periodic cron: weekly scrape
+- [ ] Integration test: scrape fixture HTML, verify DB state
+
+### Phase 5: Intelligence Brief Cron
+- [ ] Weekly cron generates brief covering: new patterns, stale important contacts, temporal drift alerts
+- [ ] Brief delivered via SMS (OpenClaw message tool)
+- [ ] Brief includes: pattern type, confidence, which documents involved, one-line summary
+- [ ] "Resolved" flow: James can dismiss a pattern (sets `resolved_at`)
+- [ ] Dismissed patterns excluded from future briefs
+- [ ] Integration test: seed 3 pattern events, generate brief, verify format
+
+---
+
+## Cross-Cutting Definition of Done (All Phases)
+- [ ] Every module: test file written before implementation file
+- [ ] Every function in public API: JSDoc contract comment present
+- [ ] No `any` in TypeScript — strict mode throughout
+- [ ] Every migration: reversible (UP + DOWN)
+- [ ] Every commit: after corresponding tests pass
+- [ ] No phase ships without DB backup taken first
+- [ ] Graceful degradation: ingestion failure never crashes OpenClaw
+- [ ] All external API calls (Gmail, LLM scorer) mockable via dependency injection
+
+---
+
 ## Architecture Overview
 
 ```
