@@ -1,8 +1,8 @@
 # ShadowDB Intelligence Initiative — Implementation Roadmap
 
 **Created:** 2026-03-07
-**Last updated:** 2026-03-07 23:20 CST
-**Status:** Phase 1 complete · Phase 2–5 planned
+**Last updated:** 2026-03-08 00:45 CST
+**Status:** Phase 1 complete · Phase 4 in progress · Phase 2–3–5 planned
 
 ---
 
@@ -93,11 +93,15 @@ interface MessageFetcher {
 
 Implementations: `GmailFetcher` (gog CLI), `IMessageFetcher` (imsg CLI). Runner is fully source-agnostic.
 
-### Entry Points
+### Entry Points & Execution Model
 
 - `scripts/ingest.mjs` — CLI: `node scripts/ingest.mjs --source all|gmail|imsg [--dry-run] [--limit N]`
 - `scripts/preview-ingest.mjs` — Live preview: shows VETO/DROP/KEEP per message with LLM scores
-- OpenClaw cron: daily 6am CST, `--source all --limit 200`
+- OpenClaw cron (`f03618f3`): daily 6am CST, wraps `ingest.mjs --source all --limit 200`
+
+**Execution principle:** Scripts are pure execution — CLI-accessible, no OC dependency, callable by anything.
+OC cron jobs wrap them with scheduling, context, and access. Browser-dependent sources (LinkedIn) run
+as OC agent jobs directly since `exec` isn't enough — OC owns all browser execution.
 
 ### Config (openclaw.plugin.json → ingestion)
 
@@ -347,13 +351,12 @@ export class LinkedInFetcher implements MessageFetcher {
 ### Definition of Done
 - [x] Phase 4 TDD spec written in INTELLIGENCE_ROADMAP.md
 - [x] `phase4-fetcher-linkedin.test.mjs` written — 28 tests, all GREEN (commit 502006a)
-- [x] `phase4-fetcher-linkedin.ts` implemented — `parseThreadList`, `parseThreadMessages`, `threadToExtractedContent`, `LinkedInFetcher`, `parseLinkedInTimestamp`
+- [x] `phase4-fetcher-linkedin.ts` implemented — `parseThreadList`, `parseThreadMessages`, `threadToExtractedContent`, `LinkedInFetcher`, `parseLinkedInTimestamp`, `LinkedInEvasionConfig`
 - [x] Real LinkedIn DOM selectors verified against live page 2026-03-08
-- [ ] Wire real `BrowserClient` implementation using OC browser tool ← NEXT
-  - LinkedIn ingestion runs as an OC agent job (OC manages all browser execution)
-  - `BrowserClient` production impl = thin wrappers around OC `browser` tool calls
-  - NOT wired into `ingest.mjs` — that script is for CLI/cron sources only
-- [ ] Register OC cron job for LinkedIn ingestion (calls agent, agent uses browser tool)
+- [x] Evasion interface specced — jitter (implemented), mouse sim / human scroll / randomize order / session batch limit (stubs, not yet needed)
+- [x] Execution model settled — LinkedIn is OC agent job, NOT wired into `ingest.mjs` (commit 3cd8c87)
+- [ ] Wire `BrowserClient` production impl using OC `browser` tool calls ← NEXT
+- [ ] Register OC cron job for LinkedIn ingestion (agent job, uses browser tool directly)
 - [ ] Smoke test: run OC agent job against live LinkedIn inbox
 
 ---
@@ -804,11 +807,11 @@ Every contact dossier carries a version: `v[methodology]:[source_bitmask]`
 | Arch — Tier wiring (scoring + signals) | ✅ Complete | 11 | `ee0c221` |
 | Arch — DataSource\<T\> + runner | ✅ Complete | 23 | `5cc3312` |
 | 3 — Contact Re-Scoring (foundation) | ✅ Complete | 19 | `6d3516d` |
+| 4 — LinkedIn (parsing + evasion spec) | 🟡 In progress | 28 | `3cd8c87` |
 | 2 — PDF/Contract | 🔲 Planned | — | — |
-| 3 — Contact Re-Scoring (full) | 🔲 In progress | — | — |
-| 4 — LinkedIn | 🟡 In progress | 28 | `502006a` |
+| 3 — Contact Re-Scoring (full) | 🔲 Planned | — | — |
 | 5 — Network Intelligence | 🔲 Planned | — | — |
 
 **Total test count:** 567/567 passing, zero RED, zero TS errors
 **Repo:** `git@github.com:jamesdwilson/Sh4d0wDB.git`
-**HEAD:** `502006a`
+**HEAD:** `3cd8c87`
