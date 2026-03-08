@@ -108,10 +108,14 @@ VP of Investments
 // Mock BrowserClient
 // ============================================================================
 
-function mockBrowser({ ambryUrl = 'https://www.linkedin.com/ambry/?x-li-ambry-ep=ABC123&x-ambry-um-filename=Profile.pdf', navigateShouldThrow = false } = {}) {
+function mockBrowser({ ambryUrl = 'https://www.linkedin.com/ambry/?x-li-ambry-ep=ABC123&x-ambry-um-filename=Profile.pdf', navigateShouldThrow = false, pdfFixtureText = FIXTURE_PDF_TEXT } = {}) {
   let currentUrl = '';
-  let interceptorScript = null;
   const calls = [];
+  let evalCallCount = 0;
+
+  // Encode fixture PDF text as fake base64 so the fetcher can decode it
+  // (pdfToText mock receives the bytes and returns the text directly)
+  const fakePdfBase64 = Buffer.from(pdfFixtureText).toString('base64');
 
   return {
     browser: {
@@ -122,11 +126,14 @@ function mockBrowser({ ambryUrl = 'https://www.linkedin.com/ambry/?x-li-ambry-ep
       },
       async getCurrentUrl() { return currentUrl; },
       async waitForSelector() {},
-      // evaluateWithResult: runs JS, returns result — key method for interceptor + click
-      async evaluateWithResult(fn) {
+      async evaluateWithResult(_fn) {
         calls.push({ action: 'evaluate' });
-        // Simulate: intercept fires → returns ambryUrl
-        return ambryUrl;
+        evalCallCount++;
+        // Call 1: intercept + click → returns ambryUrl (or '' to simulate timeout)
+        if (evalCallCount === 1) return ambryUrl;
+        // Call 2: fetch PDF → returns base64-encoded PDF bytes
+        if (evalCallCount === 2) return ambryUrl ? fakePdfBase64 : '';
+        return '';
       },
     },
     calls,
@@ -134,9 +141,14 @@ function mockBrowser({ ambryUrl = 'https://www.linkedin.com/ambry/?x-li-ambry-ep
   };
 }
 
-// Mock pdfToText — returns fixture text directly, no subprocess
+// Mock pdfToText that decodes our fake base64 back to the fixture text
+// (since we base64-encoded the text string as the "PDF bytes")
 function mockPdfToText(text) {
-  return async (_bytes) => text;
+  return async (bytes) => {
+    // The mock browser returns base64(fixtureText), which gets decoded to bytes of the text
+    // So bytes here is actually the UTF-8 of the fixture text
+    return Buffer.from(bytes).toString('utf8');
+  };
 }
 
 // ============================================================================

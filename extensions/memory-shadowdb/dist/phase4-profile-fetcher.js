@@ -1,272 +1,508 @@
 /**
- * phase4-profile-fetcher.ts — LinkedInProfileFetcher
+ * phase4-profile-fetcher.ts — LinkedInProfileFetcher (PDF intercept strategy)
  *
- * Navigates a single LinkedIn contact profile using 3 separate URL fetches:
- *   1. /in/<username>/                    — name, headline, location, about
- *   2. /in/<username>/details/experience/ — job history
- *   3. /in/<username>/details/education/  — education history
+ * Fetches a LinkedIn contact profile by intercepting the "Save to PDF" flow
+ * rather than scraping DOM HTML. LinkedIn generates a clean, structured PDF
+ * server-side — name, summary, all experience, all education, skills — with
+ * no noise, no truncation, no "see all experience" pagination.
  *
- * Why 3 URLs instead of 1:
- *   - The main profile page uses a SPA that sometimes redirects (verified live)
- *   - The /details/ sub-pages are stable, fully rendered, and don't redirect
- *   - Each /details/ page is a clean list — no need to find sections by anchor ID
+ * Verified against live LinkedIn DOM 2026-03-08:
+ *   - "More actions" button: [aria-label="More actions"][role="button"] (top card)
+ *   - "Save to PDF" item:    [aria-label="Save to PDF"][role="button"]
+ *   - On click: fires XHR to /voyager/api/graphql?action=execute&queryId=voyagerIdentityDash...
+ *   - LinkedIn responds with a signed Ambry CDN URL:
+ *       https://www.linkedin.com/ambry/?x-li-ambry-ep=...&x-ambry-um-filename=Profile.pdf
+ *   - We intercept that URL, fetch() the PDF bytes, run pdftotext, parse the text
  *
- * Noise filtering:
- *   LinkedIn's /details/ pages append "People also viewed" entries at the bottom.
- *   These look like: ["Sundar Pichai", "· 3rd", "CEO at Google"]
- *   Filtered by: experience items must have 2+ texts AND first text must not
- *   contain "·" (connection degree marker). Education filtered the same way.
+ * PDF text format (verified from real download):
+ *   Left sidebar: Contact, Top Skills, Languages, Honors-Awards (ignored for now)
+ *   Main column:
+ *     <name>
+ *     <headline>
+ *     <location>
+ *     Summary
+ *     <about text>
+ *     Experience
+ *     <company>
+ *     <title>
+ *     <blank line>
+ *     <dates (duration)>
+ *     <location>
+ *     <description>
+ *     ...repeated per role...
+ *     Education
+ *     <school>
+ *     <degree, field>
+ *     <blank line>
+ *     <years>
  *
- * Pure parsing functions are exported separately for unit testing:
- *   extractExperienceItems(html)   → LinkedInExperience[]
- *   extractEducationItems(html)    → LinkedInEducation[]
+ * parsePdfText() is exported for unit testing — pure function, no I/O.
  *
- * BrowserClient is injected — production uses OC browser, tests use mock HTML.
+ * BrowserClient and pdfToText are injected — production uses OC browser + execa;
+ * tests inject mocks.
  *
  * See: ARCHITECTURE.md § 8, phase4-profile-linkedin.ts
  */
-import { parse } from "node-html-parser";
-import { profileToExtractedContent, } from "./phase4-profile-linkedin.js";
+import { profileToExtractedContent } from "./phase4-profile-linkedin.js";
 // ============================================================================
-// Pure parsing — exported for unit tests
+// PDF text parser — pure function, exported for unit tests
 // ============================================================================
 /**
- * Parse experience items from /details/experience/ page HTML.
+ * Parse LinkedIn PDF text (from pdftotext -layout output) into a LinkedInProfile.
  *
- * Each li.artdeco-list__item contains span[aria-hidden="true"] nodes in order:
- *   [0] = job title (e.g. "VP of Investments")
- *   [1] = company name (e.g. "Acme Capital")
- *   [2] = date range (e.g. "Jan 2022 - Present · 3 yrs")
+ * The PDF has a left sidebar (Contact/Skills/etc.) and a main column.
+ * pdftotext without -layout interleaves them, but the pattern is consistent:
+ *   - Name appears near the top as a standalone line after sidebar content
+ *   - "Summary", "Experience", "Education" are section headers
+ *   - Experience blocks: company line, title line, blank, dates line, [location], description
+ *   - Education blocks: school line, degree/field line, blank, years line
  *
- * Noise entries (People also viewed): first text contains "·" or only 1 text.
- * Filtered out.
- *
- * Never throws. Returns [] on parse failure.
+ * Returns null on empty input or unparseable content. Never throws.
  */
-export function extractExperienceItems(html) {
-    const items = [];
+export function parsePdfText(text, username) {
+    if (!text?.trim())
+        return null;
     try {
-        const root = parse(html);
-        for (const li of root.querySelectorAll("li.artdeco-list__item")) {
-            try {
-                const texts = li
-                    .querySelectorAll('span[aria-hidden="true"]')
-                    .map(s => s.textContent.trim())
-                    .filter(t => t.length > 0);
-                // Need at least title + company (2 texts)
-                if (texts.length < 2)
-                    continue;
-                // Noise filter: connection degree markers ("· 3rd", "· 3rd+")
-                // appear as the second text in noise entries, or first text has "·"
-                if (texts[0].includes("·") || texts[1]?.startsWith("·"))
-                    continue;
-                const title = texts[0];
-                const company = texts[1];
-                const datesRaw = texts[2] ?? "";
-                // Parse "Jan 2022 - Present · 3 yrs" → startDate / endDate
-                const datePart = datesRaw.split("·")[0].trim();
-                const [startDate, endDate] = datePart
-                    .split(/\s*[-–]\s*/)
-                    .map(s => s.trim())
-                    .filter(Boolean);
-                items.push({ title, company, startDate, endDate });
-            }
-            catch {
-                // Skip malformed items
-            }
-        }
-    }
-    catch {
-        // Return whatever was collected
-    }
-    return items;
-}
-/**
- * Parse education items from /details/education/ page HTML.
- *
- * Each li.artdeco-list__item texts in order:
- *   [0] = school name
- *   [1] = degree/field (optional) or year range
- *   [2] = year range (optional)
- *
- * Noise entries filtered the same way as experience.
- * Never throws.
- */
-export function extractEducationItems(html) {
-    const items = [];
-    try {
-        const root = parse(html);
-        for (const li of root.querySelectorAll("li.artdeco-list__item")) {
-            try {
-                const texts = li
-                    .querySelectorAll('span[aria-hidden="true"]')
-                    .map(s => s.textContent.trim())
-                    .filter(t => t.length > 0);
-                if (texts.length < 1)
-                    continue;
-                // Noise filter: connection degree marker in second position
-                if (texts[0].includes("·") || texts[1]?.startsWith("·"))
-                    continue;
-                const school = texts[0];
-                // Determine if texts[1] is a degree/field or a year range
-                let degree;
-                let field;
-                let startYear;
-                let endYear;
-                if (texts[1]) {
-                    const yearMatch = texts[1].match(/^(\d{4})\s*[-–]\s*(\d{4})$/);
-                    if (yearMatch) {
-                        startYear = parseInt(yearMatch[1], 10);
-                        endYear = parseInt(yearMatch[2], 10);
-                    }
-                    else {
-                        // It's a degree/field — parse "MBA, Finance"
-                        const [deg, fld] = texts[1].split(",").map(s => s.trim());
-                        degree = deg || undefined;
-                        field = fld || undefined;
+        const lines = text
+            .split("\n")
+            .map(l => l.trim())
+            .filter((l, i, arr) => {
+            // Collapse runs of blank lines to at most one
+            if (l === "")
+                return i === 0 || arr[i - 1] !== "";
+            return true;
+        });
+        // ---- Locate section boundaries ----
+        const summaryIdx = lines.findIndex(l => l === "Summary");
+        const experienceIdx = lines.findIndex(l => l === "Experience");
+        const educationIdx = lines.findIndex(l => l === "Education");
+        const skillsIdx = lines.findIndex(l => l === "Skills");
+        // ---- Extract name + headline + location ----
+        // They appear before "Summary" in the main column.
+        // The sidebar content (Contact, Top Skills, etc.) comes first.
+        // Strategy: look for the first non-empty line that appears after the
+        // sidebar markers have all been seen but before "Summary".
+        // Simpler heuristic: name is the longest line before "Summary" that
+        // doesn't contain common sidebar keywords.
+        // Sidebar content appears before the name in pdftotext output.
+        // We skip all lines until we've passed the sidebar block.
+        // Sidebar ends at the first blank line AFTER a sidebar header has been seen.
+        // More reliable: look at the block after "Honors-Awards" or the last
+        // sidebar keyword, then scan for the name there.
+        // Simplest heuristic that works: name is the first line after "Summary" that
+        // does NOT contain pipe, colon, @, http, or "Page" — we find it in the lines
+        // just BEFORE "Summary" but AFTER the blank line that follows sidebar.
+        // Strategy: find last sidebar header, then look for name after it.
+        const SIDEBAR_HEADERS = new Set(["Contact", "Top Skills", "Languages", "Honors-Awards", "Certifications"]);
+        const SIDEBAR_NOISE = /^(www\.|http|linkedin\.com|Page \d|•|\(LinkedIn\)|\(Company\))/i;
+        const INLINE_NOISE = /[@|]/; // email or headline markers
+        // Find the index of the LAST blank line before "Summary" that follows a sidebar header.
+        // The name appears immediately after the last sidebar section ends (blank line transition).
+        const searchEnd = summaryIdx > 0 ? summaryIdx : lines.length;
+        // Collect original (unfiltered) lines up to Summary to find the blank line transition
+        const rawPreLines = lines.slice(0, searchEnd);
+        // Find last sidebar header position (in rawPreLines)
+        let lastSidebarEnd = 0;
+        for (let i = 0; i < rawPreLines.length; i++) {
+            if (SIDEBAR_HEADERS.has(rawPreLines[i])) {
+                // Sidebar section ends at the next blank line after this header
+                for (let j = i + 1; j < rawPreLines.length; j++) {
+                    if (rawPreLines[j] === "") {
+                        lastSidebarEnd = j;
+                        break;
                     }
                 }
-                if (texts[2]) {
-                    const yearMatch = texts[2].match(/(\d{4})\s*[-–]\s*(\d{4})/);
-                    if (yearMatch) {
-                        startYear = parseInt(yearMatch[1], 10);
-                        endYear = parseInt(yearMatch[2], 10);
-                    }
-                }
-                items.push({ school, degree, field, startYear, endYear });
-            }
-            catch {
-                // Skip
             }
         }
-    }
-    catch {
-        // Return whatever was collected
-    }
-    return items;
-}
-/**
- * Extract name, headline, location, and about from the main profile page.
- * Returns null if no name found.
- */
-function extractMainPageData(html, username) {
-    try {
-        const root = parse(html);
-        const fullName = root.querySelector("h1")?.textContent?.trim() ?? "";
-        if (!fullName)
-            return null;
-        const headline = root.querySelector(".text-body-medium.break-words")?.textContent?.trim();
-        const location = root
-            .querySelector(".text-body-small.inline.t-black--light.break-words")
-            ?.textContent?.trim();
-        // About: first span[aria-hidden="true"] with >10 chars under #about section
-        const aboutSection = root.querySelector("#about")?.closest("section");
-        let about;
-        if (aboutSection) {
-            for (const span of aboutSection.querySelectorAll('span[aria-hidden="true"]')) {
-                const text = span.textContent?.trim() ?? "";
-                if (text.length > 10 && text !== "About") {
-                    about = text;
+        // Name search starts after the last sidebar section's trailing blank
+        const nameSearchStart = lastSidebarEnd > 0 ? lastSidebarEnd + 1 : 0;
+        const preSection = rawPreLines.slice(nameSearchStart);
+        const mainLines = preSection.filter(l => l.length > 0 && !SIDEBAR_NOISE.test(l));
+        // Name: first line that looks like a person name —
+        //   2-4 words, all Title Case, no pipes/@ or numeric, not a known sidebar word,
+        //   not a skill/award phrase (those are often 2 words too, but contain non-name words)
+        // We also require it does NOT match headline patterns (contains |, "at ", "for ", etc.)
+        const HEADLINE_MARKERS = /\bat\b|\bfor\b|\|/i;
+        let fullName = "";
+        let nameIdx = -1;
+        for (let i = 0; i < mainLines.length; i++) {
+            const l = mainLines[i];
+            if (INLINE_NOISE.test(l))
+                continue;
+            if (HEADLINE_MARKERS.test(l))
+                continue;
+            if (SIDEBAR_HEADERS.has(l))
+                continue;
+            if (l.length > 60)
+                continue;
+            // Must be 2-4 space-separated tokens, each starting with a capital letter
+            const tokens = l.split(" ");
+            if (tokens.length < 2 || tokens.length > 5)
+                continue;
+            // Each token must start with uppercase and be mostly alpha (allow periods for initials)
+            if (tokens.every(t => /^[A-Z][a-zA-Z.'"-]*$/.test(t))) {
+                fullName = l;
+                nameIdx = i;
+                break;
+            }
+        }
+        if (!fullName) {
+            // Fallback: first non-sidebar, non-noise line with a space, under 60 chars
+            for (const l of mainLines) {
+                if (l.includes(" ") && l.length < 60 && !INLINE_NOISE.test(l)) {
+                    fullName = l;
                     break;
                 }
             }
+        }
+        if (!fullName)
+            return null;
+        // Headline: line immediately after name in mainLines (often contains | or role keywords)
+        const headline = nameIdx >= 0 && nameIdx + 1 < mainLines.length
+            ? mainLines[nameIdx + 1]
+            : undefined;
+        // Location: line that matches "City, State, Country" pattern
+        const locationLine = mainLines.find(l => /^[A-Z][a-zA-Z\s]+,\s*[A-Z][a-zA-Z\s]+,\s*[A-Z][a-zA-Z\s]+$/.test(l));
+        // ---- About / Summary ----
+        let about;
+        if (summaryIdx >= 0) {
+            const endIdx = experienceIdx > summaryIdx ? experienceIdx : lines.length;
+            const summaryLines = lines
+                .slice(summaryIdx + 1, endIdx)
+                .filter(l => l.length > 0 && !/^Page \d/.test(l));
+            if (summaryLines.length > 0)
+                about = summaryLines.join(" ");
+        }
+        // ---- Experience ----
+        const experience = [];
+        if (experienceIdx >= 0) {
+            const endIdx = educationIdx > experienceIdx ? educationIdx
+                : skillsIdx > experienceIdx ? skillsIdx
+                    : lines.length;
+            const expLines = lines.slice(experienceIdx + 1, endIdx);
+            experience.push(...parseExperienceBlocks(expLines));
+        }
+        // ---- Education ----
+        const education = [];
+        if (educationIdx >= 0) {
+            const endIdx = skillsIdx > educationIdx ? skillsIdx : lines.length;
+            const eduLines = lines.slice(educationIdx + 1, endIdx);
+            education.push(...parseEducationBlocks(eduLines));
         }
         return {
             username,
             url: `https://www.linkedin.com/in/${username}/`,
             fullName,
             headline,
-            location,
+            location: locationLine,
             about,
+            experience,
+            education,
+            skills: [],
+            mutualConnectionCount: undefined,
+            sharedConnections: [],
+            recommendations: [],
+            fetchedAt: new Date(),
         };
     }
     catch {
         return null;
     }
 }
-// ============================================================================
-// LinkedInProfileFetcher
-// ============================================================================
 /**
- * Fetches a single LinkedIn contact profile using 3 page loads.
+ * Parse experience blocks from the lines between "Experience" and "Education".
+ *
+ * Pattern per role:
+ *   Company Name
+ *   Job Title
+ *   [blank]
+ *   Month Year - Month Year (Duration)   ← or "Year - Year"
+ *   [Location]
+ *   [Description lines...]
+ *   [Page N of M — skip]
+ *
+ * Heuristic: dates line matches /\d{4}/ and contains " - " or "–" or "Present".
+ */
+function parseExperienceBlocks(lines) {
+    const items = [];
+    const DATE_PATTERN = /\d{4}.*[-–].*(Present|\d{4})/i;
+    const PAGE_PATTERN = /^Page \d+ of \d+/;
+    let i = 0;
+    while (i < lines.length) {
+        // Skip blanks and page markers
+        if (!lines[i] || PAGE_PATTERN.test(lines[i])) {
+            i++;
+            continue;
+        }
+        const company = lines[i];
+        i++;
+        // Skip blanks
+        while (i < lines.length && !lines[i])
+            i++;
+        if (i >= lines.length)
+            break;
+        const title = lines[i];
+        i++;
+        // Skip blanks
+        while (i < lines.length && !lines[i])
+            i++;
+        if (i >= lines.length) {
+            if (company && title)
+                items.push({ title, company });
+            break;
+        }
+        // Find dates line
+        let datesRaw = "";
+        if (DATE_PATTERN.test(lines[i])) {
+            datesRaw = lines[i];
+            i++;
+        }
+        // Skip description until next company (heuristic: next non-blank line that
+        // is short, capitalized, and not a date — treat as next company)
+        while (i < lines.length && !isLikelyCompanyLine(lines[i], DATE_PATTERN, PAGE_PATTERN)) {
+            i++;
+        }
+        if (!company || !title)
+            continue;
+        // Filter out sidebar / noise blocks (e.g. company is "Page 1 of 7")
+        if (PAGE_PATTERN.test(company))
+            continue;
+        const { startDate, endDate } = parseDates(datesRaw);
+        items.push({ title, company, startDate, endDate });
+    }
+    return items;
+}
+function isLikelyCompanyLine(line, datePattern, pagePattern) {
+    if (!line)
+        return false;
+    if (pagePattern.test(line))
+        return false;
+    if (datePattern.test(line))
+        return false;
+    // Company lines are typically short, start with capital, no bullet points
+    if (line.startsWith("•") || line.startsWith("-"))
+        return false;
+    if (line.length > 80)
+        return false;
+    return /^[A-Z]/.test(line);
+}
+function parseEducationBlocks(lines) {
+    const items = [];
+    const PAGE_PATTERN = /^Page \d+ of \d+/;
+    const YEAR_PATTERN = /^\d{4}\s*[-–]\s*\d{4}$/;
+    let i = 0;
+    while (i < lines.length) {
+        if (!lines[i] || PAGE_PATTERN.test(lines[i])) {
+            i++;
+            continue;
+        }
+        const school = lines[i];
+        i++;
+        // Skip blanks
+        while (i < lines.length && !lines[i])
+            i++;
+        if (i >= lines.length) {
+            if (school)
+                items.push({ school });
+            break;
+        }
+        // Degree/field line or year line
+        let degree;
+        let field;
+        let startYear;
+        let endYear;
+        if (YEAR_PATTERN.test(lines[i])) {
+            // Directly years — no degree info
+            const [sy, ey] = lines[i].split(/\s*[-–]\s*/);
+            startYear = parseInt(sy, 10);
+            endYear = parseInt(ey, 10);
+            i++;
+        }
+        else {
+            // Degree/field line: "MBA, Finance" or "BA, Economics"
+            const [deg, fld] = lines[i].split(",").map(s => s.trim());
+            degree = deg || undefined;
+            field = fld || undefined;
+            i++;
+            // Skip blanks
+            while (i < lines.length && !lines[i])
+                i++;
+            // Year line
+            if (i < lines.length && YEAR_PATTERN.test(lines[i])) {
+                const [sy, ey] = lines[i].split(/\s*[-–]\s*/);
+                startYear = parseInt(sy, 10);
+                endYear = parseInt(ey, 10);
+                i++;
+            }
+        }
+        // Skip to next school
+        while (i < lines.length && lines[i] && !/^[A-Z]/.test(lines[i]))
+            i++;
+        if (!school || PAGE_PATTERN.test(school))
+            continue;
+        items.push({ school, degree, field, startYear, endYear });
+    }
+    return items;
+}
+function parseDates(raw) {
+    if (!raw)
+        return {};
+    // "January 2022 - Present (3 years 2 months)" → "January 2022", "Present"
+    const datePart = raw.replace(/\(.*\)/, "").trim();
+    const [start, end] = datePart.split(/\s*[-–]\s*/);
+    return {
+        startDate: start?.trim() || undefined,
+        endDate: end?.trim() || undefined,
+    };
+}
+// ============================================================================
+// LinkedInProfileFetcher — PDF intercept
+// ============================================================================
+/** Default pdfToText using pdftotext subprocess */
+async function defaultPdfToText(pdfBytes) {
+    const { execFile } = await import("child_process");
+    const { promisify } = await import("util");
+    const { writeFileSync, unlinkSync } = await import("fs");
+    const { tmpdir } = await import("os");
+    const { join } = await import("path");
+    const execFileAsync = promisify(execFile);
+    const tmpPath = join(tmpdir(), `li-profile-${Date.now()}.pdf`);
+    try {
+        writeFileSync(tmpPath, pdfBytes);
+        const { stdout } = await execFileAsync("pdftotext", [tmpPath, "-"]);
+        return stdout;
+    }
+    finally {
+        try {
+            unlinkSync(tmpPath);
+        }
+        catch { }
+    }
+}
+/**
+ * JS to inject into the page that:
+ *  1. Intercepts XHR.open to capture the Ambry URL (linkedin.com/ambry)
+ *  2. Clicks the "More actions" button (if menu not already open)
+ *  3. Clicks "Save to PDF" div
+ *  4. Waits up to {timeoutMs}ms for the Ambry URL
+ *  5. Returns the URL or "" on timeout
+ */
+function buildInterceptScript(timeoutMs) {
+    return `
+    new Promise((resolve) => {
+      let ambryUrl = '';
+      const origOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function(method, url) {
+        if (typeof url === 'string' && url.includes('ambry') && url.includes('Profile.pdf')) {
+          ambryUrl = url;
+        }
+        return origOpen.apply(this, arguments);
+      };
+
+      // Also intercept fetch (LinkedIn may use either)
+      const origFetch = window.fetch;
+      window.fetch = function(...args) {
+        const url = typeof args[0] === 'string' ? args[0] : args[0]?.url ?? '';
+        if (url.includes('ambry') && url.includes('Profile.pdf')) ambryUrl = url;
+        return origFetch.apply(this, args);
+      };
+
+      // Click More actions → Save to PDF
+      const moreBtn = document.querySelector('[aria-label="More actions"][role="button"]')
+                   ?? document.querySelector('button[aria-label="More actions"]');
+      if (moreBtn) moreBtn.click();
+
+      setTimeout(() => {
+        const pdfBtn = document.querySelector('[aria-label="Save to PDF"][role="button"]');
+        if (pdfBtn) pdfBtn.click();
+      }, 400);
+
+      // Poll for the ambry URL
+      const start = Date.now();
+      const iv = setInterval(() => {
+        if (ambryUrl) {
+          clearInterval(iv);
+          XMLHttpRequest.prototype.open = origOpen;
+          window.fetch = origFetch;
+          resolve(ambryUrl);
+        } else if (Date.now() - start > ${timeoutMs}) {
+          clearInterval(iv);
+          XMLHttpRequest.prototype.open = origOpen;
+          window.fetch = origFetch;
+          resolve('');
+        }
+      }, 200);
+    })
+  `;
+}
+/**
+ * Fetches a single LinkedIn contact profile using the PDF intercept strategy.
+ *
+ * Per-contact cost: 1 navigation + 1 JS evaluation + 1 fetch (PDF download)
+ * vs the old approach: 3 navigations + HTML parsing.
  *
  * Usage:
  *   const fetcher = new LinkedInProfileFetcher(browser, { delayMs: 0 });
  *   const content = await fetcher.fetchProfile('alice-example');
  *
- * Production: inject real OC BrowserClient (CDP or OC browser tool)
- * Tests: inject mock returning fixture HTML
+ * Production: inject real OC BrowserClient with evaluateWithResult()
+ * Tests: inject mock returning fixture ambry URL + mock pdfToText
  */
 export class LinkedInProfileFetcher {
     browser;
+    pdfToText;
+    ambryTimeoutMs;
     delayMs;
     selfName;
     constructor(browser, options = {}) {
         this.browser = browser;
+        this.pdfToText = options.pdfToText ?? defaultPdfToText;
+        this.ambryTimeoutMs = options.ambryTimeoutMs ?? 8_000;
         this.delayMs = options.delayMs ?? 1_500;
         this.selfName = options.selfName ?? "";
     }
-    /**
-     * Fetch a complete profile for a LinkedIn username.
-     *
-     * Navigates:
-     *   1. /in/<username>/                    → name/headline/location/about
-     *   2. /in/<username>/details/experience/ → job history
-     *   3. /in/<username>/details/education/  → education
-     *
-     * Returns ExtractedContent ready for the ingestion pipeline, or null on failure.
-     * Never throws.
-     */
     async fetchProfile(username) {
         try {
-            const base = `https://www.linkedin.com/in/${username}`;
-            // Page 1: main profile
-            await this.browser.navigate(`${base}/`);
-            await this.browser.waitForSelector("h1", 8_000).catch(() => { });
-            const mainHtml = await this.browser.getPageSource();
-            const mainData = extractMainPageData(mainHtml, username);
-            if (!mainData?.fullName)
+            await this.browser.navigate(`https://www.linkedin.com/in/${username}/`);
+            // Wait for the profile card to render
+            await this.browser.waitForSelector('[aria-label="More actions"]', 8_000).catch(() => { });
+            if (this.delayMs > 0) {
+                await new Promise(r => setTimeout(r, this.delayMs));
+            }
+            // Inject interceptor, click Save to PDF, await Ambry URL
+            const ambryUrl = await this.browser.evaluateWithResult(buildInterceptScript(this.ambryTimeoutMs));
+            if (!ambryUrl)
                 return null;
-            await this.jitter();
-            // Page 2: experience
-            await this.browser.navigate(`${base}/details/experience/`);
-            await this.browser.waitForSelector("li.artdeco-list__item", 6_000).catch(() => { });
-            const expHtml = await this.browser.getPageSource();
-            const experience = extractExperienceItems(expHtml);
-            await this.jitter();
-            // Page 3: education
-            await this.browser.navigate(`${base}/details/education/`);
-            await this.browser.waitForSelector("li.artdeco-list__item", 6_000).catch(() => { });
-            const eduHtml = await this.browser.getPageSource();
-            const education = extractEducationItems(eduHtml);
-            // Assemble full profile
-            const profile = {
-                username,
-                url: `${base}/`,
-                fullName: mainData.fullName,
-                headline: mainData.headline,
-                location: mainData.location,
-                about: mainData.about,
-                experience,
-                education,
-                skills: [],
-                mutualConnectionCount: undefined,
-                sharedConnections: [],
-                recommendations: [],
-                fetchedAt: new Date(),
-            };
-            return profileToExtractedContent(profile);
+            // Fetch the PDF bytes — cookies are shared since we're in the same browser context
+            // In the mock, evaluateWithResult already returned the URL; in production we
+            // need to fetch it from inside the page context to carry session cookies.
+            // We use a second evaluateWithResult that does the fetch + base64 encode.
+            const pdfBase64 = await this.browser.evaluateWithResult(`
+        fetch(${JSON.stringify(ambryUrl)}, { credentials: 'include' })
+          .then(r => r.arrayBuffer())
+          .then(buf => {
+            const bytes = new Uint8Array(buf);
+            let bin = '';
+            bytes.forEach(b => bin += String.fromCharCode(b));
+            return btoa(bin);
+          })
+          .catch(() => '')
+      `);
+            if (!pdfBase64)
+                return null;
+            const pdfBytes = Uint8Array.from(atob(pdfBase64), c => c.charCodeAt(0));
+            const pdfText = await this.pdfToText(pdfBytes);
+            if (!pdfText?.trim())
+                return null;
+            const profile = parsePdfText(pdfText, username);
+            if (!profile)
+                return null;
+            const content = profileToExtractedContent(profile);
+            return content;
         }
         catch {
             return null;
         }
-    }
-    async jitter() {
-        if (this.delayMs <= 0)
-            return;
-        // ±20% jitter — avoids perfectly uniform timing
-        const factor = 0.8 + Math.random() * 0.4;
-        await new Promise(r => setTimeout(r, Math.round(this.delayMs * factor)));
     }
 }
 //# sourceMappingURL=phase4-profile-fetcher.js.map

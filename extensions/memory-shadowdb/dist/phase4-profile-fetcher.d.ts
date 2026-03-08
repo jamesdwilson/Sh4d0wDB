@@ -1,91 +1,99 @@
 /**
- * phase4-profile-fetcher.ts — LinkedInProfileFetcher
+ * phase4-profile-fetcher.ts — LinkedInProfileFetcher (PDF intercept strategy)
  *
- * Navigates a single LinkedIn contact profile using 3 separate URL fetches:
- *   1. /in/<username>/                    — name, headline, location, about
- *   2. /in/<username>/details/experience/ — job history
- *   3. /in/<username>/details/education/  — education history
+ * Fetches a LinkedIn contact profile by intercepting the "Save to PDF" flow
+ * rather than scraping DOM HTML. LinkedIn generates a clean, structured PDF
+ * server-side — name, summary, all experience, all education, skills — with
+ * no noise, no truncation, no "see all experience" pagination.
  *
- * Why 3 URLs instead of 1:
- *   - The main profile page uses a SPA that sometimes redirects (verified live)
- *   - The /details/ sub-pages are stable, fully rendered, and don't redirect
- *   - Each /details/ page is a clean list — no need to find sections by anchor ID
+ * Verified against live LinkedIn DOM 2026-03-08:
+ *   - "More actions" button: [aria-label="More actions"][role="button"] (top card)
+ *   - "Save to PDF" item:    [aria-label="Save to PDF"][role="button"]
+ *   - On click: fires XHR to /voyager/api/graphql?action=execute&queryId=voyagerIdentityDash...
+ *   - LinkedIn responds with a signed Ambry CDN URL:
+ *       https://www.linkedin.com/ambry/?x-li-ambry-ep=...&x-ambry-um-filename=Profile.pdf
+ *   - We intercept that URL, fetch() the PDF bytes, run pdftotext, parse the text
  *
- * Noise filtering:
- *   LinkedIn's /details/ pages append "People also viewed" entries at the bottom.
- *   These look like: ["Sundar Pichai", "· 3rd", "CEO at Google"]
- *   Filtered by: experience items must have 2+ texts AND first text must not
- *   contain "·" (connection degree marker). Education filtered the same way.
+ * PDF text format (verified from real download):
+ *   Left sidebar: Contact, Top Skills, Languages, Honors-Awards (ignored for now)
+ *   Main column:
+ *     <name>
+ *     <headline>
+ *     <location>
+ *     Summary
+ *     <about text>
+ *     Experience
+ *     <company>
+ *     <title>
+ *     <blank line>
+ *     <dates (duration)>
+ *     <location>
+ *     <description>
+ *     ...repeated per role...
+ *     Education
+ *     <school>
+ *     <degree, field>
+ *     <blank line>
+ *     <years>
  *
- * Pure parsing functions are exported separately for unit testing:
- *   extractExperienceItems(html)   → LinkedInExperience[]
- *   extractEducationItems(html)    → LinkedInEducation[]
+ * parsePdfText() is exported for unit testing — pure function, no I/O.
  *
- * BrowserClient is injected — production uses OC browser, tests use mock HTML.
+ * BrowserClient and pdfToText are injected — production uses OC browser + execa;
+ * tests inject mocks.
  *
  * See: ARCHITECTURE.md § 8, phase4-profile-linkedin.ts
  */
-import type { BrowserClient } from "./phase4-fetcher-linkedin.js";
-import type { LinkedInExperience, LinkedInEducation } from "./phase4-profile-linkedin.js";
 import type { ExtractedContent } from "./phase1-gmail.js";
+import type { LinkedInProfile } from "./phase4-profile-linkedin.js";
+export interface ProfileBrowserClient {
+    navigate(url: string): Promise<void>;
+    getCurrentUrl(): Promise<string>;
+    waitForSelector(selector: string, timeoutMs?: number): Promise<void>;
+    /** Run JS in the page, return a string result. Used for intercept+click. */
+    evaluateWithResult(fn: string): Promise<string>;
+}
 export interface LinkedInProfileFetcherOptions {
-    /** Delay between the 3 sub-page fetches per contact. Default: 1500ms. */
+    /** Injected PDF-to-text function. Production uses pdftotext subprocess. */
+    pdfToText?: (pdfBytes: Uint8Array) => Promise<string>;
+    /** ms to wait for ambry URL after clicking Save to PDF. Default: 8000 */
+    ambryTimeoutMs?: number;
+    /** ms between navigate and click. Default: 1500 (set 0 in tests). */
     delayMs?: number;
-    /** Self name — used by extractEdgeSignals to avoid self-edges. Default: "". */
+    /** Self name — used by extractEdgeSignals to avoid self-edges. Default: "" */
     selfName?: string;
 }
 /**
- * Parse experience items from /details/experience/ page HTML.
+ * Parse LinkedIn PDF text (from pdftotext -layout output) into a LinkedInProfile.
  *
- * Each li.artdeco-list__item contains span[aria-hidden="true"] nodes in order:
- *   [0] = job title (e.g. "VP of Investments")
- *   [1] = company name (e.g. "Acme Capital")
- *   [2] = date range (e.g. "Jan 2022 - Present · 3 yrs")
+ * The PDF has a left sidebar (Contact/Skills/etc.) and a main column.
+ * pdftotext without -layout interleaves them, but the pattern is consistent:
+ *   - Name appears near the top as a standalone line after sidebar content
+ *   - "Summary", "Experience", "Education" are section headers
+ *   - Experience blocks: company line, title line, blank, dates line, [location], description
+ *   - Education blocks: school line, degree/field line, blank, years line
  *
- * Noise entries (People also viewed): first text contains "·" or only 1 text.
- * Filtered out.
- *
- * Never throws. Returns [] on parse failure.
+ * Returns null on empty input or unparseable content. Never throws.
  */
-export declare function extractExperienceItems(html: string): LinkedInExperience[];
+export declare function parsePdfText(text: string, username: string): LinkedInProfile | null;
 /**
- * Parse education items from /details/education/ page HTML.
+ * Fetches a single LinkedIn contact profile using the PDF intercept strategy.
  *
- * Each li.artdeco-list__item texts in order:
- *   [0] = school name
- *   [1] = degree/field (optional) or year range
- *   [2] = year range (optional)
- *
- * Noise entries filtered the same way as experience.
- * Never throws.
- */
-export declare function extractEducationItems(html: string): LinkedInEducation[];
-/**
- * Fetches a single LinkedIn contact profile using 3 page loads.
+ * Per-contact cost: 1 navigation + 1 JS evaluation + 1 fetch (PDF download)
+ * vs the old approach: 3 navigations + HTML parsing.
  *
  * Usage:
  *   const fetcher = new LinkedInProfileFetcher(browser, { delayMs: 0 });
  *   const content = await fetcher.fetchProfile('alice-example');
  *
- * Production: inject real OC BrowserClient (CDP or OC browser tool)
- * Tests: inject mock returning fixture HTML
+ * Production: inject real OC BrowserClient with evaluateWithResult()
+ * Tests: inject mock returning fixture ambry URL + mock pdfToText
  */
 export declare class LinkedInProfileFetcher {
     private readonly browser;
+    private readonly pdfToText;
+    private readonly ambryTimeoutMs;
     private readonly delayMs;
     private readonly selfName;
-    constructor(browser: BrowserClient, options?: LinkedInProfileFetcherOptions);
-    /**
-     * Fetch a complete profile for a LinkedIn username.
-     *
-     * Navigates:
-     *   1. /in/<username>/                    → name/headline/location/about
-     *   2. /in/<username>/details/experience/ → job history
-     *   3. /in/<username>/details/education/  → education
-     *
-     * Returns ExtractedContent ready for the ingestion pipeline, or null on failure.
-     * Never throws.
-     */
+    constructor(browser: ProfileBrowserClient, options?: LinkedInProfileFetcherOptions);
     fetchProfile(username: string): Promise<ExtractedContent | null>;
-    private jitter;
 }
