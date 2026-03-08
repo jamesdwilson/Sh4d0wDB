@@ -751,6 +751,85 @@ export function profileToExtractedContent(profile: LinkedInProfile): ExtractedCo
 export function extractEdgeSignals(profile: LinkedInProfile, selfName: string): EdgeSignal[];
 ```
 
+### 7.8 `queryGroupRelationship` — Cross-Group Path Query
+
+The top-level query that answers "does Group A know Group B?"
+
+```typescript
+export interface GroupRelationshipQuery {
+  groupAId: number;         // ResolvedEntity.id (type = "group")
+  groupBId: number;
+  maxHops?: number;         // max path length to search (default: 3)
+  minConfidence?: number;   // minimum edge confidence to traverse (default: 0.5)
+}
+
+export interface GroupRelationshipResult {
+  connected: boolean;
+
+  /**
+   * Best paths found, ranked by strength (confidence * recency * edge type weight).
+   * Empty if not connected.
+   */
+  paths: GroupPath[];
+
+  /**
+   * Whether the connection is directional.
+   * true = GroupA has a path to GroupB, but not vice versa.
+   */
+  isOneWay: boolean;
+
+  /**
+   * Any tension signals detected on nodes in the best path.
+   * e.g. bridge person has a tension edge with a GroupB member.
+   */
+  tensionWarnings: TensionWarning[];
+}
+
+export interface GroupPath {
+  nodes: ResolvedEntity[];      // full path A → bridge1 → bridge2 → B
+  edges: EntityEdge[];          // edges along the path
+  hops: number;
+  strength: number;             // 0–1 composite score
+  warmestEdgeType: EdgeType;    // the highest-value edge type on this path
+}
+
+export interface TensionWarning {
+  nodeId: number;
+  tensionWithId: number;
+  evidenceText?: string;
+  confidence: number;
+}
+
+/**
+ * Query whether two groups are connected in the entity graph.
+ *
+ * Returns not just yes/no but: who the bridge is, path strength,
+ * edge types, directionality, and any tension warnings on the path.
+ *
+ * Triggers Play 6 (Obligation Cascade) and Play 7 (Information Arbitrage)
+ * as a side effect when high-value paths are found.
+ *
+ * @param query  - Group IDs + search parameters
+ * @param db     - Database connection (entity graph)
+ * @returns      - Full relationship result with ranked paths
+ */
+export function queryGroupRelationship(
+  query: GroupRelationshipQuery,
+  db: DbClient,
+): Promise<GroupRelationshipResult>;
+```
+
+Edge type weights for path strength scoring:
+```
+co_invested  → 1.0   (strongest — shared financial risk)
+referred     → 0.95  (directional, high trust)
+founded      → 0.9
+works_at     → 0.8
+mentioned    → 0.4   (weakest — soft signal only)
+attended     → 0.5
+knows        → 0.7
+```
+
 ### 8.3 Execution Model
 
 - **Message threads** — `LinkedInFetcher` (already built), OC agent job
