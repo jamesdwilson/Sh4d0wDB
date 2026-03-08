@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 /**
- * ingest.mjs — Gmail + iMessage + LinkedIn ingestion entry point
+ * ingest.mjs — Gmail + iMessage ingestion entry point
  *
  * Standalone CLI script that wires up all dependencies and runs the
  * ingestion pipeline. Designed to be called from an OpenClaw cron job
  * or run manually for backfills.
  *
+ * NOTE: LinkedIn ingestion is NOT handled here. It requires a live browser
+ * session and runs as an OC agent job (OC manages all browser execution).
+ * See INTELLIGENCE_ROADMAP.md § Phase 4 for the OC cron job spec.
+ *
  * Usage:
- *   node scripts/ingest.mjs [--source gmail|imsg|linkedin|all] [--dry-run] [--limit N] [--visible]
+ *   node scripts/ingest.mjs [--source gmail|imsg|all] [--dry-run] [--limit N]
  *
  * Environment / config:
  *   - DB: hardcoded to postgresql:///shadow (same as plugin)
@@ -30,8 +34,6 @@ import path from "node:path";
 import os from "node:os";
 import { runIngestion, GmailFetcher, RunStatus } from "../dist/phase1-runner.js";
 import { IMessageFetcher } from "../dist/phase1-fetcher-imsg.js";
-import { LinkedInFetcher } from "../dist/phase4-fetcher-linkedin.js";
-import { createLinkedInBrowserClient } from "./linkedin-browser-client.mjs";
 import { PostgresStore } from "../dist/postgres.js";
 import { EmbeddingClient } from "../dist/embedder.js";
 
@@ -61,13 +63,11 @@ const sources  = (() => {
   const idx = args.indexOf("--source");
   if (idx >= 0 && args[idx + 1]) {
     const val = args[idx + 1];
-    if (val === "all") return ["gmail", "imsg", "linkedin"];
+    if (val === "all") return ["gmail", "imsg"];
     return [val];
   }
-  return ["gmail", "imsg"]; // default: gmail + imsg (linkedin requires browser, opt-in)
+  return ["gmail", "imsg"];
 })();
-// --visible: show browser window during LinkedIn scrape (useful for debugging)
-const BROWSER_VISIBLE = args.includes("--visible");
 const limitArg = (() => {
   const idx = args.indexOf("--limit");
   if (idx >= 0 && args[idx + 1]) return parseInt(args[idx + 1], 10);
@@ -215,7 +215,6 @@ async function main() {
   for (const source of sources) {
     log(`--- Starting source: ${source} ---`);
 
-    let linkedInBrowser = null; // hoisted for cleanup in catch
     try {
       let fetcher;
 
@@ -223,17 +222,6 @@ async function main() {
         fetcher = new GmailFetcher(ingestionConfig);
       } else if (source === "imsg") {
         fetcher = new IMessageFetcher({ maxPerChat: 200, maxChats: 0 });
-      } else if (source === "linkedin") {
-        log(`[linkedin] launching browser (headless: ${!BROWSER_VISIBLE})…`);
-        linkedInBrowser = await createLinkedInBrowserClient({
-          headless: !BROWSER_VISIBLE,
-          log,
-        });
-        fetcher = new LinkedInFetcher(linkedInBrowser.browser, {
-          maxThreads: Math.min(limitArg || 20, 20), // cap at 20 per run (session safety)
-          delayMs: 2_000,
-          evasion: { jitter: 0.3, sessionBatchLimit: 20 },
-        });
       } else {
         log(`[warn] unknown source: ${source}, skipping`);
         continue;
@@ -241,11 +229,6 @@ async function main() {
 
       const run = await runIngestion(ingestionConfig, db, storeClient, llm, fetcher);
       await recordRun(pool, run);
-
-      // Always close the LinkedIn browser, even on error
-      if (linkedInBrowser) {
-        await linkedInBrowser.close().catch(e => log(`[linkedin] browser close warn: ${e.message}`));
-      }
 
       log(
         `[${source}] done — processed: ${run.messages_processed}, ` +
@@ -258,9 +241,6 @@ async function main() {
     } catch (err) {
       log(`[${source}] FATAL:`, err.message);
       exitCode = 1;
-      if (linkedInBrowser) {
-        await linkedInBrowser.close().catch(() => {});
-      }
     }
   }
 

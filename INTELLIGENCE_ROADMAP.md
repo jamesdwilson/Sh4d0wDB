@@ -349,9 +349,12 @@ export class LinkedInFetcher implements MessageFetcher {
 - [x] `phase4-fetcher-linkedin.test.mjs` written — 28 tests, all GREEN (commit 502006a)
 - [x] `phase4-fetcher-linkedin.ts` implemented — `parseThreadList`, `parseThreadMessages`, `threadToExtractedContent`, `LinkedInFetcher`, `parseLinkedInTimestamp`
 - [x] Real LinkedIn DOM selectors verified against live page 2026-03-08
-- [ ] `LinkedInFetcher` registered in `scripts/ingest.mjs` as `--source linkedin` ← NEXT
-- [ ] Wire real `BrowserClient` implementation using OC browser tool
-- [ ] Smoke test: run against live LinkedIn inbox, verify thread extraction
+- [ ] Wire real `BrowserClient` implementation using OC browser tool ← NEXT
+  - LinkedIn ingestion runs as an OC agent job (OC manages all browser execution)
+  - `BrowserClient` production impl = thin wrappers around OC `browser` tool calls
+  - NOT wired into `ingest.mjs` — that script is for CLI/cron sources only
+- [ ] Register OC cron job for LinkedIn ingestion (calls agent, agent uses browser tool)
+- [ ] Smoke test: run OC agent job against live LinkedIn inbox
 
 ---
 
