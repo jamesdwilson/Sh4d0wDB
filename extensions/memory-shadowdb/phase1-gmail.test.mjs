@@ -101,7 +101,7 @@ test('extractGmailContent strips quoted reply sections (lines starting with >)',
 
 Let's meet at 3pm to discuss the deal.
 
-On Fri, Mar 6, 2026, James Wilson wrote:
+On Fri, Mar 6, 2026, Alice Example wrote:
 > Can we meet tomorrow?
 > I want to discuss the Series A.
 >
