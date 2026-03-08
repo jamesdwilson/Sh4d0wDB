@@ -23,6 +23,49 @@
 import type { ExtractedContent } from "./phase1-gmail.js";
 import type { LlmClient } from "./phase1-scoring.js";
 import type { DbClient } from "./phase1-parties.js";
+/**
+ * Source-agnostic interface for fetching messages into the ingestion pipeline.
+ *
+ * Implement this interface for each message source (Gmail via gog CLI, IMAP,
+ * LinkedIn, etc.). The runner only depends on this interface — it has no
+ * knowledge of gog, IMAP, or any specific protocol.
+ *
+ * Current implementations:
+ *   - GmailFetcher (below) — gog CLI, single account
+ *
+ * Future implementations:
+ *   - ImapFetcher — raw IMAP for any mailbox
+ *   - LinkedInFetcher — LinkedIn messages via browser automation
+ *
+ * @example
+ *   const fetcher = new GmailFetcher({ account: "alice@example.com", maxResults: 100 });
+ *   const runner = await runIngestion(config, db, store, llm, fetcher);
+ */
+export interface MessageFetcher {
+    /**
+     * Identifies the source system. Stored in ingestion_runs.source.
+     * Use a stable lowercase string: "gmail", "imap", "linkedin", etc.
+     */
+    readonly source: string;
+    /**
+     * Return IDs of messages newer than the watermark.
+     * When watermark is null, return all available messages (full backfill).
+     * IDs must be stable and unique within this source — used as operationId for dedup.
+     *
+     * @param watermark - Timestamp of last successful run, or null for backfill
+     * @returns         - Array of message IDs to process (may be empty)
+     */
+    getNewMessageIds(watermark: Date | null): Promise<string[]>;
+    /**
+     * Fetch and extract a single message by ID.
+     * Returns null if the message is unavailable, empty, or unparseable.
+     * NEVER throws — catch and return null on any error.
+     *
+     * @param id - Message ID as returned by getNewMessageIds()
+     * @returns  - Extracted content, or null to skip
+     */
+    fetchMessage(id: string): Promise<ExtractedContent | null>;
+}
 /** Run completion status */
 export declare enum RunStatus {
     COMPLETE = "complete",
@@ -133,19 +176,34 @@ export declare function shouldIngestMessage(content: ExtractedContent, threshold
  */
 export declare function buildIngestionRunRecord(params: RunRecordParams): IngestionRunRow;
 /**
- * Run a full Gmail ingestion pass.
+ * Gmail implementation of MessageFetcher — uses gog CLI.
  *
- * This function calls the gog CLI, the LLM, and the store — it is NOT unit
- * tested (all deps are external). Call from a cron job or CLI script.
+ * Handles Gmail-specific concerns: search query construction, gog CLI calls,
+ * JSON parsing. The runner (runIngestion) knows nothing about gog.
+ */
+export declare class GmailFetcher implements MessageFetcher {
+    private readonly config;
+    readonly source = "gmail";
+    constructor(config: IngestionConfig);
+    getNewMessageIds(watermark: Date | null): Promise<string[]>;
+    fetchMessage(id: string): Promise<ExtractedContent | null>;
+}
+/**
+ * Run a full ingestion pass against any MessageFetcher source.
+ *
+ * Source-agnostic orchestrator — fetcher handles all protocol specifics.
+ * This function calls the LLM and the store — NOT unit tested (deps are external).
+ * Call from a cron job or CLI script.
  *
  * @param config  - Ingestion configuration
  * @param db      - Database client (for watermark + party resolution)
  * @param store   - ShadowDB store instance (for write())
  * @param llm     - LLM client for scoreInterestingness
- * @returns       - Run statistics
+ * @param fetcher - Source-specific message fetcher (GmailFetcher, etc.)
+ * @returns       - Run statistics row (ready to INSERT into ingestion_runs)
  */
-export declare function runGmailIngestion(config: IngestionConfig, db: DbClient, store: {
+export declare function runIngestion(config: IngestionConfig, db: DbClient, store: {
     write: (params: Record<string, unknown>) => Promise<{
         id: number;
     }>;
-}, llm: LlmClient): Promise<IngestionRunRow>;
+}, llm: LlmClient, fetcher: MessageFetcher): Promise<IngestionRunRow>;

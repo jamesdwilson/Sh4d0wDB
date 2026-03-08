@@ -30,6 +30,56 @@ import type { LlmClient } from "./phase1-scoring.js";
 import type { DbClient } from "./phase1-parties.js";
 
 // ============================================================================
+// MessageFetcher interface — source-agnostic fetch contract
+// ============================================================================
+
+/**
+ * Source-agnostic interface for fetching messages into the ingestion pipeline.
+ *
+ * Implement this interface for each message source (Gmail via gog CLI, IMAP,
+ * LinkedIn, etc.). The runner only depends on this interface — it has no
+ * knowledge of gog, IMAP, or any specific protocol.
+ *
+ * Current implementations:
+ *   - GmailFetcher (below) — gog CLI, single account
+ *
+ * Future implementations:
+ *   - ImapFetcher — raw IMAP for any mailbox
+ *   - LinkedInFetcher — LinkedIn messages via browser automation
+ *
+ * @example
+ *   const fetcher = new GmailFetcher({ account: "alice@example.com", maxResults: 100 });
+ *   const runner = await runIngestion(config, db, store, llm, fetcher);
+ */
+export interface MessageFetcher {
+  /**
+   * Identifies the source system. Stored in ingestion_runs.source.
+   * Use a stable lowercase string: "gmail", "imap", "linkedin", etc.
+   */
+  readonly source: string;
+
+  /**
+   * Return IDs of messages newer than the watermark.
+   * When watermark is null, return all available messages (full backfill).
+   * IDs must be stable and unique within this source — used as operationId for dedup.
+   *
+   * @param watermark - Timestamp of last successful run, or null for backfill
+   * @returns         - Array of message IDs to process (may be empty)
+   */
+  getNewMessageIds(watermark: Date | null): Promise<string[]>;
+
+  /**
+   * Fetch and extract a single message by ID.
+   * Returns null if the message is unavailable, empty, or unparseable.
+   * NEVER throws — catch and return null on any error.
+   *
+   * @param id - Message ID as returned by getNewMessageIds()
+   * @returns  - Extracted content, or null to skip
+   */
+  fetchMessage(id: string): Promise<ExtractedContent | null>;
+}
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -234,22 +284,65 @@ export function buildIngestionRunRecord(params: RunRecordParams): IngestionRunRo
 // ============================================================================
 
 /**
- * Run a full Gmail ingestion pass.
+ * Gmail implementation of MessageFetcher — uses gog CLI.
  *
- * This function calls the gog CLI, the LLM, and the store — it is NOT unit
- * tested (all deps are external). Call from a cron job or CLI script.
+ * Handles Gmail-specific concerns: search query construction, gog CLI calls,
+ * JSON parsing. The runner (runIngestion) knows nothing about gog.
+ */
+export class GmailFetcher implements MessageFetcher {
+  readonly source = "gmail";
+
+  constructor(private readonly config: IngestionConfig) {}
+
+  async getNewMessageIds(watermark: Date | null): Promise<string[]> {
+    const query = buildSearchQuery({
+      watermark,
+      account: this.config.account,
+      searchQuery: this.config.searchQuery,
+    });
+    const maxFlag = this.config.maxMessagesPerRun > 0
+      ? `--max ${this.config.maxMessagesPerRun}`
+      : "";
+    const gogOutput = execSync(
+      `gog gmail search ${JSON.stringify(query)} --json --account ${this.config.account} ${maxFlag}`,
+      { timeout: 30_000, encoding: "utf8" },
+    );
+    return parseGogSearchResults(gogOutput);
+  }
+
+  async fetchMessage(id: string): Promise<ExtractedContent | null> {
+    try {
+      const gogJson = execSync(
+        `gog gmail get ${id} --json --account ${this.config.account}`,
+        { timeout: 15_000, encoding: "utf8" },
+      );
+      return parseGogMessage(gogJson);
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
+ * Run a full ingestion pass against any MessageFetcher source.
+ *
+ * Source-agnostic orchestrator — fetcher handles all protocol specifics.
+ * This function calls the LLM and the store — NOT unit tested (deps are external).
+ * Call from a cron job or CLI script.
  *
  * @param config  - Ingestion configuration
  * @param db      - Database client (for watermark + party resolution)
  * @param store   - ShadowDB store instance (for write())
  * @param llm     - LLM client for scoreInterestingness
- * @returns       - Run statistics
+ * @param fetcher - Source-specific message fetcher (GmailFetcher, etc.)
+ * @returns       - Run statistics row (ready to INSERT into ingestion_runs)
  */
-export async function runGmailIngestion(
+export async function runIngestion(
   config: IngestionConfig,
   db: DbClient,
   store: { write: (params: Record<string, unknown>) => Promise<{ id: number }> },
   llm: LlmClient,
+  fetcher: MessageFetcher,
 ): Promise<IngestionRunRow> {
   const startedAt = new Date();
   let messagesProcessed = 0;
@@ -258,29 +351,17 @@ export async function runGmailIngestion(
   let status = RunStatus.COMPLETE;
   let newWatermark: Date | null = null;
 
-  // Step 1: Get watermark
-  const watermark = await getWatermark(db, config.account);
+  // Step 1: Get watermark for this source + account
+  const watermark = await getWatermark(db, fetcher.source, config.account);
 
-  // Step 2: Build search query
-  const query = buildSearchQuery({
-    watermark,
-    account: config.account,
-    searchQuery: config.searchQuery,
-  });
-
-  // Step 3: Fetch message list from gog
+  // Step 2: Get new message IDs from fetcher
   let messageIds: string[];
   try {
-    const maxFlag = config.maxMessagesPerRun > 0 ? `--max ${config.maxMessagesPerRun}` : "";
-    const gogOutput = execSync(
-      `gog gmail search ${JSON.stringify(query)} --json --account ${config.account} ${maxFlag}`,
-      { timeout: 30_000, encoding: "utf8" },
-    );
-    messageIds = parseGogSearchResults(gogOutput);
+    messageIds = await fetcher.getNewMessageIds(watermark);
   } catch (err) {
-    console.error(`[ingestion] gog search failed:`, err);
+    console.error(`[ingestion:${fetcher.source}] fetch IDs failed:`, err);
     return buildIngestionRunRecord({
-      source: "gmail", account: config.account,
+      source: fetcher.source, account: config.account,
       startedAt, completedAt: new Date(),
       messagesProcessed: 0, messagesIngested: 0, messagesSkipped: 0,
       status: RunStatus.FAILED,
@@ -288,42 +369,29 @@ export async function runGmailIngestion(
     });
   }
 
-  console.log(`[ingestion] ${messageIds.length} messages to process (watermark: ${watermark?.toISOString() ?? "none"})`);
+  console.log(`[ingestion:${fetcher.source}] ${messageIds.length} messages (watermark: ${watermark?.toISOString() ?? "none"})`);
 
-  // Step 4: Process each message
+  // Step 3: Process each message through the pipeline
   for (const msgId of messageIds) {
     if (config.maxMessagesPerRun > 0 && messagesProcessed >= config.maxMessagesPerRun) break;
 
     try {
-      // Fetch full message
-      const gogJson = execSync(
-        `gog gmail get ${msgId} --json --account ${config.account}`,
-        { timeout: 15_000, encoding: "utf8" },
-      );
-
-      // Extract content
-      const content = parseGogMessage(gogJson);
+      const content = await fetcher.fetchMessage(msgId);
       if (!content) { messagesSkipped++; messagesProcessed++; continue; }
 
-      // Score with LLM
       const score = await scoreInterestingness(content.text, {
         subject: content.subject,
         parties: content.parties,
       }, llm);
 
-      // Decide
       const decision = shouldIngestMessage(content, config.scoreThreshold, score);
       messagesProcessed++;
 
       if (!decision.ingest) { messagesSkipped++; continue; }
 
-      // Resolve parties
       const resolved = await resolveParties(content.parties, db);
-
-      // Chunk
       const chunks = chunkDocument(content);
 
-      // Write each chunk (idempotent via operationId = sourceId + chunkIndex)
       for (const chunk of chunks) {
         const operationId = chunks.length === 1
           ? content.sourceId
@@ -344,19 +412,18 @@ export async function runGmailIngestion(
             chunkTotal: chunk.chunkTotal,
             parties: resolved.map(p => ({ name: p.name, memoryId: p.memoryId })),
             llmScore: score,
+            ingestSource: fetcher.source,
           },
-          source: "gmail",
+          source: fetcher.source,
           source_id: operationId,
         });
       }
 
       messagesIngested++;
-      if (!newWatermark || content.date > newWatermark) {
-        newWatermark = content.date;
-      }
+      if (!newWatermark || content.date > newWatermark) newWatermark = content.date;
 
     } catch (err) {
-      console.error(`[ingestion] failed on message ${msgId}:`, err);
+      console.error(`[ingestion:${fetcher.source}] failed on ${msgId}:`, err);
       status = RunStatus.PARTIAL;
       messagesSkipped++;
       messagesProcessed++;
@@ -364,12 +431,10 @@ export async function runGmailIngestion(
   }
 
   return buildIngestionRunRecord({
-    source: "gmail", account: config.account,
+    source: fetcher.source, account: config.account,
     startedAt, completedAt: new Date(),
     messagesProcessed, messagesIngested, messagesSkipped,
-    status,
-    watermarkUsed: watermark,
-    newWatermark,
+    status, watermarkUsed: watermark, newWatermark,
   });
 }
 
@@ -381,13 +446,13 @@ export async function runGmailIngestion(
  * Get the watermark (completed_at of last successful run) for an account.
  * Returns null if no prior run exists (triggers full backfill).
  */
-async function getWatermark(db: DbClient, account: string): Promise<Date | null> {
+async function getWatermark(db: DbClient, source: string, account: string): Promise<Date | null> {
   try {
     const result = await db.query(
       `SELECT completed_at FROM ingestion_runs
-       WHERE source = 'gmail' AND account = $1 AND status = 'complete'
+       WHERE source = $1 AND account = $2 AND status = 'complete'
        ORDER BY completed_at DESC LIMIT 1`,
-      [account],
+      [source, account],
     ) as unknown as { rows: Array<{ completed_at: Date | string }> };
     const row = result.rows[0];
     if (!row) return null;

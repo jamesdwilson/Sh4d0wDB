@@ -162,81 +162,101 @@ export function buildIngestionRunRecord(params) {
 // Runtime runner (not unit tested — integration only)
 // ============================================================================
 /**
- * Run a full Gmail ingestion pass.
+ * Gmail implementation of MessageFetcher — uses gog CLI.
  *
- * This function calls the gog CLI, the LLM, and the store — it is NOT unit
- * tested (all deps are external). Call from a cron job or CLI script.
+ * Handles Gmail-specific concerns: search query construction, gog CLI calls,
+ * JSON parsing. The runner (runIngestion) knows nothing about gog.
+ */
+export class GmailFetcher {
+    config;
+    source = "gmail";
+    constructor(config) {
+        this.config = config;
+    }
+    async getNewMessageIds(watermark) {
+        const query = buildSearchQuery({
+            watermark,
+            account: this.config.account,
+            searchQuery: this.config.searchQuery,
+        });
+        const maxFlag = this.config.maxMessagesPerRun > 0
+            ? `--max ${this.config.maxMessagesPerRun}`
+            : "";
+        const gogOutput = execSync(`gog gmail search ${JSON.stringify(query)} --json --account ${this.config.account} ${maxFlag}`, { timeout: 30_000, encoding: "utf8" });
+        return parseGogSearchResults(gogOutput);
+    }
+    async fetchMessage(id) {
+        try {
+            const gogJson = execSync(`gog gmail get ${id} --json --account ${this.config.account}`, { timeout: 15_000, encoding: "utf8" });
+            return parseGogMessage(gogJson);
+        }
+        catch {
+            return null;
+        }
+    }
+}
+/**
+ * Run a full ingestion pass against any MessageFetcher source.
+ *
+ * Source-agnostic orchestrator — fetcher handles all protocol specifics.
+ * This function calls the LLM and the store — NOT unit tested (deps are external).
+ * Call from a cron job or CLI script.
  *
  * @param config  - Ingestion configuration
  * @param db      - Database client (for watermark + party resolution)
  * @param store   - ShadowDB store instance (for write())
  * @param llm     - LLM client for scoreInterestingness
- * @returns       - Run statistics
+ * @param fetcher - Source-specific message fetcher (GmailFetcher, etc.)
+ * @returns       - Run statistics row (ready to INSERT into ingestion_runs)
  */
-export async function runGmailIngestion(config, db, store, llm) {
+export async function runIngestion(config, db, store, llm, fetcher) {
     const startedAt = new Date();
     let messagesProcessed = 0;
     let messagesIngested = 0;
     let messagesSkipped = 0;
     let status = RunStatus.COMPLETE;
     let newWatermark = null;
-    // Step 1: Get watermark
-    const watermark = await getWatermark(db, config.account);
-    // Step 2: Build search query
-    const query = buildSearchQuery({
-        watermark,
-        account: config.account,
-        searchQuery: config.searchQuery,
-    });
-    // Step 3: Fetch message list from gog
+    // Step 1: Get watermark for this source + account
+    const watermark = await getWatermark(db, fetcher.source, config.account);
+    // Step 2: Get new message IDs from fetcher
     let messageIds;
     try {
-        const maxFlag = config.maxMessagesPerRun > 0 ? `--max ${config.maxMessagesPerRun}` : "";
-        const gogOutput = execSync(`gog gmail search ${JSON.stringify(query)} --json --account ${config.account} ${maxFlag}`, { timeout: 30_000, encoding: "utf8" });
-        messageIds = parseGogSearchResults(gogOutput);
+        messageIds = await fetcher.getNewMessageIds(watermark);
     }
     catch (err) {
-        console.error(`[ingestion] gog search failed:`, err);
+        console.error(`[ingestion:${fetcher.source}] fetch IDs failed:`, err);
         return buildIngestionRunRecord({
-            source: "gmail", account: config.account,
+            source: fetcher.source, account: config.account,
             startedAt, completedAt: new Date(),
             messagesProcessed: 0, messagesIngested: 0, messagesSkipped: 0,
             status: RunStatus.FAILED,
             watermarkUsed: watermark, newWatermark: null,
         });
     }
-    console.log(`[ingestion] ${messageIds.length} messages to process (watermark: ${watermark?.toISOString() ?? "none"})`);
-    // Step 4: Process each message
+    console.log(`[ingestion:${fetcher.source}] ${messageIds.length} messages (watermark: ${watermark?.toISOString() ?? "none"})`);
+    // Step 3: Process each message through the pipeline
     for (const msgId of messageIds) {
         if (config.maxMessagesPerRun > 0 && messagesProcessed >= config.maxMessagesPerRun)
             break;
         try {
-            // Fetch full message
-            const gogJson = execSync(`gog gmail get ${msgId} --json --account ${config.account}`, { timeout: 15_000, encoding: "utf8" });
-            // Extract content
-            const content = parseGogMessage(gogJson);
+            const content = await fetcher.fetchMessage(msgId);
             if (!content) {
                 messagesSkipped++;
                 messagesProcessed++;
                 continue;
             }
-            // Score with LLM
             const score = await scoreInterestingness(content.text, {
                 subject: content.subject,
                 parties: content.parties,
             }, llm);
-            // Decide
             const decision = shouldIngestMessage(content, config.scoreThreshold, score);
             messagesProcessed++;
             if (!decision.ingest) {
                 messagesSkipped++;
                 continue;
             }
-            // Resolve parties
             const resolved = await resolveParties(content.parties, db);
-            // Chunk
             const chunks = chunkDocument(content);
-            // Write each chunk (idempotent via operationId = sourceId + chunkIndex)
             for (const chunk of chunks) {
                 const operationId = chunks.length === 1
                     ? content.sourceId
@@ -256,30 +276,28 @@ export async function runGmailIngestion(config, db, store, llm) {
                         chunkTotal: chunk.chunkTotal,
                         parties: resolved.map(p => ({ name: p.name, memoryId: p.memoryId })),
                         llmScore: score,
+                        ingestSource: fetcher.source,
                     },
-                    source: "gmail",
+                    source: fetcher.source,
                     source_id: operationId,
                 });
             }
             messagesIngested++;
-            if (!newWatermark || content.date > newWatermark) {
+            if (!newWatermark || content.date > newWatermark)
                 newWatermark = content.date;
-            }
         }
         catch (err) {
-            console.error(`[ingestion] failed on message ${msgId}:`, err);
+            console.error(`[ingestion:${fetcher.source}] failed on ${msgId}:`, err);
             status = RunStatus.PARTIAL;
             messagesSkipped++;
             messagesProcessed++;
         }
     }
     return buildIngestionRunRecord({
-        source: "gmail", account: config.account,
+        source: fetcher.source, account: config.account,
         startedAt, completedAt: new Date(),
         messagesProcessed, messagesIngested, messagesSkipped,
-        status,
-        watermarkUsed: watermark,
-        newWatermark,
+        status, watermarkUsed: watermark, newWatermark,
     });
 }
 // ============================================================================
@@ -289,11 +307,11 @@ export async function runGmailIngestion(config, db, store, llm) {
  * Get the watermark (completed_at of last successful run) for an account.
  * Returns null if no prior run exists (triggers full backfill).
  */
-async function getWatermark(db, account) {
+async function getWatermark(db, source, account) {
     try {
         const result = await db.query(`SELECT completed_at FROM ingestion_runs
-       WHERE source = 'gmail' AND account = $1 AND status = 'complete'
-       ORDER BY completed_at DESC LIMIT 1`, [account]);
+       WHERE source = $1 AND account = $2 AND status = 'complete'
+       ORDER BY completed_at DESC LIMIT 1`, [source, account]);
         const row = result.rows[0];
         if (!row)
             return null;
