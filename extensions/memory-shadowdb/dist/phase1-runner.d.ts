@@ -128,13 +128,15 @@ export interface IngestionHooks {
     /**
      * Called after each message is successfully written to the store,
      * for each resolved party that maps to an existing ShadowDB contact.
-     *
-     * @param contactId  - ShadowDB memory id of the matched contact
-     * @param content    - The ingested message content
-     * @param dossier    - Fetched dossier record, or null if not found
-     * @param llm        - LLM client (same instance as the runner)
      */
     onNewContactSignal?: (contactId: number, content: ExtractedContent, dossier: DossierRecord | null, llm: LlmClient) => Promise<unknown>;
+    /**
+     * Optional EntityResolver — when provided, resolveParties() registers
+     * each extracted party as an EntityCandidate in the cross-source entity graph.
+     * Fire-and-forget: resolver failures never abort ingestion.
+     * Omit for backward compatibility (existing tests pass nothing).
+     */
+    entityResolver?: import("./phase1-parties.js").PartyEntityResolver;
 }
 /**
  * Build a gog gmail search query string.

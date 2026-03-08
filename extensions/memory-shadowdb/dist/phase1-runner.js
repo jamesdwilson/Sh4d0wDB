@@ -257,7 +257,7 @@ export async function runIngestion(config, db, store, llm, fetcher, hooks = {}) 
                 messagesSkipped++;
                 continue;
             }
-            const resolved = await resolveParties(content.parties, db);
+            const resolved = await resolveParties(content.parties, db, hooks.entityResolver);
             const chunks = chunkDocument(content);
             for (const chunk of chunks) {
                 const operationId = chunks.length === 1
@@ -297,8 +297,9 @@ export async function runIngestion(config, db, store, llm, fetcher, hooks = {}) 
                     const dossier = await fetchDossierById(db, party.memoryId).catch(() => null);
                     signalFn(party.memoryId, content, dossier, llm)
                         .then((delta) => {
-                        if (delta && typeof delta === "object" && "summary" in delta) {
-                            console.log(`[ingestion:phase3] ${delta.summary} (confidence: ${delta.confidence.toFixed(2)})`);
+                        if (delta && typeof delta === "object" && "summary" in delta && "confidence" in delta) {
+                            const d = delta;
+                            console.log(`[ingestion:phase3] ${d.summary} (confidence: ${d.confidence.toFixed(2)})`);
                         }
                     })
                         .catch((err) => {
