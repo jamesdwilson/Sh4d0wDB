@@ -1,32 +1,35 @@
 /**
  * linkedin-browser-client.mjs — Production BrowserClient for LinkedIn scraping
  *
- * Wraps Playwright Chromium with a persistent context that reuses the local
- * Chrome profile so LinkedIn session cookies are already present — no login.
+ * Launches system Chrome via Playwright using the existing user profile so
+ * LinkedIn session cookies are already present — no login, no cookie copying.
  *
  * Usage: imported by ingest.mjs when --source linkedin is requested.
  *
  * Design notes:
- *   - Uses chromium (not system Chrome) to avoid locking the user's browser
- *   - Copies cookies from Chrome profile into Playwright context at startup
+ *   - Uses system Chrome (not Playwright Chromium) with --user-data-dir pointing
+ *     at the real Chrome profile — session is already authenticated
+ *   - Chrome must not have the Default profile open in another window when this
+ *     runs (Chrome locks the profile). Use --visible + a different profile if needed.
  *   - Single page instance reused across all navigations (no tab churn)
- *   - All evasion hooks (mouse movement, human scroll) live here, not in the
- *     LinkedInFetcher — keeps the fetcher pure and testable
+ *   - All evasion hooks live here, not in LinkedInFetcher — fetcher stays pure/testable
  *   - Must call .close() after use to release the browser process
  *
  * Evasion notes (stubs — not fully implemented):
- *   - User agent is set to a real Chrome UA string
+ *   - User agent matches real Chrome
  *   - Viewport randomized slightly per session
- *   - scrollToBottom uses incremental scroll with small delays (human-like)
+ *   - scrollToBottom uses incremental scroll (human-like)
  *   - Mouse movement simulation is a stub (no-op until needed)
  */
 
 import { chromium } from "playwright";
 import os from "node:os";
 import path from "node:path";
-import fs from "node:fs";
 
-// Chrome profile path — where session cookies live
+// System Chrome executable
+const CHROME_EXECUTABLE = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+
+// Existing Chrome user data dir — session cookies already here, no copying needed
 const CHROME_USER_DATA = path.join(os.homedir(), "Library/Application Support/Google/Chrome");
 const CHROME_PROFILE   = "Default";
 
@@ -50,24 +53,24 @@ export async function createLinkedInBrowserClient({ headless = true, log = conso
   const width  = 1280 + Math.floor(Math.random() * 80);
   const height = 800  + Math.floor(Math.random() * 60);
 
-  // Launch persistent context pointing at a temp copy of Chrome profile.
-  // We copy the cookies DB only (not the full profile) to avoid conflicts
-  // with a running Chrome instance.
-  const sessionDir = await buildSessionDir(log);
-
-  const context = await chromium.launchPersistentContext(sessionDir, {
-    headless,
-    userAgent: USER_AGENT,
-    viewport: { width, height },
-    locale: "en-US",
-    timezoneId: "America/Chicago",
-    // Suppress automation flags
-    args: [
-      "--disable-blink-features=AutomationControlled",
-      "--no-sandbox",
-    ],
-    ignoreDefaultArgs: ["--enable-automation"],
-  });
+  // Launch system Chrome with the real user profile — session already authenticated.
+  // Chrome must not have this profile open in another window (profile lock).
+  const context = await chromium.launchPersistentContext(
+    path.join(CHROME_USER_DATA, CHROME_PROFILE),
+    {
+      executablePath: CHROME_EXECUTABLE,
+      headless,
+      userAgent: USER_AGENT,
+      viewport: { width, height },
+      locale: "en-US",
+      timezoneId: "America/Chicago",
+      args: [
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+      ],
+      ignoreDefaultArgs: ["--enable-automation"],
+    },
+  );
 
   const page = await context.newPage();
 
@@ -187,35 +190,6 @@ export async function createLinkedInBrowserClient({ headless = true, log = conso
     browser: client,
     close: async () => {
       await context.close();
-      // Clean up temp session dir
-      try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
     },
   };
-}
-
-/**
- * Build a minimal Playwright session directory with Chrome cookies copied in.
- * We only copy the Cookies SQLite file — not the full multi-GB profile.
- * This avoids "profile already in use" errors when Chrome is running.
- */
-async function buildSessionDir(log) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "linkedin-pw-"));
-  const profileDir = path.join(tmpDir, "Default");
-  fs.mkdirSync(profileDir, { recursive: true });
-
-  const cookiesSrc = path.join(CHROME_USER_DATA, CHROME_PROFILE, "Cookies");
-  const cookiesDst = path.join(profileDir, "Cookies");
-
-  if (fs.existsSync(cookiesSrc)) {
-    try {
-      fs.copyFileSync(cookiesSrc, cookiesDst);
-      log(`[linkedin-browser] copied Chrome cookies from ${cookiesSrc}`);
-    } catch (err) {
-      log(`[linkedin-browser] warn: could not copy Chrome cookies (${err.message}) — will need manual login`);
-    }
-  } else {
-    log(`[linkedin-browser] warn: Chrome cookies not found at ${cookiesSrc} — will need manual login`);
-  }
-
-  return tmpDir;
 }
