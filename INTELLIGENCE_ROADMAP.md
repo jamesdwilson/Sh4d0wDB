@@ -414,9 +414,94 @@ Nothing else in the pipeline changes.
 ### Implementation Order (TDD, both gaps)
 
 1. `llm-router.test.mjs` written → `llm-router.ts` implemented → commit
-2. `data-source.test.mjs` written → `data-source.ts` implemented → commit
-3. Callers updated: `phase1-scoring`, `phase3-contact-signal` accept `TieredLlmClient`
+2. `data-source.test.mjs` written → `data-source.ts` implemented → commit  ← NEXT
+3. ~~Callers updated: `phase1-scoring`, `phase3-contact-signal` accept `TieredLlmClient`~~ ✅ done (ee0c221)
 4. First `DataSource<T>` impl: `AppleContactsSource`
+
+---
+
+## `DataSource<T>` — Full TDD Spec
+
+### Design Philosophy
+
+`DataSource<T>` is the second interface family, parallel to `MessageFetcher`.
+Where `MessageFetcher` models a timestamped message stream (email, iMessage),
+`DataSource<T>` models an entity registry or event log — sources where records
+have identity and can be updated, not just appended.
+
+**Core principles:**
+- Generic over the raw record type T. The implementation knows the shape; the runner doesn't.
+- Four methods only. Every source implements exactly: `getUpdatedRecords`, `getRecordId`, `extractContent`, plus two readonly properties (`sourceId`, `displayName`, `category`).
+- Same watermark pattern as `MessageFetcher` — `getUpdatedRecords(watermark)` returns records modified since that date. Null watermark = full sync.
+- `getRecordId` returns a stable, unique string for dedup. The runner uses `sourceId:recordId` as `operationId` — same record re-synced = zero duplicate writes.
+- `extractContent` returns `ExtractedContent | null`. Returning null skips the record (no scoring, no write). Never throws.
+- `runDataSourceIngestion<T>` is the generic runner — identical pipeline to `runIngestion` (entity filter → LLM score → chunk → resolveParties → write → Phase 3 hook) but driven by a `DataSource<T>` instead of a `MessageFetcher`.
+
+### Exported Surface (`data-source.ts`)
+
+```typescript
+// The generic interface — implement this for any new source
+export interface DataSource<T> {
+  readonly sourceId: string;       // "contacts:apple", "contacts:crunchbase", "calendar:apple"
+  readonly displayName: string;    // "Apple Contacts"
+  readonly category: string;       // "contacts", "events", "companies"
+  getUpdatedRecords(watermark: Date | null): Promise<T[]>;
+  getRecordId(record: T): string;
+  extractContent(record: T): ExtractedContent | null;
+}
+
+// Concrete record types
+export interface AppleContact { id, firstName, lastName, emails, phones, company?, title?, notes?, modifiedAt }
+export interface CrunchbaseEntity { uuid, name, entityType, shortDescription?, description?, fundingTotal?, lastFundingType?, primaryRole?, linkedinUrl?, websiteUrl?, updatedAt }
+export interface CalendarEvent { uid, title, startTime, endTime, attendees, location?, notes?, calendar, modifiedAt }
+
+// Runner — same return type as runIngestion
+export async function runDataSourceIngestion<T>(
+  config: IngestionConfig,
+  source: DataSource<T>,
+  db: DbClient,
+  store: ShadowStore,
+  llm: TieredLlmClient | LlmClient,
+  hooks?: IngestionHooks,
+): Promise<IngestionRunRow>;
+```
+
+### Test Plan (`data-source.test.mjs`)
+
+**Group A — DataSource interface contract (via mock implementation)**
+- A1: Mock implementation satisfying the interface compiles and runs
+- A2: `getUpdatedRecords(null)` returns all records (full sync)
+- A3: `getUpdatedRecords(watermark)` returns only records modified after watermark
+- A4: `getRecordId` returns stable unique string for same record
+- A5: `extractContent` returning null causes record to be skipped
+- A6: `extractContent` throwing is caught — never propagates to runner
+
+**Group B — operationId dedup**
+- B1: `operationId` is `sourceId:recordId` (e.g. `"contacts:apple:ABC123"`)
+- B2: Same record processed twice = zero duplicate writes (idempotent)
+- B3: Different records from same source get different operationIds
+
+**Group C — `runDataSourceIngestion` pipeline**
+- C1: Empty record list → run completes with 0 ingested
+- C2: Record that passes entity filter + score threshold → written to store
+- C3: Record whose `extractContent` returns null → skipped (not written)
+- C4: Record that fails entity filter → skipped
+- C5: Record that fails LLM score gate → skipped
+- C6: `messages_ingested` + `messages_skipped` counts are correct
+- C7: Run status is COMPLETE when all records processed without error
+- C8: Run status is PARTIAL when some records throw during processing
+
+**Group D — watermark and audit**
+- D1: `ingestion_runs` row is returned with correct source + account
+- D2: `new_watermark` is the most recent `modifiedAt` across ingested records
+- D3: `new_watermark` is null when no records were ingested
+- D4: Watermark from prior run is passed to `getUpdatedRecords`
+
+**Group E — Phase 3 hook wiring**
+- E1: `onNewContactSignal` hook fires for records that resolve to a known contact
+- E2: Hook failure does not abort the run
+
+**Total: ~20 tests before implementation**
 
 ---
 
