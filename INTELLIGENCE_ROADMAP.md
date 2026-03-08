@@ -476,16 +476,30 @@ P[number]: [Specific outcome statement]
 - Falsification: [How we'll know this was wrong]
 ```
 
+### Named Intelligence Queries (ARCHITECTURE.md § 9)
+
+| Query | Natural language | Tier |
+|-------|-----------------|------|
+| `queryGroupRelationship` | "Does GroupA know GroupB?" | STANDARD |
+| `queryGroupAffinity` | "Would GroupA like GroupB?" | STANDARD |
+| `queryLeverage` | "Does GroupA have leverage over GroupB?" | DEEP |
+| `queryIntroPath` | "How do I get intros from GroupA to GroupB?" | DEEP |
+
+All queries: read-only, LLM-augmented, graceful degradation, cacheable as pattern_events.
+
 ### Definition of Done
 - [ ] `computeBetweennessCentrality` — unit tests with fixture graphs
 - [ ] `detectClusters` — unit tests with known cluster structures
-- [ ] `computeGroupPsychProfile` — aggregate DISC, dominant language, blind spots, collective anxieties, entry point, decision pattern — unit tests with fixture member profiles
-- [ ] `detectNetworkOpportunities` — integration test: seed graph, verify all 8 plays detected
-- [ ] `generateOpportunityBriefing` — unit test: fixture opportunities → formatted output
-- [ ] Group outreach generation — given a GroupPsychProfile, generate copy that reads as written by an in-group member
-- [ ] Predictions follow the specific/testable/actionable format
-- [ ] Daily cron: runs analysis, announces if new high-impact opportunities detected
-- [ ] Staleness check: dossiers >7 days old are flagged for revalidation before use in analysis
+- [ ] `computeGroupPsychProfile` — aggregate DISC, dominant language, blind spots, collective anxieties, entry point, decision pattern
+- [ ] `queryGroupRelationship` — path search, bridge nodes, tension warnings
+- [ ] `queryGroupAffinity` — psychometric compatibility, shared language, friction signals, verdict
+- [ ] `queryLeverage` — dependency graph, obligation cascade, information asymmetry, reversibility
+- [ ] `queryIntroPath` — optimal intro sequence, Voss-informed framing per step, risk factors
+- [ ] `detectNetworkOpportunities` — all 8 plays against resolved graph
+- [ ] `generateOpportunityBriefing` — ranked by urgency (today / this week / predictive)
+- [ ] Group outreach generation — copy that reads as written by an in-group member
+- [ ] Daily cron: runs analysis, announces high-impact opportunities
+- [ ] Staleness check: dossiers >7 days flagged for revalidation before use
 
 ---
 

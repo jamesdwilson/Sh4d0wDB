@@ -839,7 +839,187 @@ knows        → 0.7
 
 ---
 
-## 9. What This Unlocks
+## 9. Intelligence Query Layer — Named Queries
+
+These are the top-level questions the system must be able to answer.
+Each maps to one or more underlying graph/psychometric functions.
+All are Phase 5 outputs; all require Phase 3b (EntityResolver) to be complete first.
+
+### 9.1 Query Taxonomy
+
+| Natural language | Query type | Underlying functions |
+|-----------------|-----------|---------------------|
+| "Does GroupA know GroupB?" | `queryGroupRelationship` | path search, edge confidence |
+| "Would GroupA like GroupB?" | `queryGroupAffinity` | psychometric compatibility, shared interests, complementary needs |
+| "Does GroupA have leverage over GroupB?" | `queryLeverage` | dependency graph, obligation cascade, information asymmetry |
+| "How can I get intros from GroupA to GroupB?" | `queryIntroPath` | bridge node identification, intro quality scoring, tension warnings |
+
+### 9.2 `queryGroupAffinity` — Would They Like Each Other?
+
+Answers: *"Would GroupA like GroupB?"* / *"Do you think GroupA would like GroupB?"*
+
+```typescript
+export interface GroupAffinityResult {
+  score: number;              // 0–1 composite affinity score
+  rationale: string;          // LLM-generated explanation
+
+  // Positive signals
+  sharedInterests: string[];          // topics both groups discuss positively
+  complementaryNeeds: string[];       // GroupA needs what GroupB has, and vice versa
+  psychometricCompatibility: number;  // DISC/MBTI alignment score 0–1
+  languageOverlap: string[];          // shared vocabulary/phrases
+
+  // Friction signals
+  valueConflicts: string[];           // topics where groups are known to diverge
+  competingInterests: string[];       // areas of direct competition
+  tensionNodes: TensionWarning[];     // known tension between members across groups
+
+  // Verdict
+  verdict: "strong_fit" | "moderate_fit" | "neutral" | "poor_fit" | "likely_conflict";
+}
+
+/**
+ * Estimate affinity between two groups based on psychometric profiles,
+ * shared language, complementary needs, and known tension signals.
+ *
+ * Uses GroupPsychProfile for both groups (requires Phase 3/5).
+ * Falls back to structural signals (shared connections, edge types) if
+ * psychometric profiles are not yet available.
+ *
+ * Tier: STANDARD (needs both group profiles + member dossiers in context)
+ */
+export function queryGroupAffinity(
+  groupAId: number,
+  groupBId: number,
+  db: DbClient,
+  llm: TieredLlmClient,
+): Promise<GroupAffinityResult>;
+```
+
+### 9.3 `queryLeverage` — Does GroupA Have Leverage Over GroupB?
+
+Answers: *"Does GroupA have leverage over GroupB?"*
+
+Leverage = asymmetric dependency. GroupA has leverage if GroupB needs something
+GroupA controls and has no alternative source for.
+
+```typescript
+export type LeverageType =
+  | "information"       // GroupA knows things GroupB needs
+  | "access"            // GroupA controls introductions GroupB wants
+  | "capital"           // GroupA controls funding GroupB seeks
+  | "distribution"      // GroupA controls channels GroupB needs
+  | "reputation"        // GroupA's endorsement matters to GroupB's targets
+  | "obligation"        // GroupB owes GroupA (prior favors, referrals, co-investments)
+  | "competitive"       // GroupA can hurt GroupB by working with their competitors
+  | "none";
+
+export interface LeverageResult {
+  hasLeverage: boolean;
+  leverageTypes: LeverageType[];
+  strength: number;             // 0–1
+  rationale: string;
+
+  // Specific leverage points with evidence
+  leveragePoints: LeveragePoint[];
+
+  // Reversibility — can GroupB easily escape this dependency?
+  isReversible: boolean;
+  reversalPath?: string;        // how GroupB could neutralize this leverage
+}
+
+export interface LeveragePoint {
+  type: LeverageType;
+  description: string;
+  confidence: number;
+  evidenceSourceIds: string[];  // which ingested records support this
+}
+
+/**
+ * Determine if GroupA has leverage over GroupB.
+ *
+ * Analyzes: dependency graph, information asymmetry (Play 7),
+ * obligation signals (Play 6), competitive positioning (Play 5).
+ *
+ * Tier: DEEP (needs full context of both groups' needs/assets)
+ */
+export function queryLeverage(
+  groupAId: number,
+  groupBId: number,
+  db: DbClient,
+  llm: TieredLlmClient,
+): Promise<LeverageResult>;
+```
+
+### 9.4 `queryIntroPath` — How Do I Get Introductions?
+
+Answers: *"How can I get introductions from GroupA to GroupB?"*
+
+Not just "is there a path" (that's `queryGroupRelationship`) but "what is the
+optimal sequence of actions to get a warm introduction, and what are the risks."
+
+```typescript
+export interface IntroStrategy {
+  // The recommended path (may be multi-hop)
+  path: GroupPath;
+
+  // Ordered list of actions to execute
+  steps: IntroStep[];
+
+  // Quality score — how warm this intro is likely to be
+  expectedWarmth: "cold" | "lukewarm" | "warm" | "hot";
+
+  // Risk factors
+  risks: IntroRisk[];
+
+  // Alternative paths ranked by warmth
+  alternativePaths: IntroStrategy[];
+}
+
+export interface IntroStep {
+  order: number;
+  action: string;               // e.g. "Ask Joe to introduce you to Carol"
+  targetEntityId: number;       // who this step is directed at
+  rationale: string;            // why this step, why this person
+  suggestedTiming?: string;     // e.g. "after the SaaStr conference"
+  suggestedApproach?: string;   // Voss-informed framing for the ask
+}
+
+export interface IntroRisk {
+  description: string;
+  severity: "low" | "medium" | "high";
+  mitigation?: string;
+}
+
+/**
+ * Generate an optimal introduction strategy from GroupA to GroupB.
+ *
+ * Finds the warmest available path, accounts for tension signals,
+ * and produces an ordered action plan with Voss-informed framing
+ * for each ask along the path.
+ *
+ * Tier: DEEP (needs relationship history + psychometric context)
+ */
+export function queryIntroPath(
+  fromGroupId: number,
+  toGroupId: number,
+  db: DbClient,
+  llm: TieredLlmClient,
+  options?: { maxHops?: number; minWarmth?: string },
+): Promise<IntroStrategy | null>;
+```
+
+### 9.5 Shared Design Principles
+
+- **All queries are read-only** — they never modify the graph or emit records
+- **All queries are LLM-augmented** — structural graph analysis + LLM synthesis for rationale/framing
+- **All queries degrade gracefully** — if psychometric profiles are missing, fall back to structural signals; if structural signals are sparse, say so rather than hallucinating
+- **All queries are cacheable** — results can be stored as `pattern_events` with a TTL; re-run when underlying data changes
+- **Tier: DEEP for most** — these queries need full context of both groups; never route to FLASH
+
+---
+
+## 10. What This Unlocks
 
 With `TieredLlmClient` + `DataSource<T>`:
 
