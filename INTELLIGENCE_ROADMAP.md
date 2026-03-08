@@ -141,10 +141,13 @@ Must be complete before Phase 5. Bad entity resolution = wrong graph = wrong net
 - `resolveParties()` in `phase1-parties.ts` becomes a thin wrapper around `EntityResolver`
 
 ### Definition of Done
-- [ ] `EntityResolver` interface + `resolve()` + `merge()` + `addEdge()` — tests with all confidence tiers
-- [ ] `EntityCandidate`, `ResolvedEntity`, `EntityEdge`, `EdgeSignal` types
-- [ ] Cross-source resolution: Gmail email + LinkedIn name+company → same node (integration test)
-- [ ] `resolveParties()` updated to delegate to `EntityResolver`
+- [x] `EntityResolver` interface + `resolve()` + `merge()` + `addEdge()` — 20 tests (commit c4abfde)
+- [x] `EntityCandidate`, `ResolvedEntity`, `StoredEntity`, `StoredEdge`, `EntityStore` types
+- [x] Cross-source resolution: Gmail email + LinkedIn name+company → same node (E1/E2)
+- [x] Idempotent edge registration — re-seen edge updates confidence + lastVerifiedAt (D2/D3)
+- [x] Enrichment — new email/linkedinUrl added to existing entity on re-resolve (A6/E2)
+- [ ] `resolveParties()` updated to delegate to `EntityResolver` ← NEXT
+- [ ] `PostgresEntityStore` — real DB implementation of `EntityStore` interface
 - [ ] Edge signals from LinkedIn profile scrape wired through resolver
 
 ---
@@ -854,11 +857,11 @@ Every contact dossier carries a version: `v[methodology]:[source_bitmask]`
 | Arch — DataSource\<T\> + runner | ✅ Complete | 23 | `5cc3312` |
 | 3 — Contact Re-Scoring (foundation) | ✅ Complete | 19 | `6d3516d` |
 | 4 — LinkedIn (threads + profile + edge signals) | 🟡 In progress | 28 | `3cd8c87` |
-| 3b — Entity Resolution (cross-source node graph) | 🔲 Planned | — | — |
+| 3b — Entity Resolution (cross-source node graph) | 🟡 In progress | 20 | `c4abfde` |
 | 2 — PDF/Contract | 🔲 Planned | — | — |
 | 3 — Contact Re-Scoring (full) | 🔲 Planned | — | — |
 | 5 — Network Intelligence + Group Psychometrics | 🔲 Planned | — | — |
 
-**Total test count:** 567/567 passing, zero RED, zero TS errors
+**Total test count:** 614/614 passing, zero RED, zero TS errors
 **Repo:** `git@github.com:jamesdwilson/Sh4d0wDB.git`
-**HEAD:** `3cd8c87`
+**HEAD:** `c4abfde`
