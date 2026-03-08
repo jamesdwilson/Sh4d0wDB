@@ -36,25 +36,7 @@ const SCORE_SINGLE_TOKEN = 0.70;
 const SCORE_NO_MATCH = 0;
 /** Minimum match score to accept a result (rejects very weak matches) */
 const MIN_ACCEPT_SCORE = SCORE_SINGLE_TOKEN;
-// ============================================================================
-// Public API
-// ============================================================================
-/**
- * Resolve extracted party names to existing ShadowDB contact records.
- *
- * Queries the DB for all contact-category records, then fuzzy-matches each
- * party name against the extracted contact name (title prefix before " — ").
- *
- * Returns one ResolvedParty per input name, in the same order.
- * memoryId is null if no confident match exists.
- *
- * NEVER throws — on DB failure, returns all null memoryIds.
- *
- * @param parties - Extracted party names from a document
- * @param db      - Database client (injected for testability)
- * @returns       - Resolved party references, same length as input
- */
-export async function resolveParties(parties, db) {
+export async function resolveParties(parties, db, resolver) {
     if (parties.length === 0)
         return [];
     // Fetch all contact records once — cheaper than per-name queries at our scale
@@ -74,7 +56,22 @@ export async function resolveParties(parties, db) {
     }
     // Build lookup: contact name (normalized) → row
     const contactIndex = buildContactIndex(contacts);
-    return parties.map((party) => matchParty(party, contactIndex));
+    const results = parties.map((party) => matchParty(party, contactIndex));
+    // Fire-and-forget: register each party as an EntityCandidate in the resolver.
+    // This builds the entity graph incrementally as messages are ingested.
+    // Errors are swallowed — resolver failure never blocks ingestion.
+    if (resolver) {
+        for (const party of parties) {
+            resolver.resolve({
+                type: "person",
+                name: party,
+                sourceId: "parties",
+                sourceRecordId: `parties:${party}`,
+                confidence: 0.50, // name-only — resolver applies its own confidence logic
+            }).catch(() => { });
+        }
+    }
+    return results;
 }
 /**
  * Extract and normalize contact names from DB rows.

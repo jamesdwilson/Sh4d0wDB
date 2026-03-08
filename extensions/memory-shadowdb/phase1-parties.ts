@@ -100,9 +100,24 @@ const MIN_ACCEPT_SCORE = SCORE_SINGLE_TOKEN;
  * @param db      - Database client (injected for testability)
  * @returns       - Resolved party references, same length as input
  */
+/**
+ * Minimal EntityResolver interface for resolveParties wiring.
+ * Matches the full EntityResolver from phase3b-entity-resolver.ts — use duck typing.
+ */
+export interface PartyEntityResolver {
+  resolve(candidate: {
+    type: "person";
+    name: string;
+    sourceId: string;
+    sourceRecordId: string;
+    confidence: number;
+  }): Promise<unknown>;
+}
+
 export async function resolveParties(
   parties: string[],
   db: DbClient,
+  resolver?: PartyEntityResolver,
 ): Promise<ResolvedParty[]> {
   if (parties.length === 0) return [];
 
@@ -126,8 +141,24 @@ export async function resolveParties(
 
   // Build lookup: contact name (normalized) → row
   const contactIndex = buildContactIndex(contacts);
+  const results = parties.map((party) => matchParty(party, contactIndex));
 
-  return parties.map((party) => matchParty(party, contactIndex));
+  // Fire-and-forget: register each party as an EntityCandidate in the resolver.
+  // This builds the entity graph incrementally as messages are ingested.
+  // Errors are swallowed — resolver failure never blocks ingestion.
+  if (resolver) {
+    for (const party of parties) {
+      resolver.resolve({
+        type: "person",
+        name: party,
+        sourceId: "parties",
+        sourceRecordId: `parties:${party}`,
+        confidence: 0.50, // name-only — resolver applies its own confidence logic
+      }).catch(() => {});
+    }
+  }
+
+  return results;
 }
 
 // ============================================================================

@@ -67,5 +67,18 @@ export interface ResolvedParty {
  * @param db      - Database client (injected for testability)
  * @returns       - Resolved party references, same length as input
  */
-export declare function resolveParties(parties: string[], db: DbClient): Promise<ResolvedParty[]>;
+/**
+ * Minimal EntityResolver interface for resolveParties wiring.
+ * Matches the full EntityResolver from phase3b-entity-resolver.ts — use duck typing.
+ */
+export interface PartyEntityResolver {
+    resolve(candidate: {
+        type: "person";
+        name: string;
+        sourceId: string;
+        sourceRecordId: string;
+        confidence: number;
+    }): Promise<unknown>;
+}
+export declare function resolveParties(parties: string[], db: DbClient, resolver?: PartyEntityResolver): Promise<ResolvedParty[]>;
 export {};

@@ -158,3 +158,81 @@ test('resolveParties no match has matchScore = 0', async () => {
   const result = await resolveParties(['Zzz Nomatch'], db);
   assert.equal(result[0].matchScore, 0);
 });
+
+// ============================================================================
+// EntityResolver wiring (new in Phase 3b)
+// ============================================================================
+
+/**
+ * Mock EntityResolver — records which candidates were passed to resolve().
+ * The real resolver writes to the DB; the mock just captures calls.
+ */
+function mockResolver() {
+  const resolved = [];
+  return {
+    resolver: {
+      async resolve(candidate) {
+        resolved.push(candidate);
+        return null; // mock always returns null (no DB)
+      },
+      async merge() {},
+      async addEdge() {},
+    },
+    resolved,
+  };
+}
+
+test('resolveParties calls resolver.resolve() for each party when resolver provided', async () => {
+  const db = mockDb(FIXTURE_CONTACTS);
+  const { resolver, resolved } = mockResolver();
+
+  await resolveParties(['Alice Example', 'Bob Unknown'], db, resolver);
+
+  assert.equal(resolved.length, 2, 'should call resolve() for each party');
+  assert.ok(resolved.some(c => c.name === 'Alice Example'), 'should pass Alice to resolver');
+  assert.ok(resolved.some(c => c.name === 'Bob Unknown'), 'should pass Bob to resolver');
+});
+
+test('resolveParties passes correct candidate type to resolver', async () => {
+  const db = mockDb(FIXTURE_CONTACTS);
+  const { resolver, resolved } = mockResolver();
+
+  await resolveParties(['Alice Example'], db, resolver);
+
+  assert.equal(resolved[0].type, 'person', 'candidate type should be "person"');
+  assert.equal(resolved[0].sourceId, 'parties', 'sourceId should identify the source');
+});
+
+test('resolveParties still returns correct fuzzy match when resolver provided', async () => {
+  const db = mockDb(FIXTURE_CONTACTS);
+  const { resolver } = mockResolver();
+
+  const result = await resolveParties(['Alice Example'], db, resolver);
+
+  // Fuzzy match should still work — resolver is additive, not replacing
+  assert.equal(result[0].memoryId, 1001, 'should still resolve Alice to memoryId 1001');
+});
+
+test('resolveParties does not throw when resolver.resolve() throws', async () => {
+  const db = mockDb(FIXTURE_CONTACTS);
+  const throwingResolver = {
+    async resolve() { throw new Error('resolver exploded'); },
+    async merge() {},
+    async addEdge() {},
+  };
+
+  let result;
+  await assert.doesNotReject(async () => {
+    result = await resolveParties(['Alice Example'], db, throwingResolver);
+  });
+  // Should still return the fuzzy match result
+  assert.ok(Array.isArray(result), 'should still return results');
+  assert.equal(result[0].memoryId, 1001, 'fuzzy match should still work despite resolver failure');
+});
+
+test('resolveParties works unchanged when no resolver provided (backward compat)', async () => {
+  const db = mockDb(FIXTURE_CONTACTS);
+  // No resolver argument — original behavior
+  const result = await resolveParties(['Alice Example'], db);
+  assert.equal(result[0].memoryId, 1001, 'should still work without resolver');
+});
