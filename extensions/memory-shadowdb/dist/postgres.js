@@ -306,7 +306,7 @@ export class PostgresStore extends MemoryStore {
      * Returns the record id, or null if not found.
      */
     async findByOperationId(operationId) {
-        const result = await this.pool.query(`SELECT id FROM memories
+        const result = await this.getPool().query(`SELECT id FROM memories
        WHERE metadata->>'operationId' = $1
          AND deleted_at IS NULL
        ORDER BY id ASC

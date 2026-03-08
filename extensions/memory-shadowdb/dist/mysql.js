@@ -259,6 +259,10 @@ export class MySQLStore extends MemoryStore {
     // ==========================================================================
     // Write operations
     // ==========================================================================
+    async findByOperationId(operationId) {
+        const [rows] = await this.pool.query(`SELECT id FROM memories WHERE JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.operationId')) = ? AND deleted_at IS NULL ORDER BY id ASC LIMIT 1`, [operationId]);
+        return rows[0]?.id ?? null;
+    }
     async insertRecord(params) {
         const result = await this.exec(`INSERT INTO ${this.config.table} (content, category, title, tags, record_type, metadata, parent_id, priority) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [params.content, params.category, params.title, JSON.stringify(params.tags), params.record_type,
             JSON.stringify(params.metadata), params.parent_id, params.priority]);

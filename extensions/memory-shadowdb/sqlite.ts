@@ -333,6 +333,13 @@ export class SQLiteStore extends MemoryStore {
   // Write operations
   // ==========================================================================
 
+  protected async findByOperationId(operationId: string): Promise<number | null> {
+    const row = (this.db as any).prepare(
+      `SELECT id FROM memories WHERE json_extract(metadata, '$.operationId') = ? AND deleted_at IS NULL ORDER BY id ASC LIMIT 1`
+    ).get(operationId) as { id: number } | undefined;
+    return row?.id ?? null;
+  }
+
   protected async insertRecord(params: {
     content: string;
     category: string;

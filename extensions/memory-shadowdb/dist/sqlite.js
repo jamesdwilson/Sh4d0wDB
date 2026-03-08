@@ -290,6 +290,10 @@ export class SQLiteStore extends MemoryStore {
     // ==========================================================================
     // Write operations
     // ==========================================================================
+    async findByOperationId(operationId) {
+        const row = this.db.prepare(`SELECT id FROM memories WHERE json_extract(metadata, '$.operationId') = ? AND deleted_at IS NULL ORDER BY id ASC LIMIT 1`).get(operationId);
+        return row?.id ?? null;
+    }
     async insertRecord(params) {
         const result = this.db.prepare(`
       INSERT INTO ${this.config.table} (content, category, title, tags, record_type, metadata, parent_id, priority)

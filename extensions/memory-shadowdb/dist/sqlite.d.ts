@@ -56,6 +56,7 @@ export declare class SQLiteStore extends MemoryStore {
         path: string;
     }>;
     protected getPrimerRows(): Promise<PrimerRow[]>;
+    protected findByOperationId(operationId: string): Promise<number | null>;
     protected insertRecord(params: {
         content: string;
         category: string;

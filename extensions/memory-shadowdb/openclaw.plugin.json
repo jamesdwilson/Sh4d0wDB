@@ -217,6 +217,46 @@
             "description": "Model id sent to reranker service. Default: reranker"
           }
         }
+      },
+      "ingestion": {
+        "type": "object",
+        "description": "Gmail ingestion pipeline configuration",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "account": {
+            "type": "string",
+            "description": "gog CLI account email (primary Gmail account)"
+          },
+          "scoringModel": {
+            "type": "string",
+            "description": "Model alias or provider/model for scoreInterestingness LLM gate",
+            "default": "local-qwen35"
+          },
+          "scoreThreshold": {
+            "type": "number",
+            "description": "Minimum LLM score [0-10] to embed a document",
+            "default": 5
+          },
+          "maxMessagesPerRun": {
+            "type": "number",
+            "description": "Max messages to process per ingestion run (0 = unlimited)",
+            "default": 100
+          },
+          "searchQuery": {
+            "type": "string",
+            "description": "Additional gog gmail search filter (appended to watermark date query)",
+            "default": ""
+          },
+          "logPath": {
+            "type": "string",
+            "description": "Path for ingestion run logs",
+            "default": "~/models/eval-results/gmail-ingestion.log"
+          }
+        },
+        "additionalProperties": false
       }
     }
   }

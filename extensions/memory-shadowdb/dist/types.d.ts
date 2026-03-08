@@ -165,6 +165,35 @@ export type PluginConfig = {
          */
         model?: string;
     };
+    /**
+     * Gmail ingestion pipeline configuration.
+     * Controls the watermark-based ingestion runner (phase1-runner.ts).
+     */
+    ingestion?: {
+        /** Enable/disable ingestion pipeline. Default: true */
+        enabled?: boolean;
+        /** gog CLI account email (primary Gmail account). E.g. "james@jameswilson.name" */
+        account?: string;
+        /**
+         * Model alias or provider/model for scoreInterestingness LLM gate.
+         * Must be an OpenAI-compatible endpoint. Default: "local-qwen35"
+         */
+        scoringModel?: string;
+        /**
+         * Minimum LLM interestingness score [0-10] to embed a document.
+         * Receipts/shipping already hard-vetoed before this gate.
+         * 5 = keep newsletters + business correspondence; drop promo blasts
+         * 6 = stricter; keep only clear business signal
+         * Default: 5
+         */
+        scoreThreshold?: number;
+        /** Max messages to process per ingestion run. 0 = unlimited. Default: 100 */
+        maxMessagesPerRun?: number;
+        /** Additional gog gmail search filter appended to watermark date query. Default: "" */
+        searchQuery?: string;
+        /** Path for ingestion run logs. Default: "~/models/eval-results/gmail-ingestion.log" */
+        logPath?: string;
+    };
     /** Write operations configuration (disabled by default) */
     writes?: {
         /**
