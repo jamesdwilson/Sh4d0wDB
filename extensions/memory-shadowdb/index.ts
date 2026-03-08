@@ -27,6 +27,7 @@
  */
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { AnyAgentTool } from "openclaw/plugin-sdk";
 import { Type } from "@sinclair/typebox";
 
 import type { PluginConfig, SearchResult, WriteResult } from "./types.js";
@@ -247,7 +248,7 @@ const memoryShadowdbPlugin = {
           // Read from the agent config's primary model, or the session-level override if available.
           const currentModel =
             (ctx as Record<string, unknown>)?.model as string | undefined ||
-            api.config?.agents?.defaults?.model?.primary as string | undefined;
+            (() => { const m = api.config?.agents?.defaults?.model; return typeof m === "object" && m !== null ? (m as { primary?: string }).primary : (m as string | undefined); })();
           const effectiveMaxChars = resolveMaxCharsForModel(primerCfg, currentModel);
 
           const primer = await s.getPrimerContext(effectiveMaxChars);
@@ -429,7 +430,7 @@ const memoryShadowdbPlugin = {
           },
         };
 
-        return [memorySearchTool, memoryGetTool];
+        return [memorySearchTool, memoryGetTool] as AnyAgentTool[];
       },
       { names: ["memory_search", "memory_get"] },
     );
@@ -551,7 +552,7 @@ const memoryShadowdbPlugin = {
             },
           };
 
-          return [memoryWriteTool, memoryUpdateTool, memoryDeleteTool, memoryUndeleteTool];
+          return [memoryWriteTool, memoryUpdateTool, memoryDeleteTool, memoryUndeleteTool] as AnyAgentTool[];
         },
         { names: ["memory_write", "memory_update", "memory_delete", "memory_undelete"] },
       );
@@ -609,7 +610,7 @@ const memoryShadowdbPlugin = {
               }
             },
           };
-          return [memoryListTool];
+          return [memoryListTool] as AnyAgentTool[];
         },
         { names: ["memory_list"] },
       );
@@ -663,7 +664,7 @@ const memoryShadowdbPlugin = {
             }
           },
         };
-        return [memoryAssembleTool];
+        return [memoryAssembleTool] as AnyAgentTool[];
       },
       { names: ["memory_assemble"] },
     );
@@ -706,7 +707,7 @@ const memoryShadowdbPlugin = {
             }
           },
         };
-        return [memoryGraphTool];
+        return [memoryGraphTool] as AnyAgentTool[];
       },
       { names: ["memory_graph"] },
     );
@@ -744,7 +745,7 @@ const memoryShadowdbPlugin = {
             }
           },
         };
-        return [memoryConflictsTool];
+        return [memoryConflictsTool] as AnyAgentTool[];
       },
       { names: ["memory_conflicts"] },
     );
@@ -782,7 +783,7 @@ const memoryShadowdbPlugin = {
             }
           },
         };
-        return [memoryDecayPreviewTool];
+        return [memoryDecayPreviewTool] as AnyAgentTool[];
       },
       { names: ["memory_decay_preview"] },
     );

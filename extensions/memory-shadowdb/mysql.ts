@@ -62,6 +62,8 @@ export class MySQLStore extends MemoryStore {
 
   private async getPool(): Promise<Pool> {
     if (!this.pool) {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore — mysql2 is an optional peer dependency; not installed in all environments
       const mysql = await import("mysql2/promise");
       this.pool = mysql.createPool({
         uri: this.connectionString,

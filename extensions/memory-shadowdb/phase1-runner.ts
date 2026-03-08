@@ -458,8 +458,9 @@ export async function runIngestion(
           const dossier = await fetchDossierById(db, party.memoryId).catch(() => null);
           signalFn(party.memoryId, content, dossier, llm)
             .then((delta) => {
-              if (delta && typeof delta === "object" && "summary" in delta) {
-                console.log(`[ingestion:phase3] ${(delta as { summary: string; confidence: number }).summary} (confidence: ${(delta as { confidence: number }).confidence.toFixed(2)})`);
+              if (delta && typeof delta === "object" && "summary" in delta && "confidence" in delta) {
+                const d = delta as unknown as { summary: string; confidence: number };
+                console.log(`[ingestion:phase3] ${d.summary} (confidence: ${d.confidence.toFixed(2)})`);
               }
             })
             .catch((err) => {

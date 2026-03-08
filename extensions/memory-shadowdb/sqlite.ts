@@ -68,6 +68,8 @@ export class SQLiteStore extends MemoryStore {
 
     // Try to load sqlite-vec extension
     try {
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore — sqlite-vec is an optional peer dependency; not installed in all environments
       const sqliteVec = await import("sqlite-vec");
       sqliteVec.load(this.db);
       this.hasVec = true;
