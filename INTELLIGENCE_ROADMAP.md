@@ -227,7 +227,7 @@ export function crossReferenceDocument(
 ```
 
 ### Definition of Done
-- [ ] `onNewContactSignal` stub wired into ingestion runner (callback, no-op default)
+- [x] `onNewContactSignal` hook wired into `runIngestion` (commit 6d3516d) and `runDataSourceIngestion` (commit 5cc3312)
 - [ ] `extractBehavioralSignals` — unit tests with 5+ fixture messages
 - [ ] `computePsychographicDelta` — unit tests covering DISC shift, no-change, and threshold edge cases
 - [ ] `crossReferenceDocument` — integration test: ingest 2 related docs, verify pattern detected
@@ -413,10 +413,10 @@ Nothing else in the pipeline changes.
 
 ### Implementation Order (TDD, both gaps)
 
-1. `llm-router.test.mjs` written → `llm-router.ts` implemented → commit
-2. `data-source.test.mjs` written → `data-source.ts` implemented → commit  ← NEXT
-3. ~~Callers updated: `phase1-scoring`, `phase3-contact-signal` accept `TieredLlmClient`~~ ✅ done (ee0c221)
-4. First `DataSource<T>` impl: `AppleContactsSource`
+1. ~~`llm-router.test.mjs` written → `llm-router.ts` implemented → commit~~ ✅ done (c718bcb) — 42 tests
+2. ~~`data-source.test.mjs` written → `data-source.ts` implemented → commit~~ ✅ done (5cc3312) — 23 tests
+3. ~~Callers updated: `phase1-scoring`, `phase3-contact-signal` accept `TieredLlmClient`~~ ✅ done (ee0c221) — 11 tests
+4. First `DataSource<T>` impl: `AppleContactsSource` ← NEXT
 
 ---
 
@@ -697,11 +697,16 @@ Every contact dossier carries a version: `v[methodology]:[source_bitmask]`
 | Phase | Status | Tests | HEAD |
 |-------|--------|-------|------|
 | 0 — Foundation | ✅ Complete | 56 | `8ea2eed` |
-| 1 — Ingestion | ✅ Complete | 108 | `fd1a5e2` |
+| 1 — Ingestion (Gmail + iMessage) | ✅ Complete | 108 | `fd1a5e2` |
+| Arch — LlmRouter (TieredLlmClient) | ✅ Complete | 42 | `c718bcb` |
+| Arch — Tier wiring (scoring + signals) | ✅ Complete | 11 | `ee0c221` |
+| Arch — DataSource\<T\> + runner | ✅ Complete | 23 | `5cc3312` |
+| 3 — Contact Re-Scoring (foundation) | ✅ Complete | 19 | `6d3516d` |
 | 2 — PDF/Contract | 🔲 Planned | — | — |
-| 3 — Contact Re-Scoring | 🔲 Planned | — | — |
+| 3 — Contact Re-Scoring (full) | 🔲 In progress | — | — |
 | 4 — LinkedIn | 🔲 Planned | — | — |
 | 5 — Network Intelligence | 🔲 Planned | — | — |
 
-**Total test count:** 444/444 passing, zero RED
+**Total test count:** 539/539 passing, zero RED, zero TS errors
 **Repo:** `git@github.com:jamesdwilson/Sh4d0wDB.git`
+**HEAD:** `5cc3312`
