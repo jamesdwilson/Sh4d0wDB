@@ -130,8 +130,12 @@ export declare function extractGmailContent(raw: GogGmailMessage): ExtractedCont
  *
  * Returns false for:
  *   - Empty text
- *   - Transactional/automated emails (shipment, receipt, mailing list)
- *     that lack meaningful entities
+ *   - Hard-vetoed transactional content: receipts, shipping, order confirmations,
+ *     bank/card alerts, auth codes, subscription lifecycle notices
+ *
+ * Newsletters and industry digests are NOT vetoed — they pass to
+ * scoreInterestingness() which handles precision. A VC newsletter or founder
+ * digest scores 5-7 and is worth keeping; a promo blast scores 1-2 and drops.
  *
  * NOTE: This is a FAST GATE — designed for recall, not precision.
  * Interestingness scoring (LLM) handles the precision pass.

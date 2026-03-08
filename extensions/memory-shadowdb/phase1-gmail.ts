@@ -160,14 +160,32 @@ const ENTITY_PATTERNS: RegExp[] = [
 ];
 
 /**
- * Patterns that, if the ENTIRE text matches or is dominated by them,
- * indicate the message is a transactional/automated email not worth indexing.
- * Used to veto passesEntityFilter even if other patterns matched.
+ * Hard-veto patterns — transactional/automated emails NEVER worth indexing.
+ * Dropped before the entity filter and LLM gate.
+ *
+ * Covers: retail receipts, shipping, bank/card alerts, order confirmations,
+ * auth codes, subscription lifecycle notices.
+ *
+ * Newsletters and industry digests are NOT vetoed here — they pass through
+ * to scoreInterestingness() which scores on content quality. A VC newsletter
+ * or founder digest can score 5-7 and is worth keeping.
  */
-const SPAM_VETO_PATTERNS: RegExp[] = [
-  /your (order|package|shipment|delivery|receipt|subscription)/i,
+const TRANSACTIONAL_VETO_PATTERNS: RegExp[] = [
+  // Retail / e-commerce receipts and shipping
+  /your (order|purchase|receipt) (has been|is|was|#)/i,
+  /order (confirmation|number|#\d)/i,
+  /\b(shipped|out for delivery|tracking number)\b/i,
   /track(ing)? (your )?(package|order|shipment)/i,
-  /unsubscribe|mailing list|email preferences/i,
+  /estimated (delivery|arrival)/i,
+  // Bank / card / financial system alerts
+  /your (account|card|payment|transaction|statement) (has|is|was) (been )?(updated|charged|declined|processed)/i,
+  /\b(autopay|auto.pay|direct debit|payment due|minimum payment)\b/i,
+  // Auth / security / system
+  /\b(verification code|one.time (code|password)|OTP)\b/i,
+  /reset your password/i,
+  /confirm your (email|account)/i,
+  // Subscription lifecycle (not newsletters — those have editorial content)
+  /your (subscription|trial|plan|membership) (has|will|is).*(renew|expir|cancel)/i,
 ];
 
 /** Approximate chars per token (conservative estimate) */
@@ -255,8 +273,12 @@ export function extractGmailContent(raw: GogGmailMessage): ExtractedContent | nu
  *
  * Returns false for:
  *   - Empty text
- *   - Transactional/automated emails (shipment, receipt, mailing list)
- *     that lack meaningful entities
+ *   - Hard-vetoed transactional content: receipts, shipping, order confirmations,
+ *     bank/card alerts, auth codes, subscription lifecycle notices
+ *
+ * Newsletters and industry digests are NOT vetoed — they pass to
+ * scoreInterestingness() which handles precision. A VC newsletter or founder
+ * digest scores 5-7 and is worth keeping; a promo blast scores 1-2 and drops.
  *
  * NOTE: This is a FAST GATE — designed for recall, not precision.
  * Interestingness scoring (LLM) handles the precision pass.
@@ -267,13 +289,13 @@ export function extractGmailContent(raw: GogGmailMessage): ExtractedContent | nu
 export function passesEntityFilter(text: string): boolean {
   if (!text || text.trim().length === 0) return false;
 
-  // Check for spam veto first — these override entity matches
-  const isSpam = SPAM_VETO_PATTERNS.some((p) => p.test(text)) &&
-                 !ENTITY_PATTERNS.slice(0, 6).some((p) => p.test(text)); // Allow if strong deal signals
+  // Hard veto: transactional/automated content — drop unconditionally.
+  // Receipts, shipping, auth codes, bank alerts are never worth indexing
+  // regardless of whether they mention dollar amounts or dates.
+  // Newsletters are intentionally NOT vetoed here — they go to the LLM gate.
+  if (TRANSACTIONAL_VETO_PATTERNS.some((p) => p.test(text))) return false;
 
-  if (isSpam) return false;
-
-  // Pass if ANY entity pattern matches
+  // Pass if ANY entity pattern matches — broad recall, LLM handles precision
   return ENTITY_PATTERNS.some((pattern) => pattern.test(text));
 }
 

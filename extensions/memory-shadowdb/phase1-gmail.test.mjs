@@ -214,21 +214,42 @@ test('passesEntityFilter returns false for empty string', () => {
   assert.equal(passesEntityFilter(''), false);
 });
 
-test('passesEntityFilter returns false for generic newsletter content', () => {
+test('passesEntityFilter returns true for newsletter/industry digest (passes to LLM gate)', () => {
+  // Newsletters are NOT hard-vetoed — they pass to scoreInterestingness()
+  // A VC digest or founder newsletter is worth scoring; the LLM decides keep/drop
   assert.equal(
-    passesEntityFilter('Thank you for subscribing. Click here to unsubscribe from our mailing list.'),
+    passesEntityFilter('This week in venture: Andreessen Horowitz led a $50M Series B for Acme AI. Three things founders should know about the current fundraising climate.'),
+    true,
+  );
+});
+
+test('passesEntityFilter returns false for hard-vetoed shipping notification', () => {
+  assert.equal(
+    passesEntityFilter('Your order has been shipped. Tracking number: 1Z999AA10123456784. Estimated delivery: March 10.'),
     false,
   );
 });
 
-test('passesEntityFilter: retail receipt with dollar amount passes entity filter (LLM gate rejects it)', () => {
-  // A retail receipt has a dollar amount — it passes the fast entity gate.
-  // The LLM interestingness scorer (scoreInterestingness) is responsible for
-  // rejecting low-signal emails like receipts. The entity filter is intentionally
-  // broad to maximize recall; precision is handled downstream.
+test('passesEntityFilter returns false for hard-vetoed order confirmation', () => {
+  assert.equal(
+    passesEntityFilter('Order confirmation #98765. Thank you for your purchase. Your order is being processed.'),
+    false,
+  );
+});
+
+test('passesEntityFilter returns false for hard-vetoed auth code email', () => {
+  assert.equal(
+    passesEntityFilter('Your verification code is 847291. This code expires in 10 minutes. Do not share it.'),
+    false,
+  );
+});
+
+test('passesEntityFilter: retail receipt is hard-vetoed (never reaches LLM gate)', () => {
+  // Receipts match TRANSACTIONAL_VETO_PATTERNS unconditionally — even with a
+  // dollar amount, they are dropped before scoreInterestingness() is called.
   assert.equal(
     passesEntityFilter('Your receipt #12345. Total: $45.99. Thank you for your purchase.'),
-    true,  // passes entity filter — dollar amount detected; LLM will score it low
+    false,  // hard-vetoed by transactional pattern
   );
 });
 
