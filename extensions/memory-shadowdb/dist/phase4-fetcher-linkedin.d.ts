@@ -132,12 +132,71 @@ export declare function parseThreadMessages(html: string, threadId: string): Lin
  * @returns      - ExtractedContent ready for entity filter → scoring → write, or null
  */
 export declare function threadToExtractedContent(thread: LinkedInThreadContent): ExtractedContent | null;
+/**
+ * Evasion strategy for LinkedIn scraping.
+ *
+ * LinkedIn detects automation via:
+ *   - Uniform inter-request timing (bots are too consistent)
+ *   - Missing mouse movement / scroll events before clicks
+ *   - Navigator fingerprinting (headless Chrome flags)
+ *   - Suspiciously fast page transitions
+ *   - High request frequency from a single session
+ *
+ * These fields configure the evasion layer. None are implemented yet —
+ * the interface is the contract. Implementations live in BrowserClient
+ * (e.g. randomized delays, human-like scroll, stealth plugin config).
+ *
+ * Leave all fields undefined to use safe defaults (conservative delays).
+ */
+export interface LinkedInEvasionConfig {
+    /**
+     * Jitter factor applied to delayMs: actual delay = delayMs * (1 ± jitter).
+     * E.g. jitter=0.3 means delay varies ±30% — looks human, not robotic.
+     * Default: 0.3. Set to 0 for deterministic delays (tests only).
+     */
+    jitter?: number;
+    /**
+     * If true, emit random mouse-move events before clicking or navigating.
+     * Requires BrowserClient to implement moveMouse() — no-op if not supported.
+     * Default: false (not yet implemented).
+     */
+    simulateMouseMovement?: boolean;
+    /**
+     * If true, scroll slowly through the inbox before reading threads.
+     * Mimics human reading behavior; triggers lazy-load as a side effect.
+     * Default: false (not yet implemented).
+     */
+    humanScroll?: boolean;
+    /**
+     * If true, randomize the order threads are fetched (not newest-first).
+     * Reduces the "bot always reads in order" fingerprint.
+     * Default: false.
+     */
+    randomizeOrder?: boolean;
+    /**
+     * Maximum threads to fetch in a single session before pausing.
+     * LinkedIn's abuse detection is session-scoped — fetching 200 threads
+     * in one session is a red flag. Use small batches and rely on watermark
+     * to resume where you left off.
+     * Default: 20 (conservative).
+     */
+    sessionBatchLimit?: number;
+}
 /** Options for the LinkedIn fetcher */
 export interface LinkedInFetcherOptions {
     /** Maximum number of threads to return per run (default: 50) */
     maxThreads?: number;
-    /** Delay in ms between thread fetches for rate limiting (default: 1000) */
+    /**
+     * Base delay in ms between thread fetches.
+     * Actual delay = delayMs * (1 ± evasion.jitter).
+     * Default: 2000ms — conservative. Do not set below 500ms in production.
+     */
     delayMs?: number;
+    /**
+     * Evasion configuration. All fields are optional with safe defaults.
+     * Not yet implemented — reserved for future anti-detection work.
+     */
+    evasion?: LinkedInEvasionConfig;
 }
 /**
  * LinkedIn message fetcher implementing the MessageFetcher interface.
@@ -163,6 +222,7 @@ export declare class LinkedInFetcher implements MessageFetcher {
     readonly source = "linkedin";
     private readonly maxThreads;
     private readonly delayMs;
+    private readonly evasion;
     constructor(browser: BrowserClient, options?: LinkedInFetcherOptions);
     /**
      * Return threadIds for threads with messages newer than the watermark.
@@ -180,6 +240,15 @@ export declare class LinkedInFetcher implements MessageFetcher {
      * @returns        - Extracted content, or null to skip
      */
     fetchMessage(threadId: string): Promise<ExtractedContent | null>;
+    /**
+     * Sleep for delayMs ± jitter to avoid uniform timing fingerprint.
+     *
+     * With jitter=0.3 and delayMs=2000:
+     *   actual delay ∈ [1400ms, 2600ms] — looks human, not robotic.
+     *
+     * Set delayMs=0 in tests to skip delay entirely (jitter has no effect).
+     */
+    private jitteredDelay;
     /**
      * Inject data-thread-id attributes onto thread list items.
      * LinkedIn doesn't expose threadId in static HTML — we read the URL

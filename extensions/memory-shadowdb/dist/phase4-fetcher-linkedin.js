@@ -213,10 +213,20 @@ export class LinkedInFetcher {
     source = "linkedin";
     maxThreads;
     delayMs;
+    evasion;
     constructor(browser, options = {}) {
         this.browser = browser;
         this.maxThreads = options.maxThreads ?? 50;
-        this.delayMs = options.delayMs ?? 1_000;
+        // Default 2s between requests — conservative, human-paced.
+        // Lower values increase detection risk. Do not go below 500ms in production.
+        this.delayMs = options.delayMs ?? 2_000;
+        this.evasion = {
+            jitter: options.evasion?.jitter ?? 0.3,
+            simulateMouseMovement: options.evasion?.simulateMouseMovement ?? false,
+            humanScroll: options.evasion?.humanScroll ?? false,
+            randomizeOrder: options.evasion?.randomizeOrder ?? false,
+            sessionBatchLimit: options.evasion?.sessionBatchLimit ?? 20,
+        };
     }
     /**
      * Return threadIds for threads with messages newer than the watermark.
@@ -269,14 +279,28 @@ export class LinkedInFetcher {
             if (threadContent.participants.length === 0) {
                 threadContent.participants.push("Unknown");
             }
-            if (this.delayMs > 0) {
-                await new Promise(r => setTimeout(r, this.delayMs));
-            }
+            await this.jitteredDelay();
             return threadToExtractedContent(threadContent);
         }
         catch {
             return null;
         }
+    }
+    /**
+     * Sleep for delayMs ± jitter to avoid uniform timing fingerprint.
+     *
+     * With jitter=0.3 and delayMs=2000:
+     *   actual delay ∈ [1400ms, 2600ms] — looks human, not robotic.
+     *
+     * Set delayMs=0 in tests to skip delay entirely (jitter has no effect).
+     */
+    async jitteredDelay() {
+        if (this.delayMs <= 0)
+            return;
+        const j = this.evasion.jitter;
+        const factor = 1 + (Math.random() * 2 - 1) * j; // uniform in [1-j, 1+j]
+        const actual = Math.round(this.delayMs * factor);
+        await new Promise(r => setTimeout(r, actual));
     }
     /**
      * Inject data-thread-id attributes onto thread list items.

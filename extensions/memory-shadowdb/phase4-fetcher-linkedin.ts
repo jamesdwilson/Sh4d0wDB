@@ -275,12 +275,76 @@ export function threadToExtractedContent(thread: LinkedInThreadContent): Extract
 // LinkedInFetcher — implements MessageFetcher
 // ============================================================================
 
+/**
+ * Evasion strategy for LinkedIn scraping.
+ *
+ * LinkedIn detects automation via:
+ *   - Uniform inter-request timing (bots are too consistent)
+ *   - Missing mouse movement / scroll events before clicks
+ *   - Navigator fingerprinting (headless Chrome flags)
+ *   - Suspiciously fast page transitions
+ *   - High request frequency from a single session
+ *
+ * These fields configure the evasion layer. None are implemented yet —
+ * the interface is the contract. Implementations live in BrowserClient
+ * (e.g. randomized delays, human-like scroll, stealth plugin config).
+ *
+ * Leave all fields undefined to use safe defaults (conservative delays).
+ */
+export interface LinkedInEvasionConfig {
+  /**
+   * Jitter factor applied to delayMs: actual delay = delayMs * (1 ± jitter).
+   * E.g. jitter=0.3 means delay varies ±30% — looks human, not robotic.
+   * Default: 0.3. Set to 0 for deterministic delays (tests only).
+   */
+  jitter?: number;
+
+  /**
+   * If true, emit random mouse-move events before clicking or navigating.
+   * Requires BrowserClient to implement moveMouse() — no-op if not supported.
+   * Default: false (not yet implemented).
+   */
+  simulateMouseMovement?: boolean;
+
+  /**
+   * If true, scroll slowly through the inbox before reading threads.
+   * Mimics human reading behavior; triggers lazy-load as a side effect.
+   * Default: false (not yet implemented).
+   */
+  humanScroll?: boolean;
+
+  /**
+   * If true, randomize the order threads are fetched (not newest-first).
+   * Reduces the "bot always reads in order" fingerprint.
+   * Default: false.
+   */
+  randomizeOrder?: boolean;
+
+  /**
+   * Maximum threads to fetch in a single session before pausing.
+   * LinkedIn's abuse detection is session-scoped — fetching 200 threads
+   * in one session is a red flag. Use small batches and rely on watermark
+   * to resume where you left off.
+   * Default: 20 (conservative).
+   */
+  sessionBatchLimit?: number;
+}
+
 /** Options for the LinkedIn fetcher */
 export interface LinkedInFetcherOptions {
   /** Maximum number of threads to return per run (default: 50) */
   maxThreads?: number;
-  /** Delay in ms between thread fetches for rate limiting (default: 1000) */
+  /**
+   * Base delay in ms between thread fetches.
+   * Actual delay = delayMs * (1 ± evasion.jitter).
+   * Default: 2000ms — conservative. Do not set below 500ms in production.
+   */
   delayMs?: number;
+  /**
+   * Evasion configuration. All fields are optional with safe defaults.
+   * Not yet implemented — reserved for future anti-detection work.
+   */
+  evasion?: LinkedInEvasionConfig;
 }
 
 const LINKEDIN_MESSAGING_URL = "https://www.linkedin.com/messaging/";
@@ -309,13 +373,23 @@ export class LinkedInFetcher implements MessageFetcher {
 
   private readonly maxThreads: number;
   private readonly delayMs: number;
+  private readonly evasion: Required<LinkedInEvasionConfig>;
 
   constructor(
     private readonly browser: BrowserClient,
     options: LinkedInFetcherOptions = {},
   ) {
     this.maxThreads = options.maxThreads ?? 50;
-    this.delayMs = options.delayMs ?? 1_000;
+    // Default 2s between requests — conservative, human-paced.
+    // Lower values increase detection risk. Do not go below 500ms in production.
+    this.delayMs = options.delayMs ?? 2_000;
+    this.evasion = {
+      jitter:                options.evasion?.jitter                ?? 0.3,
+      simulateMouseMovement: options.evasion?.simulateMouseMovement ?? false,
+      humanScroll:           options.evasion?.humanScroll           ?? false,
+      randomizeOrder:        options.evasion?.randomizeOrder        ?? false,
+      sessionBatchLimit:     options.evasion?.sessionBatchLimit     ?? 20,
+    };
   }
 
   /**
@@ -375,14 +449,28 @@ export class LinkedInFetcher implements MessageFetcher {
         threadContent.participants.push("Unknown");
       }
 
-      if (this.delayMs > 0) {
-        await new Promise(r => setTimeout(r, this.delayMs));
-      }
+      await this.jitteredDelay();
 
       return threadToExtractedContent(threadContent);
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Sleep for delayMs ± jitter to avoid uniform timing fingerprint.
+   *
+   * With jitter=0.3 and delayMs=2000:
+   *   actual delay ∈ [1400ms, 2600ms] — looks human, not robotic.
+   *
+   * Set delayMs=0 in tests to skip delay entirely (jitter has no effect).
+   */
+  private async jitteredDelay(): Promise<void> {
+    if (this.delayMs <= 0) return;
+    const j = this.evasion.jitter;
+    const factor = 1 + (Math.random() * 2 - 1) * j; // uniform in [1-j, 1+j]
+    const actual = Math.round(this.delayMs * factor);
+    await new Promise(r => setTimeout(r, actual));
   }
 
   /**
