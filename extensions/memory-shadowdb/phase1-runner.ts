@@ -171,10 +171,11 @@ export function buildSearchQuery(params: SearchQueryParams): string {
     parts.push(params.searchQuery.trim());
   }
 
-  // Default: exclude promotions + social noise if no extra query
-  // (still lets newsletters through — they're in Primary/Updates)
+  // Default: exclude promotions + social noise.
+  // Always include a positive term first so the query never starts with "-"
+  // (gog CLI interprets leading dashes as flags).
   if (!params.searchQuery?.trim()) {
-    parts.push("-in:promotions -in:social -in:spam");
+    parts.push("in:anywhere -category:promotions -category:social -in:spam -in:trash");
   }
 
   return parts.join(" ").trim();
