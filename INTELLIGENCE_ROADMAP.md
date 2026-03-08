@@ -1,108 +1,23 @@
 # ShadowDB Intelligence Initiative — Implementation Roadmap
 
-**Created:** 2026-03-07  
-**Author:** Claude (OpenClaw agent)  
-**Status:** Pre-implementation — roadmap phase  
-**DB Backup:** `backups/shadow_backup_20260307_182322.sql` (251MB)
+**Created:** 2026-03-07
+**Last updated:** 2026-03-07 23:20 CST
+**Status:** Phase 1 complete · Phase 2–5 planned
 
 ---
 
 ## High-Level Goals
 
-1. **Ingest everything interesting** — Gmail (1yr), contracts/PDFs, LinkedIn messages, Apple Notes
-2. **Curated, not comprehensive** — entity-filter first, LLM-score second, embed only what passes
+1. **Ingest everything interesting** — email, iMessage, LinkedIn, contracts/PDFs
+2. **Curated, not comprehensive** — hard veto → entity filter → LLM score gate → embed only what passes
 3. **Relevance + Confidence as separate dimensions** — not collapsed into one score
-4. **Temporal decay by record type** — timeless rules never decay; contact facts decay slowly; emails decay fast
-5. **Proactive pattern detection** — surface connections James didn't ask for, now and on a schedule
-6. **TDD throughout** — every module has tests written before implementation
-7. **Strong types** — TypeScript strict mode, no `any`, explicit interfaces for every function boundary
-8. **Frequent commits** — commit after each passing test suite, each migration, each module
-
----
-
-## Definition of Done — All Phases
-
-### Phase 0: Foundation (Schema + Types + Scoring) ✅ COMPLETE 2026-03-07
-- [x] Migrations 001–002 applied to `shadow` database, all reversible
-- [x] `memories` table has: `confidence`, `confidence_decay_rate`, `is_timeless`, `source`, `source_id`, `relevance_tier`
-- [x] `documents` table exists with indexes on `source`, `source_id`, `date`, `parties`
-- [x] `pattern_events` table exists with indexes on `type`, `detected_at`, `unresolved`
-- [x] `ingestion_runs` audit table exists
-- [x] Existing timeless records (rule/directive/playbook/system categories) have `is_timeless=TRUE` — 88 records
-- [x] Existing contacts/dossiers have `confidence_decay_rate=0.003851` (half-life 180d)
-- [x] `computeRecordConfidence()` — 7 tests passing
-- [x] `assignRelevanceTier()` — 6 tests passing
-- [x] `computeFinalScore()` — 5 tests passing
-- [x] `resolveDecayProfile()` — 9 tests passing
-- [x] `filterByTier()` — 6 tests passing
-- [x] `applySearchScoring()` — 15 tests passing, wired into search pipeline
-- [x] All three postgres.ts search legs (vector/FTS/fuzzy) SELECT confidence/tier columns
-- [x] `score` field in SearchResult now reflects finalScore (confidence × tier × rerank × vector)
-- [x] DB backup taken before (`shadow_backup_20260307_182322.sql`) and after (`shadow_backup_20260307_210427.sql`) migrations
-- [x] All migrations, scoring modules, and tests committed and pushed
-
-### Phase 1: Gmail Ingestion
-- [x] `gog` CLI confirmed working — `gog gmail get <id> --json` returns body + payload.headers shape
-- [x] `extractGmailContent()` strips HTML, quoted replies, footers — 7 tests passing
-- [x] `passesEntityFilter()` entity detection with spam veto — 10 tests passing (note: retail receipts pass entity filter; LLM gate rejects them downstream)
-- [x] `chunkDocument()` paragraph-aware chunking with overlap — 8 tests passing
-- [ ] `scoreInterestingness()` returns 0–10 float, uses local LLM (GLM-5/Groq), mocked in tests
-- [ ] `resolveParties()` fuzzy-matches against existing ShadowDB contacts — passes unit tests
-- [ ] Full backfill run: last 365 days ingested, interestingness ≥6 kept
-- [ ] Ingestion is idempotent — re-running produces zero duplicates (keyed on gmail message id)
-- [ ] `write()` deduplication via `operationId` in metadata implemented — fixes pre-existing RED test in `duplicate-detection-integration.test.mjs`
-- [ ] Each ingested email creates: 1 `documents` row + N `memories` chunk rows
-- [ ] Party names linked to existing contact records where matched
-- [ ] `ingestion_runs` audit row written for every run (started, finished, counts, status)
-- [ ] Ongoing cron: every 6 hours, new mail only
-- [ ] Integration test: ingest 5 fixture emails, verify DB state
-
-### Phase 2: PDF / Contract Ingestion
-- [ ] `extractPdfContent()` extracts text from PDF preserving section structure — passes unit tests with 3 fixture PDFs
-- [ ] `extractContractTerms()` identifies parties, dates, dollar values, obligation verbs — passes unit tests
-- [ ] Folder watcher configured for `~/Documents/Contracts/` (and user-configured paths)
-- [ ] Contracts scored at threshold ≥7 (higher bar than email)
-- [ ] Section-aware chunking: splits at headers/page boundaries
-- [ ] Idempotent: re-processing same file produces zero duplicates (keyed on file path hash)
-- [ ] Integration test: ingest 2 fixture contracts, verify DB state
-
-### Phase 3: Cross-Reference + Pattern Detection
-- [ ] `crossReferenceDocument()` runs on every new ingest — passes integration test
-- [ ] `classifyPassageRelationship()` correctly classifies contradiction vs confirmation vs drift — passes unit tests with 6 fixture pairs
-- [ ] `generateIntelligenceBrief()` produces structured brief from unresolved `pattern_events` — passes unit test
-- [ ] Pattern events stored in `pattern_events` table with correct type, confidence, record_ids
-- [ ] High-confidence patterns (≥0.80) trigger immediate SMS alert to James
-- [ ] Weekly cron: surface top 5 unresolved patterns as intelligence brief
-- [ ] Pattern types covered: `contradiction`, `relationship_graph`, `temporal_drift`, `recurring_term`
-- [ ] Integration test: ingest 2 related documents, verify pattern detected and stored
-
-### Phase 4: LinkedIn Ingestion
-- [ ] Browser scrape extracts LinkedIn messages from last 90 days
-- [ ] Message threads preserved as single units (not chunked mid-thread)
-- [ ] Entity filter + interestingness score applied (threshold ≥6)
-- [ ] Idempotent: keyed on thread URL + timestamp
-- [ ] Periodic cron: weekly scrape
-- [ ] Integration test: scrape fixture HTML, verify DB state
-
-### Phase 5: Intelligence Brief Cron
-- [ ] Weekly cron generates brief covering: new patterns, stale important contacts, temporal drift alerts
-- [ ] Brief delivered via SMS (OpenClaw message tool)
-- [ ] Brief includes: pattern type, confidence, which documents involved, one-line summary
-- [ ] "Resolved" flow: James can dismiss a pattern (sets `resolved_at`)
-- [ ] Dismissed patterns excluded from future briefs
-- [ ] Integration test: seed 3 pattern events, generate brief, verify format
-
----
-
-## Cross-Cutting Definition of Done (All Phases)
-- [ ] Every module: test file written before implementation file
-- [ ] Every function in public API: JSDoc contract comment present
-- [ ] No `any` in TypeScript — strict mode throughout
-- [ ] Every migration: reversible (UP + DOWN)
-- [ ] Every commit: after corresponding tests pass
-- [ ] No phase ships without DB backup taken first
-- [ ] Graceful degradation: ingestion failure never crashes OpenClaw
-- [ ] All external API calls (Gmail, LLM scorer) mockable via dependency injection
+4. **Temporal decay by record type** — timeless rules never decay; contacts decay slowly; emails decay fast
+5. **Contact re-scoring on new signal** — new message from a known contact triggers dossier delta analysis
+6. **Network-level intelligence** — bottleneck detection, competitive voids, obligation cascades, predictive positioning
+7. **Source-agnostic ingestion** — `MessageFetcher` interface; adding a new source = implementing one class
+8. **TDD throughout** — every module has tests written before implementation
+9. **Strong types** — TypeScript strict mode, no `any`, explicit interfaces for every function boundary
+10. **Frequent commits** — commit after each passing test suite, each migration, each module
 
 ---
 
@@ -111,539 +26,374 @@
 ```
 Sources                 Pipeline                  Storage              Intelligence
 ───────                 ────────                  ───────              ───────────
-Gmail          →        Extract                   documents            pattern_events
-Contracts/PDF  →        Entity Filter   →         doc_chunks    →      cross_refs
-LinkedIn       →        LLM Score       →         memories             weekly_brief
-Apple Notes    →        Chunk                     (existing)
-               →        Embed (Qwen3-4B)
-               →        Store + Link
-               →        Cross-reference Pass
+Gmail (gog)    ┐                                  memories             Contact re-scoring
+iMessage (imsg)├→ MessageFetcher                  (chunks, 2560d       Pattern detection
+LinkedIn       ┘  │                                embeddings)         Cross-reference engine
+                  ├→ extractContent()                                  Network analysis
+Contracts/PDF ──→ │                               documents            Opportunity briefing
+                  ├→ TRANSACTIONAL_VETO (regex)    (parent records)
+                  ├→ passesEntityFilter (regex)
+                  ├→ scoreInterestingness (LLM)   ingestion_runs
+                  ├→ chunkDocument()              (audit log)
+                  ├→ resolveParties()
+                  ├→ store.write() (dedup)        pattern_events
+                  └→ onNewContactSignal()         (detected patterns)
 ```
 
 ---
 
-## Phase 0: Foundation — Schema + Types + Backup (Pre-req for all phases)
+## Phase 0: Foundation ✅ COMPLETE 2026-03-07
 
-### Goals
-- Extend `memories` table with confidence/decay/timeless columns
-- Add `documents` table (parent records for ingested content)
-- Add `pattern_events` table (detected cross-document patterns)
-- Add `ingestion_runs` table (audit log)
-- No breaking changes to existing records
-- All migrations reversible
+Schema, scoring, and retrieval pipeline.
 
-### DB Migrations (ordered)
-
-```sql
--- Migration 001: memories confidence + decay
-ALTER TABLE memories
-  ADD COLUMN IF NOT EXISTS confidence         FLOAT   NOT NULL DEFAULT 1.0,
-  ADD COLUMN IF NOT EXISTS confidence_decay_rate FLOAT NOT NULL DEFAULT 0.0,
-  ADD COLUMN IF NOT EXISTS last_verified_at  TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS is_timeless       BOOLEAN NOT NULL DEFAULT FALSE,
-  ADD COLUMN IF NOT EXISTS source            TEXT,        -- 'gmail'|'pdf'|'linkedin'|'notes'|'agent'
-  ADD COLUMN IF NOT EXISTS source_id         TEXT,        -- external ID (gmail message id, file path, etc.)
-  ADD COLUMN IF NOT EXISTS relevance_tier    SMALLINT NOT NULL DEFAULT 1; -- 1=hot, 2=warm, 3=cool, 4=archive
-
--- Migration 002: documents table (parent records for ingested content)  
-CREATE TABLE IF NOT EXISTS documents (
-  id              BIGSERIAL PRIMARY KEY,
-  source          TEXT        NOT NULL,          -- 'gmail'|'pdf'|'linkedin'|'notes'
-  source_id       TEXT        NOT NULL UNIQUE,   -- gmail thread id, file path hash, etc.
-  title           TEXT,
-  doc_type        TEXT,                          -- 'email'|'contract'|'message'|'note'
-  parties         TEXT[],                        -- extracted named parties
-  date            TIMESTAMPTZ,                   -- document date (not ingestion date)
-  ingested_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  last_activity   TIMESTAMPTZ,                   -- last email in thread, last edit, etc.
-  interestingness FLOAT,                         -- LLM score 0-1
-  chunk_count     INTEGER NOT NULL DEFAULT 0,
-  metadata        JSONB   NOT NULL DEFAULT '{}',
-  deleted_at      TIMESTAMPTZ
-);
-
-CREATE INDEX idx_documents_source     ON documents(source);
-CREATE INDEX idx_documents_source_id  ON documents(source_id);
-CREATE INDEX idx_documents_date       ON documents(date DESC);
-CREATE INDEX idx_documents_parties    ON documents USING GIN(parties);
-
--- Migration 003: pattern_events table
-CREATE TABLE IF NOT EXISTS pattern_events (
-  id              BIGSERIAL PRIMARY KEY,
-  pattern_type    TEXT        NOT NULL,  -- 'contradiction'|'relationship_graph'|'temporal_drift'|'recurring_term'
-  confidence      FLOAT       NOT NULL DEFAULT 0.5,
-  summary         TEXT        NOT NULL,
-  detail          TEXT,
-  record_ids      INTEGER[]   NOT NULL,  -- memories.id references involved
-  document_ids    BIGINT[],              -- documents.id references involved
-  detected_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  surfaced_at     TIMESTAMPTZ,           -- when James was notified
-  resolved_at     TIMESTAMPTZ,           -- when James dismissed/resolved
-  metadata        JSONB       NOT NULL DEFAULT '{}'
-);
-
-CREATE INDEX idx_pattern_events_type      ON pattern_events(pattern_type);
-CREATE INDEX idx_pattern_events_detected  ON pattern_events(detected_at DESC);
-CREATE INDEX idx_pattern_events_unresolved ON pattern_events(resolved_at) WHERE resolved_at IS NULL;
-
--- Migration 004: ingestion_runs audit log
-CREATE TABLE IF NOT EXISTS ingestion_runs (
-  id           BIGSERIAL PRIMARY KEY,
-  source       TEXT        NOT NULL,
-  started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  finished_at  TIMESTAMPTZ,
-  status       TEXT        NOT NULL DEFAULT 'running',  -- 'running'|'complete'|'failed'
-  records_seen INTEGER NOT NULL DEFAULT 0,
-  records_kept INTEGER NOT NULL DEFAULT 0,  -- passed filter
-  records_new  INTEGER NOT NULL DEFAULT 0,
-  error        TEXT,
-  metadata     JSONB NOT NULL DEFAULT '{}'
-);
-
--- Migration 005: decay rate defaults by record type (UPDATE existing)
--- Timeless: rules, playbooks, config
-UPDATE memories SET is_timeless = TRUE, confidence_decay_rate = 0.0
-  WHERE record_type IN ('rule', 'directive', 'playbook')
-     OR category IN ('rules', 'directives', 'system', 'config');
-
--- Contacts/dossiers: slow decay (half-life ~180 days)
-UPDATE memories SET confidence_decay_rate = 0.0039  -- ln(2)/180
-  WHERE record_type IN ('contact', 'dossier', 'person', 'atom')
-    AND is_timeless = FALSE;
-
--- Facts/general: medium decay (half-life ~90 days)
-UPDATE memories SET confidence_decay_rate = 0.0077  -- ln(2)/90
-  WHERE record_type IN ('fact', 'section')
-    AND is_timeless = FALSE;
-
--- Documents/chunks: fast decay (handled by relevance_tier)
--- tier set at ingestion time based on document date
-```
-
-### New TypeScript Types (types.ts additions)
-
-```typescript
-// Relevance tier — maps to temporal decay bucket
-export type RelevanceTier = 1 | 2 | 3 | 4;
-
-// Tier weights applied to final search score
-export const TIER_WEIGHTS: Record<RelevanceTier, number> = {
-  1: 1.00,  // 0-10 days
-  2: 0.70,  // 10-30 days
-  3: 0.40,  // 30-90 days
-  4: 0.15,  // 90-365 days
-  // 365+ days: excluded from default search (archived)
-};
-
-// Decay profile — assigned per record_type at write time
-export interface DecayProfile {
-  /** Half-life in days. 0 = no decay. */
-  halfLifeDays: number;
-  /** Whether this record is timeless (no decay, no tier weighting) */
-  isTimeless: boolean;
-}
-
-export const DECAY_PROFILES: Record<string, DecayProfile> = {
-  rule:      { halfLifeDays: 0,   isTimeless: true  },
-  directive: { halfLifeDays: 0,   isTimeless: true  },
-  playbook:  { halfLifeDays: 0,   isTimeless: true  },
-  contact:   { halfLifeDays: 180, isTimeless: false },
-  dossier:   { halfLifeDays: 180, isTimeless: false },
-  fact:      { halfLifeDays: 90,  isTimeless: false },
-  section:   { halfLifeDays: 90,  isTimeless: false },
-  document:  { halfLifeDays: 30,  isTimeless: false },
-  chunk:     { halfLifeDays: 30,  isTimeless: false },
-  atom:      { halfLifeDays: 90,  isTimeless: false },
-};
-
-// Document record (ingested external content)
-export interface DocumentRecord {
-  id: number;
-  source: IngestSource;
-  sourceId: string;
-  title: string | null;
-  docType: DocType;
-  parties: string[];
-  date: Date | null;
-  ingestedAt: Date;
-  lastActivity: Date | null;
-  interestingness: number | null;
-  chunkCount: number;
-  metadata: Record<string, unknown>;
-}
-
-export type IngestSource = 'gmail' | 'pdf' | 'linkedin' | 'notes' | 'agent';
-export type DocType = 'email' | 'contract' | 'message' | 'note' | 'unknown';
-
-// Pattern event — detected cross-document intelligence
-export interface PatternEvent {
-  id: number;
-  patternType: PatternType;
-  confidence: number;       // 0-1
-  summary: string;          // one-line human-readable description
-  detail: string | null;    // full explanation
-  recordIds: number[];      // memories.id
-  documentIds: number[];    // documents.id
-  detectedAt: Date;
-  surfacedAt: Date | null;
-  resolvedAt: Date | null;
-  metadata: Record<string, unknown>;
-}
-
-export type PatternType =
-  | 'contradiction'       // conflicting commitments or facts
-  | 'relationship_graph'  // A→B→C path James didn't know about
-  | 'temporal_drift'      // same term/value changed over time
-  | 'recurring_term'      // same clause/pattern across N docs
-  | 'stale_contact';      // important contact with no recent activity
-
-// Final search score breakdown (for debugging/tuning)
-export interface ScoredResult {
-  memoryId: number;
-  vectorScore: number;       // cosine similarity [0,1]
-  rerankScore: number | null; // Qwen3-Reranker P(yes) [0,1]
-  confidenceWeight: number;  // decay-adjusted confidence [0,1]
-  tierWeight: number;        // recency tier weight [0,1]
-  isTimeless: boolean;
-  finalScore: number;        // vector * rerank * confidence * tier
-}
-```
-
-### Function Contracts (before implementation)
-
-```typescript
-/**
- * Compute current confidence for a record based on decay rate and last_verified_at.
- *
- * Uses exponential decay: confidence(t) = initial * e^(-decay_rate * age_days)
- * If is_timeless=true, always returns initial confidence unchanged.
- * If last_verified_at is null, uses created_at as the start of decay.
- *
- * @param record    - Memory record with confidence fields
- * @param asOf      - Date to compute confidence at (default: now)
- * @returns         - Decayed confidence in [0, 1]
- */
-export function computeRecordConfidence(
-  record: Pick<MemoryRecord, 'confidence' | 'confidenceDecayRate' | 'lastVerifiedAt' | 'isTimeless' | 'createdAt'>,
-  asOf?: Date
-): number;
-
-/**
- * Assign relevance tier based on document date.
- *
- * Tiers:
- *   1 = within 10 days of asOf
- *   2 = 10-30 days
- *   3 = 30-90 days
- *   4 = 90-365 days
- *   null = older than 365 days (archive)
- *
- * @param documentDate  - Date of the source document
- * @param asOf          - Reference date (default: now)
- * @returns             - Tier 1-4 or null (archive)
- */
-export function assignRelevanceTier(
-  documentDate: Date,
-  asOf?: Date
-): RelevanceTier | null;
-
-/**
- * Compute final search score from component scores.
- *
- * Formula: vectorScore * rerankScore * confidenceWeight * tierWeight
- * If isTimeless=true: confidenceWeight=1.0 and tierWeight=1.0 always.
- * If rerankScore=null: omit from formula (vector * confidence * tier only).
- *
- * @param components - Score components
- * @returns          - ScoredResult with finalScore
- */
-export function computeFinalScore(components: Omit<ScoredResult, 'finalScore'>): ScoredResult;
-
-/**
- * Filter candidate memories by relevance tier before reranking.
- * Excludes archived records (tier=null) unless includeArchived=true.
- * Timeless records always included regardless of tier.
- *
- * @param candidates      - Raw vector search results
- * @param includeArchived - Include 365+ day old records (default: false)
- * @returns               - Filtered and tier-weighted candidates
- */
-export function filterByTier(
-  candidates: MemoryRecord[],
-  includeArchived?: boolean
-): MemoryRecord[];
-
-/**
- * Determine decay profile for a record based on record_type and category.
- * Falls back to 'fact' profile if type not in DECAY_PROFILES.
- *
- * @param recordType  - memories.record_type
- * @param category    - memories.category
- * @returns           - DecayProfile for this record
- */
-export function resolveDecayProfile(
-  recordType: string,
-  category: string | null
-): DecayProfile;
-```
+- [x] Migrations 001–002 applied (`confidence`, `confidence_decay_rate`, `is_timeless`, `source`, `source_id`, `relevance_tier`, `documents`, `pattern_events`, `ingestion_runs` tables)
+- [x] `phase0-scoring.ts` — 34 tests: `computeRecordConfidence`, `assignRelevanceTier`, `computeFinalScore`, `resolveDecayProfile`, `filterByTier`
+- [x] `phase0-search-scoring.ts` — 15 tests: `applySearchScoring()` wired into `store.ts::search()` after reranking
+- [x] `phase0-last-verified.test.mjs` — 7 tests: `lastVerifiedAt` as decay clock reset
+- [x] `reranker.ts` — 23 tests: Qwen3-Reranker cross-encoder, graceful degradation
+- [x] All three postgres.ts search legs SELECT confidence/tier/lastVerifiedAt columns
+- [x] Three-stage retrieval: FTS (BM25) → ANN vector (1536d HNSW planned) → Qwen3-Reranker → confidence/tier scoring
+- [x] Re-embedded all 7,842 records at 2560d using Qwen3-Embedding-4B
 
 ---
 
-## Phase 1: Gmail Ingestion
+## Phase 1: Ingestion Pipeline ✅ COMPLETE 2026-03-07
 
-### Goals
-- Ingest last 1 year of Gmail
-- Entity filter: skip emails with no named entities
-- LLM interestingness score: keep only ≥ 6/10
-- Adaptive chunking: emails = whole unit; long threads = per-email chunks
-- Store as `document` parent + `chunk` children in memories
-- Link parties to existing ShadowDB contacts via entity resolution
-- Idempotent: re-running never creates duplicates (keyed on gmail message id)
+Source-agnostic ingestion with Gmail and iMessage fetchers.
 
-### Function Contracts
+### Modules
+
+| Module | Tests | Description |
+|--------|-------|-------------|
+| `phase1-gmail.ts` | 28 | `extractGmailContent`, `passesEntityFilter`, `chunkDocument` |
+| `phase1-scoring.ts` | 12 | `scoreInterestingness` — injected LlmClient, thinking-block-safe parser |
+| `phase1-parties.ts` | 13 | `resolveParties` — fuzzy contact matching with suffix stripping |
+| `phase1-runner.ts` | 19 | `MessageFetcher` interface, `GmailFetcher`, `runIngestion` (source-agnostic) |
+| `phase1-fetcher-imsg.ts` | 14 | `IMessageFetcher` — `imsg` CLI, reaction filtering, cache-based fetch |
+| `store.ts` | — | `findByOperationId` + dedup in `write()` |
+| `duplicate-detection-integration.test.mjs` | 2 | Integration test for operationId dedup |
+
+**Total: 444/444 tests passing, zero RED**
+
+### Three-Tier Entity Filtering
+
+1. **Hard veto** (TRANSACTIONAL_VETO_PATTERNS) — receipts, shipping, auth codes, bank alerts → drop unconditionally, no LLM call
+2. **Entity filter** (ENTITY_PATTERNS) — requires named entities, money, dates, deal terms. Newsletters pass intentionally.
+3. **LLM gate** (scoreInterestingness, threshold configurable) — VC digest scores 5-7 → keep; promo blast 0-2 → drop
+
+### MessageFetcher Interface
 
 ```typescript
-/**
- * Extract plain text and metadata from a Gmail message.
- * Strips HTML, quoted replies, email headers, unsubscribe footers.
- * Returns null if message is empty after stripping.
- *
- * @param raw - Raw Gmail API message object
- * @returns   - Extracted content or null
- */
-export function extractGmailContent(raw: GmailMessage): ExtractedContent | null;
-
-/**
- * Run entity detection pass on extracted text.
- * Returns true if text contains ≥1 of: named person, company, dollar amount, date, commitment verb.
- * Uses regex + NER (no LLM required — this is the cheap fast gate).
- *
- * @param text - Plain text to analyze
- * @returns    - True if text passes entity filter
- */
-export function passesEntityFilter(text: string): boolean;
-
-/**
- * Score document interestingness using local LLM (GLM-5 or Groq).
- * Sends first 500 tokens of text + metadata as context.
- * Returns score 0-10 (float). Throws on LLM failure.
- *
- * @param text      - Document text (first 500 tokens used)
- * @param metadata  - Document metadata (parties, date, subject)
- * @returns         - Interestingness score 0-10
- */
-export function scoreInterestingness(
-  text: string,
-  metadata: { subject?: string; parties?: string[]; date?: Date }
-): Promise<number>;
-
-/**
- * Chunk a single email or document into embeddable segments.
- * Strategy: emails ≤2000 chars = single chunk; longer = split at paragraph boundaries.
- * Each chunk overlaps 100 tokens with adjacent chunks.
- * Preserves source metadata on every chunk.
- *
- * @param content   - Extracted document content
- * @param maxTokens - Maximum tokens per chunk (default: 400)
- * @returns         - Array of chunks with metadata
- */
-export function chunkDocument(
-  content: ExtractedContent,
-  maxTokens?: number
-): DocumentChunk[];
-
-/**
- * Resolve named parties in text to existing ShadowDB contact records.
- * Uses fuzzy name matching against people table + existing memory titles.
- * Returns array of {name, memoryId|null} — null if no match found.
- *
- * @param parties - Extracted party names
- * @param db      - Database connection
- * @returns       - Resolved party references
- */
-export function resolveParties(
-  parties: string[],
-  db: DatabaseConnection
-): Promise<ResolvedParty[]>;
+interface MessageFetcher {
+  readonly source: string;  // "gmail" | "imsg" | "linkedin" | etc.
+  getNewMessageIds(watermark: Date | null): Promise<string[]>;
+  fetchMessage(id: string): Promise<ExtractedContent | null>;
+}
 ```
+
+Implementations: `GmailFetcher` (gog CLI), `IMessageFetcher` (imsg CLI). Runner is fully source-agnostic.
+
+### Entry Points
+
+- `scripts/ingest.mjs` — CLI: `node scripts/ingest.mjs --source all|gmail|imsg [--dry-run] [--limit N]`
+- `scripts/preview-ingest.mjs` — Live preview: shows VETO/DROP/KEEP per message with LLM scores
+- OpenClaw cron: daily 6am CST, `--source all --limit 200`
+
+### Config (openclaw.plugin.json → ingestion)
+
+```json
+{
+  "ingestion": {
+    "enabled": true,
+    "account": "user@example.com",
+    "scoringModel": "local-qwen35",
+    "scoreThreshold": 5,
+    "maxMessagesPerRun": 100,
+    "searchQuery": "",
+    "logPath": "~/models/eval-results/gmail-ingestion.log"
+  }
+}
+```
+
+### Remaining Phase 1 Work
+
+- [ ] First real backfill run against live Gmail (older business correspondence)
+- [ ] iMessage ingestion run (74K+ messages via `imsg` CLI)
+- [ ] Integration test: ingest N fixture emails, verify DB state end-to-end
+- [ ] `documents` table population (currently writes to `memories` only — Phase 2 adds parent document records)
 
 ---
 
-## Phase 2: PDF/Contract Ingestion
+## Phase 2: PDF / Contract Ingestion
 
 ### Goals
-- Watch `~/Documents/Contracts/` (and configurable paths)
+- Watch configurable paths for new PDFs (e.g., `~/Documents/Contracts/`)
 - Extract text via `pdftotext` (local, no API)
 - Section-aware chunking: split at headers/page boundaries
 - Higher interestingness threshold (≥7) — contracts are signal-dense
 - Extract key terms: parties, dates, dollar values, obligation verbs
+- Idempotent: re-processing same file produces zero duplicates (keyed on file path hash)
 
-### Function Contracts
-
-```typescript
-/**
- * Extract text from PDF preserving section structure.
- * Returns page-separated text with section headers detected via font size heuristic.
- * Falls back to plain text if structure detection fails.
- *
- * @param filePath - Absolute path to PDF file
- * @returns        - Structured PDF content or null if extraction fails
- */
-export function extractPdfContent(filePath: string): Promise<ExtractedContent | null>;
-
-/**
- * Extract key terms from contract/legal text.
- * Identifies: party names, effective date, dollar values, defined terms,
- * obligation verbs (shall/will/must/agree), termination clauses.
- *
- * @param text - Contract plain text
- * @returns    - Extracted key terms
- */
-export function extractContractTerms(text: string): ContractTerms;
-```
+### Definition of Done
+- [ ] `extractPdfContent()` extracts text preserving section structure — tests with 3 fixture PDFs
+- [ ] `extractContractTerms()` identifies parties, dates, dollar values, obligation verbs — unit tests
+- [ ] `PdfFetcher` implements `MessageFetcher` interface (watches folder, watermark = last modified time)
+- [ ] Contracts scored at threshold ≥7
+- [ ] Integration test: ingest 2 fixture contracts, verify DB state
 
 ---
 
-## Phase 3: Cross-Reference + Pattern Detection
+## Phase 3: Contact Re-Scoring + Cross-Reference Engine
 
 ### Goals
-- On each new document ingest: run cross-reference pass
-- Three pattern types: contradiction, relationship_graph, temporal_drift
-- Store detected patterns in `pattern_events`
-- Alert James immediately if confidence > 0.80
-- Weekly cron: surface unresolved patterns as intelligence brief
 
-### Function Contracts
+When a new message is ingested from a known contact, automatically:
+1. Pull existing dossier for that contact
+2. Run behavioral analysis on the new message (tone shifts, commitment signals, power dynamics)
+3. Compute psychographic delta (does this message shift DISC, MBTI, Voss negotiator type?)
+4. If delta is meaningful → update dossier record + emit `pattern_event`
+5. Detect cross-document patterns: contradiction, temporal drift, recurring terms
+
+This is the bridge between **ingestion** (Phase 1) and **intelligence** (Phase 5). The ingestion runner already resolves parties — Phase 3 adds the `onNewContactSignal` callback that triggers post-write analysis.
+
+### Core Abstractions
 
 ```typescript
 /**
- * Run full cross-reference pass on a newly ingested document.
- * Steps:
- *   1. Embed key sentences from document
- *   2. Search ShadowDB for similar content in OTHER documents
- *   3. For each high-similarity pair: classify pattern type
- *   4. Store detected patterns with confidence score
- *   5. Return patterns with confidence > threshold
+ * Hook called after a message from a known contact is successfully ingested.
+ * Runs behavioral analysis and psychographic delta detection.
  *
- * @param documentId  - Newly ingested document id
- * @param db          - Database connection
- * @param threshold   - Minimum confidence to return (default: 0.6)
- * @returns           - Detected pattern events
+ * @param contactId  - ShadowDB memory id of the matched contact
+ * @param content    - The newly ingested ExtractedContent
+ * @param existing   - Existing dossier record (if any)
+ * @returns          - Delta analysis result, or null if no meaningful change
+ */
+export function onNewContactSignal(
+  contactId: number,
+  content: ExtractedContent,
+  existing: DossierRecord | null,
+): Promise<ContactDelta | null>;
+
+/**
+ * Detect behavioral signals in a message that indicate personality,
+ * communication style, or relationship dynamics.
+ *
+ * Behavioral signals (from rule framework):
+ * - Who deferred to who ("As [person] mentioned..." = deference)
+ * - Tone shifts (template → real = where the actual info is)
+ * - Commitment language (shall, agree, will → obligation signal)
+ * - Silence on expected topics (didn't mention X = behavioral signal)
+ * - Unexpected topics (why did they bring up Y?)
+ *
+ * @param text     - Message text
+ * @param context  - Prior messages in thread (if available)
+ * @param llm      - LLM client for analysis
+ * @returns        - Behavioral signal report
+ */
+export function extractBehavioralSignals(
+  text: string,
+  context: string[],
+  llm: LlmClient,
+): Promise<BehavioralSignals>;
+
+/**
+ * Compute psychographic delta between existing profile and new behavioral signals.
+ * Returns null if change is below threshold (noise, not signal).
+ *
+ * @param existing  - Current psychographic profile (DISC, MBTI, Voss type, etc.)
+ * @param newSignals - Behavioral signals from new message
+ * @returns          - Delta description, or null if below threshold
+ */
+export function computePsychographicDelta(
+  existing: PsychProfile,
+  newSignals: BehavioralSignals,
+): PsychDelta | null;
+
+/**
+ * Run cross-reference pass on a newly ingested document.
+ * Finds semantically similar content in OTHER documents and classifies
+ * the relationship: contradiction, confirmation, temporal drift, coincidence.
+ *
+ * @param documentChunks - The new document's chunks (already embedded)
+ * @param db             - Database connection
+ * @param threshold      - Minimum confidence to return (default: 0.6)
+ * @returns              - Detected pattern events
  */
 export function crossReferenceDocument(
-  documentId: number,
-  db: DatabaseConnection,
-  threshold?: number
+  documentChunks: DocumentChunk[],
+  db: DbClient,
+  threshold?: number,
 ): Promise<PatternEvent[]>;
-
-/**
- * Classify the relationship between two semantically similar text passages.
- * Uses LLM to determine if passages represent: contradiction, confirmation,
- * temporal drift, or unrelated coincidence.
- *
- * @param passageA  - First text passage with metadata
- * @param passageB  - Second text passage with metadata
- * @returns         - Classification with confidence score
- */
-export function classifyPassageRelationship(
-  passageA: PassageWithMetadata,
-  passageB: PassageWithMetadata
-): Promise<PatternClassification>;
-
-/**
- * Generate weekly intelligence brief from unresolved pattern events.
- * Groups patterns by type, ranks by confidence * recency.
- * Returns structured brief ready for delivery to James.
- *
- * @param db          - Database connection
- * @param lookbackDays - How many days to include (default: 7)
- * @returns            - Intelligence brief
- */
-export function generateIntelligenceBrief(
-  db: DatabaseConnection,
-  lookbackDays?: number
-): Promise<IntelligenceBrief>;
 ```
+
+### Definition of Done
+- [ ] `onNewContactSignal` stub wired into ingestion runner (callback, no-op default)
+- [ ] `extractBehavioralSignals` — unit tests with 5+ fixture messages
+- [ ] `computePsychographicDelta` — unit tests covering DISC shift, no-change, and threshold edge cases
+- [ ] `crossReferenceDocument` — integration test: ingest 2 related docs, verify pattern detected
+- [ ] `classifyPassageRelationship` — unit tests: contradiction, confirmation, drift, unrelated
+- [ ] Pattern events stored in `pattern_events` table with correct type, confidence, record_ids
+- [ ] High-confidence patterns (≥0.80) trigger proactive alert
 
 ---
 
-## Testing Strategy (TDD)
+## Phase 4: LinkedIn Ingestion
 
-### Principles
-- Write test file before implementation file — always
+### Goals
+- Implement `LinkedInFetcher` conforming to `MessageFetcher` interface
+- Browser-based scrape (LinkedIn lazy-loads, no API)
+- Message threads preserved as single units (not chunked mid-thread)
+- Cross-source linking: Gmail LinkedIn notification → triggers LinkedIn message fetch
+- Idempotent: keyed on thread URL + timestamp
+
+### Definition of Done
+- [ ] `LinkedInFetcher` implements `MessageFetcher`
+- [ ] `extractLinkedInHints()` detects LinkedIn notification emails and extracts fetch hints
+- [ ] `FetchHint` type added to `MessageFetcher` interface (optional `extractHints?()` method)
+- [ ] Browser automation extracts messages from last 90 days
+- [ ] Entity filter + interestingness score applied (threshold ≥6)
+- [ ] Integration test: fixture HTML → DB state verification
+
+---
+
+## Phase 5: Network Intelligence
+
+### Goals
+
+Automated detection of high-impact actions from the contact graph. Generalizes the offensive network intelligence framework into a reusable graph analysis layer that any ShadowDB user can run against their knowledge base.
+
+### The 8 Plays (from schema/10783)
+
+| # | Play | What It Detects | Signal Source |
+|---|------|-----------------|---------------|
+| 1 | **Network Gap** | Everyone in cluster needs X, no one provides | Contact dossiers + stated needs |
+| 2 | **Implied Need** | They say Y, but context means they need Z | Message history + dossier context |
+| 3 | **Bottleneck** | Who controls access to multiple clusters | Graph betweenness centrality |
+| 4 | **Cluster Vulnerability** | Collective blind spot in a group | Cluster-wide dossier analysis |
+| 5 | **Competitive Void** | High demand, zero supply in network | Cross-cluster need/supply matching |
+| 6 | **Obligation Cascade** | Design favors to hit 3 people at once | Graph path analysis + need matching |
+| 7 | **Information Arbitrage** | Cluster A needs what B has, they don't talk | Cross-cluster bridging analysis |
+| 8 | **Predictive Positioning** | What they'll need in 6 months | Temporal signal + growth stage pattern matching |
+
+### Core Abstractions
+
+```typescript
+/**
+ * Run all 8 network intelligence plays against the current graph.
+ * Returns ranked opportunities with impact scores and recommended actions.
+ *
+ * @param db        - Database connection (graph edges, dossiers, memories)
+ * @param llm       - LLM client for implied need / prediction analysis
+ * @param options   - Filter options (cluster, min confidence, etc.)
+ * @returns         - Ranked opportunity list
+ */
+export function detectNetworkOpportunities(
+  db: DbClient,
+  llm: LlmClient,
+  options?: NetworkAnalysisOptions,
+): Promise<NetworkOpportunity[]>;
+
+/**
+ * Compute betweenness centrality for all nodes in the contact graph.
+ * Identifies bottleneck nodes that control information flow between clusters.
+ *
+ * @param edges - Graph edges from ShadowDB
+ * @returns     - Nodes ranked by betweenness centrality score
+ */
+export function computeBetweennessCentrality(
+  edges: GraphEdge[],
+): CentralityResult[];
+
+/**
+ * Detect clusters in the contact graph using community detection.
+ * Groups contacts by connection density, shared attributes, or shared events.
+ *
+ * @param edges - Graph edges
+ * @param nodes - Contact nodes with metadata
+ * @returns     - Detected clusters with member lists
+ */
+export function detectClusters(
+  edges: GraphEdge[],
+  nodes: ContactNode[],
+): Cluster[];
+
+/**
+ * Generate a daily opportunity briefing from network analysis results.
+ * Ranks by impact, groups by urgency (today / this week / predictive).
+ *
+ * @param opportunities - Output from detectNetworkOpportunities
+ * @returns             - Formatted briefing
+ */
+export function generateOpportunityBriefing(
+  opportunities: NetworkOpportunity[],
+): OpportunityBriefing;
+```
+
+### Prediction Format (from rules/10344)
+
+Every prediction must include:
+```
+P[number]: [Specific outcome statement]
+- By when: [Date or range]
+- What user can do to influence it: [Specific action]
+- What happens if user does nothing: [Specific consequence]
+- Confidence: [LOW/MEDIUM/HIGH] — [rationale]
+- Falsification: [How we'll know this was wrong]
+```
+
+### Definition of Done
+- [ ] `computeBetweennessCentrality` — unit tests with fixture graphs
+- [ ] `detectClusters` — unit tests with known cluster structures
+- [ ] `detectNetworkOpportunities` — integration test: seed graph, verify all 8 plays detected
+- [ ] `generateOpportunityBriefing` — unit test: fixture opportunities → formatted output
+- [ ] Predictions follow the specific/testable/actionable format
+- [ ] Daily cron: runs analysis, announces if new high-impact opportunities detected
+- [ ] Staleness check: dossiers >7 days old are flagged for revalidation before use in analysis
+
+---
+
+## Cross-Cutting Requirements
+
+### Staleness Enforcement
+- Records used for decisions/outreach/analysis must be checked for age
+- Dossiers >7 days old → flag for rebuild (re-search web, Gmail, LinkedIn, calendar)
+- Structural analysis >30 days old → flag for revalidation
+- Timeless records (rules, directives) exempt
+- Staleness check runs at retrieval time in the search pipeline
+
+### Dossier Versioning (from rules/10350)
+Every contact dossier carries a version: `v[methodology]:[source_bitmask]`
+- Source bits: web(1) + LinkedIn(2) + Gmail(4) + iMessage(8) + CRM(16) + Calendar(32) + In-person(64) + Graph(128) + Personality(256) + Events(512)
+- Ingestion pipeline automatically updates source bitmask when new source data is incorporated
+
+### Testing Strategy
+- Test file written before implementation — always
 - Each function contract = one describe block with ≥3 test cases
-- Test edge cases explicitly: null inputs, empty arrays, boundary dates
-- No mocking of the database in integration tests — use test schema `shadow_test`
-- Mock only: LLM calls (expensive), external APIs (Gmail, etc.)
-
-### Test Structure
-```
-confidence-scoring.test.mjs       → Phase 0
-relevance-tier.test.mjs           → Phase 0
-decay-profiles.test.mjs           → Phase 0
-final-score.test.mjs              → Phase 0
-gmail-extract.test.mjs            → Phase 1
-entity-filter.test.mjs            → Phase 1
-interestingness-score.test.mjs    → Phase 1
-document-chunking.test.mjs        → Phase 1
-party-resolution.test.mjs         → Phase 1
-pdf-extract.test.mjs              → Phase 2
-contract-terms.test.mjs           → Phase 2
-cross-reference.test.mjs          → Phase 3
-pattern-classification.test.mjs   → Phase 3
-intelligence-brief.test.mjs       → Phase 3
-```
-
-### Test Database Setup
-```sql
--- Create shadow_test schema for integration tests
-CREATE SCHEMA IF NOT EXISTS shadow_test;
--- All tables mirrored with test prefix
--- Seeded with 50 synthetic records per type
-```
+- External calls (LLM, CLI) always mockable via dependency injection
+- No `any` in TypeScript strict mode
+- Graceful degradation: ingestion/analysis failure never crashes the host application
 
 ---
 
-## Commit Strategy
-
-- `feat(schema): migration 001 — confidence/decay columns` → after migration passes tests
-- `feat(schema): migration 002 — documents table` → after migration passes tests
-- `feat(types): confidence/decay/tier types and profiles` → after type tests pass
-- `feat(scoring): computeRecordConfidence` → after unit tests pass
-- `feat(scoring): assignRelevanceTier + filterByTier` → after unit tests pass
-- `feat(scoring): computeFinalScore` → after unit tests pass
-- `feat(ingest): gmail extraction pipeline` → after integration tests pass
-- etc.
-
----
-
-## Non-Goals (explicitly out of scope for this initiative)
+## Non-Goals
 
 - Real-time streaming ingestion (batch/cron only)
-- Multi-user / shared ShadowDB (single-user only)
+- Multi-user / shared ShadowDB (single-user)
 - Cloud sync or external backups
-- Automatic contact graph updates from ingested content (manual review only)
+- Automatic contact graph mutations (analysis recommends, user approves)
 
 ---
 
-## Open Questions (resolve before Phase 1 implementation)
+## Current State
 
-1. **Gmail scope**: 1 year backfill. How far back exactly? Any folders to exclude (promotions, spam already excluded)?
-2. **Contract folder**: `~/Documents/Contracts/`? Other locations?
-3. **LLM for scoring**: Use GLM-5 (local, free) or Groq (faster)? Budget per run?
-4. **Alert channel**: Pattern events → SMS via OpenClaw? Or just weekly brief?
-5. **Decay on existing records**: Apply decay profiles to existing 7,842 records now, or only on new writes?
+| Phase | Status | Tests | HEAD |
+|-------|--------|-------|------|
+| 0 — Foundation | ✅ Complete | 56 | `8ea2eed` |
+| 1 — Ingestion | ✅ Complete | 108 | `fd1a5e2` |
+| 2 — PDF/Contract | 🔲 Planned | — | — |
+| 3 — Contact Re-Scoring | 🔲 Planned | — | — |
+| 4 — LinkedIn | 🔲 Planned | — | — |
+| 5 — Network Intelligence | 🔲 Planned | — | — |
 
----
-
-## Prereqs Checklist
-
-- [x] Qwen3-Embedding-4B working (oMLX port 8000)
-- [x] Qwen3-Reranker-0.6B working (embed-rerank port 9000)
-- [x] embed-rerank LaunchAgent installed (auto-starts on boot)
-- [x] Re-embedding complete — 7,842/7,842 records, 2560d, Qwen3 task prefix
-- [x] DB backup confirmed: `backups/shadow_backup_20260307_182322.sql` (251MB)
-- [x] Reranker wired into memory_search — 23 tests, graceful degradation
-- [ ] HNSW/IVFFlat index — blocked: pgvector 0.8.x caps HNSW at 2000d; sequential scan acceptable at current record count (~7,842), revisit at 50K+
-- [ ] Open questions answered (Gmail scope, contract folder, LLM for scoring, alert channel, decay on existing records)
-- [ ] This roadmap reviewed and approved by James
+**Total test count:** 444/444 passing, zero RED
+**Repo:** `git@github.com:jamesdwilson/Sh4d0wDB.git`
