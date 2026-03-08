@@ -119,7 +119,7 @@ export class EmbeddingClient {
         break;
       case "openai":
       case "openai-compatible":
-        embedding = await this.embedOpenAICompatible(text);
+        embedding = await this.embedOpenAICompatible(text, taskPrefix);
         break;
       case "voyage":
         embedding = await this.embedVoyage(text);
@@ -162,6 +162,12 @@ export class EmbeddingClient {
     // nomic-embed-text uses "search_query: " and "search_document: " prefixes
     if (model.includes("nomic")) {
       return purpose === "query" ? "search_query: " : "search_document: ";
+    }
+    // Qwen3-Embedding uses instruct prefix for queries only; documents are plain text
+    if (model.includes("qwen3-embedding") || model.includes("qwen3_embedding")) {
+      return purpose === "query"
+        ? "Instruct: Given a memory search query, retrieve the most relevant records\nQuery: "
+        : undefined;
     }
     return undefined;
   }
@@ -209,14 +215,15 @@ export class EmbeddingClient {
    * @returns Embedding vector from OpenAI-compatible API
    * @throws Error if API key missing, HTTP fails, or response invalid
    */
-  private async embedOpenAICompatible(text: string): Promise<number[]> {
+  private async embedOpenAICompatible(text: string, taskPrefix?: string): Promise<number[]> {
     // SECURITY: API key validation — fail early if missing
     if (!this.apiKey) {
       throw new Error(`API key missing for embedding provider ${this.provider}`);
     }
     
     // SECURITY: Truncate input to prevent DoS
-    const truncated = text.slice(0, 6000);
+    const raw = taskPrefix ? `${taskPrefix}${text}` : text;
+    const truncated = raw.slice(0, 6000);
     
     const body: Record<string, unknown> = {
       model: this.model,
@@ -228,7 +235,13 @@ export class EmbeddingClient {
       body.dimensions = this.dimensions;
     }
 
-    const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}/v1/embeddings`, {
+    // Build endpoint: if baseUrl already ends with /v1, don't double-append
+    const base = this.baseUrl.replace(/\/$/, "");
+    const embeddingsUrl = base.endsWith("/v1")
+      ? `${base}/embeddings`
+      : `${base}/v1/embeddings`;
+
+    const response = await fetch(embeddingsUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

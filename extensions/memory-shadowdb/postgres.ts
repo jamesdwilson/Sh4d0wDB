@@ -117,7 +117,8 @@ export class PostgresStore extends MemoryStore {
       LIMIT $2
     `;
     const result = await this.getPool().query(sql, [vecLiteral, limit, ...values]);
-    return result.rows.map((r: any) => ({
+    const minVec = this.config.minVectorScore || 0;
+    const rows = result.rows.map((r: any) => ({
       id: r.id,
       content: r.content,
       category: r.category,
@@ -127,6 +128,14 @@ export class PostgresStore extends MemoryStore {
       rank: parseInt(r.rank, 10),
       rawScore: parseFloat(r.score),
     }));
+    // Filter out vector hits below minVectorScore (cosine similarity threshold)
+    if (minVec > 0) {
+      const filtered = rows.filter((r) => (r.rawScore ?? 0) >= minVec);
+      // Re-rank after filtering to maintain contiguous 1-based ranks
+      filtered.forEach((r, i) => { r.rank = i + 1; });
+      return filtered;
+    }
+    return rows;
   }
 
   protected async textSearch(query: string, limit: number, filters?: SearchFilters): Promise<RankedHit[]> {
