@@ -392,8 +392,8 @@ export class LinkedInFetcher implements MessageFetcher {
 - [x] `entityResolver` wired into `runIngestion` via `IngestionHooks` (commit 01a1b5c)
 - [x] `linkedin-ingest.mjs` OC agent job — CDP BrowserClient impl (workspace file)
 - [x] OC cron job registered — weekly Sunday 2am CST (id: `728a4802`)
-- [ ] `LinkedInProfileFetcher` — navigates `/in/<username>/`, calls profile parser ← NEXT
-- [ ] Smoke test: run against live LinkedIn inbox (dry-run first)
+- [x] `LinkedInProfileFetcher` — 3-URL strategy, noise filtering, 16 tests (commit 6fcd707)
+- [ ] Smoke test: run against live LinkedIn inbox (dry-run first) ← NEXT
 
 ---
 
@@ -859,12 +859,12 @@ Every contact dossier carries a version: `v[methodology]:[source_bitmask]`
 | Arch — Tier wiring (scoring + signals) | ✅ Complete | 11 | `ee0c221` |
 | Arch — DataSource\<T\> + runner | ✅ Complete | 23 | `5cc3312` |
 | 3 — Contact Re-Scoring (foundation) | ✅ Complete | 19 | `6d3516d` |
-| 4 — LinkedIn (threads + profile + edge signals + cron) | 🟡 In progress | 65 | `01a1b5c` |
+| 4 — LinkedIn (threads + profile + edge signals + cron) | 🟡 In progress | 81 | `6fcd707` |
 | 3b — Entity Resolution (cross-source node graph) | ✅ Complete | 55 | `01a1b5c` |
 | 2 — PDF/Contract | 🔲 Planned | — | — |
 | 3 — Contact Re-Scoring (full) | 🔲 Planned | — | — |
 | 5 — Network Intelligence + Group Psychometrics | 🔲 Planned | — | — |
 
-**Total test count:** 641/641 passing, zero RED, zero TS errors
+**Total test count:** 657/657 passing, zero RED, zero TS errors
 **Repo:** `git@github.com:jamesdwilson/Sh4d0wDB.git`
-**HEAD:** `01a1b5c`
+**HEAD:** `6fcd707`
