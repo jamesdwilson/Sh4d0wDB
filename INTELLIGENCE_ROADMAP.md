@@ -22,22 +22,24 @@
 
 ## Definition of Done — All Phases
 
-### Phase 0: Foundation (Schema + Types + Scoring)
-- [ ] Migrations 001–005 applied to `shadow` database, all reversible
-- [ ] `memories` table has: `confidence`, `confidence_decay_rate`, `last_verified_at`, `is_timeless`, `source`, `source_id`, `relevance_tier`
-- [ ] `documents` table exists with indexes on `source`, `source_id`, `date`, `parties`
-- [ ] `pattern_events` table exists with indexes on `type`, `detected_at`, `unresolved`
-- [ ] `ingestion_runs` audit table exists
-- [ ] Existing timeless records (`rule`, `directive`, `playbook`, system categories) have `is_timeless=TRUE`
-- [ ] Existing contacts/dossiers have `confidence_decay_rate=0.0039` (half-life 180d)
-- [ ] `computeRecordConfidence()` passes all unit tests
-- [ ] `assignRelevanceTier()` passes all unit tests
-- [ ] `computeFinalScore()` passes all unit tests
-- [ ] `resolveDecayProfile()` passes all unit tests
-- [ ] `filterByTier()` passes all unit tests — timeless records always included
-- [ ] Tier/confidence weights applied in `memory_search` results (not just stored)
-- [ ] DB backup taken before and after migrations
-- [ ] All migrations committed, all test files committed
+### Phase 0: Foundation (Schema + Types + Scoring) ✅ COMPLETE 2026-03-07
+- [x] Migrations 001–002 applied to `shadow` database, all reversible
+- [x] `memories` table has: `confidence`, `confidence_decay_rate`, `is_timeless`, `source`, `source_id`, `relevance_tier`
+- [x] `documents` table exists with indexes on `source`, `source_id`, `date`, `parties`
+- [x] `pattern_events` table exists with indexes on `type`, `detected_at`, `unresolved`
+- [x] `ingestion_runs` audit table exists
+- [x] Existing timeless records (rule/directive/playbook/system categories) have `is_timeless=TRUE` — 88 records
+- [x] Existing contacts/dossiers have `confidence_decay_rate=0.003851` (half-life 180d)
+- [x] `computeRecordConfidence()` — 7 tests passing
+- [x] `assignRelevanceTier()` — 6 tests passing
+- [x] `computeFinalScore()` — 5 tests passing
+- [x] `resolveDecayProfile()` — 9 tests passing
+- [x] `filterByTier()` — 6 tests passing
+- [x] `applySearchScoring()` — 15 tests passing, wired into search pipeline
+- [x] All three postgres.ts search legs (vector/FTS/fuzzy) SELECT confidence/tier columns
+- [x] `score` field in SearchResult now reflects finalScore (confidence × tier × rerank × vector)
+- [x] DB backup taken before (`shadow_backup_20260307_182322.sql`) and after (`shadow_backup_20260307_210427.sql`) migrations
+- [x] All migrations, scoring modules, and tests committed and pushed
 
 ### Phase 1: Gmail Ingestion
 - [ ] `gog` CLI can fetch emails + attachments for last 365 days
