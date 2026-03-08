@@ -385,13 +385,15 @@ export class LinkedInFetcher implements MessageFetcher {
 2. **Contact message history** (`/messaging/thread/<id>/`) — behavioral signals, already built
 3. **Contact profile** (`/in/<username>/`) — dossier enrichment + edge signals ← to build
 
-- [ ] `parseContactProfile(html)` — pure function, fixture HTML from live DOM ← NEXT
-- [ ] `profileToExtractedContent(profile)` — maps to ExtractedContent for pipeline
-- [ ] `extractEdgeSignals(profile, selfName)` — emits EdgeSignal[] (feeds Phase 3b resolver)
-- [ ] `LinkedInProfileFetcher` — navigates `/in/<username>/`, calls above
-- [ ] Wire `BrowserClient` production impl using OC `browser` tool calls
-- [ ] Register OC cron job for LinkedIn ingestion (agent job, uses browser tool directly)
-- [ ] Smoke test: run OC agent job against live LinkedIn inbox
+- [x] `parseContactProfile(html)` — 10 tests, real DOM selectors (commit 1f16fdd)
+- [x] `profileToExtractedContent(profile)` — 8 tests (commit 1f16fdd)
+- [x] `extractEdgeSignals(profile, selfName)` — 9 tests, feeds Phase 3b resolver (commit 1f16fdd)
+- [x] `processEdgeSignals` — wires EdgeSignal[] → EntityResolver, 10 tests (commit 324c5da)
+- [x] `entityResolver` wired into `runIngestion` via `IngestionHooks` (commit 01a1b5c)
+- [x] `linkedin-ingest.mjs` OC agent job — CDP BrowserClient impl (workspace file)
+- [x] OC cron job registered — weekly Sunday 2am CST (id: `728a4802`)
+- [ ] `LinkedInProfileFetcher` — navigates `/in/<username>/`, calls profile parser ← NEXT
+- [ ] Smoke test: run against live LinkedIn inbox (dry-run first)
 
 ---
 
@@ -857,12 +859,12 @@ Every contact dossier carries a version: `v[methodology]:[source_bitmask]`
 | Arch — Tier wiring (scoring + signals) | ✅ Complete | 11 | `ee0c221` |
 | Arch — DataSource\<T\> + runner | ✅ Complete | 23 | `5cc3312` |
 | 3 — Contact Re-Scoring (foundation) | ✅ Complete | 19 | `6d3516d` |
-| 4 — LinkedIn (threads + profile + edge signals) | 🟡 In progress | 28 | `3cd8c87` |
-| 3b — Entity Resolution (cross-source node graph) | 🟡 In progress | 55 | `ab0979a` |
+| 4 — LinkedIn (threads + profile + edge signals + cron) | 🟡 In progress | 65 | `01a1b5c` |
+| 3b — Entity Resolution (cross-source node graph) | ✅ Complete | 55 | `01a1b5c` |
 | 2 — PDF/Contract | 🔲 Planned | — | — |
 | 3 — Contact Re-Scoring (full) | 🔲 Planned | — | — |
 | 5 — Network Intelligence + Group Psychometrics | 🔲 Planned | — | — |
 
-**Total test count:** 631/631 passing, zero RED, zero TS errors
+**Total test count:** 641/641 passing, zero RED, zero TS errors
 **Repo:** `git@github.com:jamesdwilson/Sh4d0wDB.git`
-**HEAD:** `ab0979a`
+**HEAD:** `01a1b5c`
