@@ -90,10 +90,16 @@ export class PostgresStore extends MemoryStore {
         const baseConds = ["embedding IS NOT NULL", "deleted_at IS NULL"];
         const { clauses, values, nextIdx } = buildFilterClauses(filters, 3);
         const allConds = [...baseConds, ...clauses].join(" AND ");
+        // Phase 0: SELECT confidence/decay/tier columns for scoring pipeline.
+        // COALESCE to safe defaults in case migration hasn't run (backward compat).
         const sql = `
       SELECT id, content, category, title, record_type, created_at,
              1 - (embedding <=> $1::vector) AS score,
-             ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS rank
+             ROW_NUMBER() OVER (ORDER BY embedding <=> $1::vector) AS rank,
+             COALESCE(confidence, 1.0)              AS confidence,
+             COALESCE(confidence_decay_rate, 0.0)   AS confidence_decay_rate,
+             COALESCE(is_timeless, FALSE)            AS is_timeless,
+             COALESCE(relevance_tier, 1)             AS relevance_tier
       FROM ${this.config.table}
       WHERE ${allConds}
       ORDER BY embedding <=> $1::vector
@@ -110,6 +116,10 @@ export class PostgresStore extends MemoryStore {
             created_at: r.created_at,
             rank: parseInt(r.rank, 10),
             rawScore: parseFloat(r.score),
+            confidence: parseFloat(r.confidence),
+            confidenceDecayRate: parseFloat(r.confidence_decay_rate),
+            isTimeless: r.is_timeless === true || r.is_timeless === 'true',
+            relevanceTier: parseInt(r.relevance_tier, 10),
         }));
         // Filter out vector hits below minVectorScore (cosine similarity threshold)
         if (minVec > 0) {
@@ -124,10 +134,15 @@ export class PostgresStore extends MemoryStore {
         const baseConds = ["fts IS NOT NULL", "fts @@ plainto_tsquery('english', $1)", "deleted_at IS NULL"];
         const { clauses, values, nextIdx } = buildFilterClauses(filters, 3);
         const allConds = [...baseConds, ...clauses].join(" AND ");
+        // Phase 0: include confidence/tier columns (COALESCE for backward compat)
         const sql = `
       SELECT id, content, category, title, record_type, created_at,
              ts_rank_cd(fts, plainto_tsquery('english', $1)) AS score,
-             ROW_NUMBER() OVER (ORDER BY ts_rank_cd(fts, plainto_tsquery('english', $1)) DESC) AS rank
+             ROW_NUMBER() OVER (ORDER BY ts_rank_cd(fts, plainto_tsquery('english', $1)) DESC) AS rank,
+             COALESCE(confidence, 1.0)              AS confidence,
+             COALESCE(confidence_decay_rate, 0.0)   AS confidence_decay_rate,
+             COALESCE(is_timeless, FALSE)            AS is_timeless,
+             COALESCE(relevance_tier, 1)             AS relevance_tier
       FROM ${this.config.table}
       WHERE ${allConds}
       ORDER BY score DESC
@@ -143,16 +158,25 @@ export class PostgresStore extends MemoryStore {
             created_at: r.created_at,
             rank: parseInt(r.rank, 10),
             rawScore: parseFloat(r.score),
+            confidence: parseFloat(r.confidence),
+            confidenceDecayRate: parseFloat(r.confidence_decay_rate),
+            isTimeless: r.is_timeless === true || r.is_timeless === 'true',
+            relevanceTier: parseInt(r.relevance_tier, 10),
         }));
     }
     async fuzzySearch(query, limit, filters) {
         const baseConds = ["(content % $1 OR content ILIKE '%' || $1 || '%')", "deleted_at IS NULL"];
         const { clauses, values, nextIdx } = buildFilterClauses(filters, 3);
         const allConds = [...baseConds, ...clauses].join(" AND ");
+        // Phase 0: include confidence/tier columns (COALESCE for backward compat)
         const sql = `
       SELECT id, content, category, title, record_type, created_at,
              similarity(content, $1) AS score,
-             ROW_NUMBER() OVER (ORDER BY content <-> $1) AS rank
+             ROW_NUMBER() OVER (ORDER BY content <-> $1) AS rank,
+             COALESCE(confidence, 1.0)              AS confidence,
+             COALESCE(confidence_decay_rate, 0.0)   AS confidence_decay_rate,
+             COALESCE(is_timeless, FALSE)            AS is_timeless,
+             COALESCE(relevance_tier, 1)             AS relevance_tier
       FROM ${this.config.table}
       WHERE ${allConds}
       ORDER BY content <-> $1
@@ -168,6 +192,10 @@ export class PostgresStore extends MemoryStore {
             created_at: r.created_at,
             rank: parseInt(r.rank, 10),
             rawScore: parseFloat(r.score),
+            confidence: parseFloat(r.confidence),
+            confidenceDecayRate: parseFloat(r.confidence_decay_rate),
+            isTimeless: r.is_timeless === true || r.is_timeless === 'true',
+            relevanceTier: parseInt(r.relevance_tier, 10),
         }));
     }
     // ==========================================================================

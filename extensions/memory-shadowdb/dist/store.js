@@ -27,6 +27,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { mergeRRF } from "./rrf.js";
 import { rerankCandidates } from "./reranker.js";
+import { applySearchScoring } from "./phase0-search-scoring.js";
 import { validateTags } from "./tag-validator.js";
 // ============================================================================
 // Constants — shared validation limits
@@ -136,11 +137,27 @@ export class MemoryStore {
             const didRerank = reranked.some((r) => r.rerankScore !== undefined);
             this.logger.info(`memory-shadowdb: rerank ${didRerank ? "applied" : "skipped (degraded)"} in ${rerankMs}ms — ${reranked.length} candidates → ${finalHits.length} final`);
         }
+        // Phase 0: Apply confidence decay + tier weighting to final hits.
+        // Requires relevance_tier, confidence, confidence_decay_rate, is_timeless
+        // to be returned by the backend search legs. Falls back to rrfScore safely
+        // if columns are absent (e.g. SQLite backend, or pre-migration schema).
+        const scoringStart = Date.now();
+        const scoredHits = applySearchScoring(finalHits.map((h) => ({
+            ...h,
+            rrfScore: h.rrfScore ?? 0,
+            rerankScore: h.rerankScore ?? null,
+            relevanceTier: h.relevanceTier ?? 1,
+            confidence: h.confidence ?? 1.0,
+            confidenceDecayRate: h.confidenceDecayRate ?? 0.0,
+            isTimeless: h.isTimeless ?? false,
+        })));
+        const scoringMs = Date.now() - scoringStart;
+        this.logger.info(`memory-shadowdb: phase0 scoring applied in ${scoringMs}ms`);
         const totalMs = Date.now() - searchStart;
-        this.logger.info(`memory-shadowdb: search complete in ${totalMs}ms — ${finalHits.length} results (embed=${embedMs}ms, legs=${legMs}ms)`);
+        this.logger.info(`memory-shadowdb: search complete in ${totalMs}ms — ${scoredHits.length} results (embed=${embedMs}ms, legs=${legMs}ms, scoring=${scoringMs}ms)`);
         const level = detailLevel || "snippet";
         // Format as SearchResult[]
-        return finalHits.map((hit) => {
+        return scoredHits.map((hit) => {
             let snippet;
             if (level === "summary") {
                 // Summary: title + category + tags + metadata only, NO content
@@ -171,7 +188,9 @@ export class MemoryStore {
                 path: virtualPath,
                 startLine: 1,
                 endLine: 1,
-                score: hit.rrfScore,
+                // Phase 0: score is now finalScore (confidence * tier * rerank * vector)
+                // Falls back to rrfScore if finalScore not computed (non-Postgres backends)
+                score: hit.finalScore ?? hit.rrfScore ?? 0,
                 snippet,
                 source: "memory",
                 citation: `shadowdb:${this.config.table}#${hit.id}`,

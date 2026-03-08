@@ -30,6 +30,7 @@ import type { SearchResult, WriteResult, SearchFilters, AssembleResult } from ".
 import type { EmbeddingClient } from "./embedder.js";
 import { mergeRRF } from "./rrf.js";
 import { rerankCandidates } from "./reranker.js";
+import { applySearchScoring, type ScoredRankedHit } from "./phase0-search-scoring.js";
 import { validateTags } from "./tag-validator.js";
 
 // ============================================================================
@@ -59,6 +60,10 @@ export const RRF_K = 60;
 /**
  * A single ranked hit from one search signal (vector, FTS, fuzzy).
  * Each backend returns these; the base class merges them via RRF.
+ *
+ * Phase 0: extended with confidence/tier fields from the memories table.
+ * Backends that SELECT these columns populate them; backends that don't
+ * leave them at safe defaults (confidence=1.0, isTimeless=false, tier=1).
  */
 export interface RankedHit {
   id: number;
@@ -71,6 +76,14 @@ export interface RankedHit {
   rank: number;
   /** Raw score from the signal (for diagnostics, not used in RRF) */
   rawScore?: number;
+  /** Phase 0: Current confidence [0,1]. Default 1.0 if column not yet populated. */
+  confidence?: number;
+  /** Phase 0: Exponential decay rate per day. Default 0 (no decay). */
+  confidenceDecayRate?: number;
+  /** Phase 0: Timeless records always receive full confidence and tier weight. */
+  isTimeless?: boolean;
+  /** Phase 0: Relevance tier 1-4, or null (archived). Default 1 (fresh). */
+  relevanceTier?: 1 | 2 | 3 | 4 | null;
 }
 
 /** A row from the primer table. */
@@ -223,13 +236,32 @@ export abstract class MemoryStore {
       );
     }
 
+    // Phase 0: Apply confidence decay + tier weighting to final hits.
+    // Requires relevance_tier, confidence, confidence_decay_rate, is_timeless
+    // to be returned by the backend search legs. Falls back to rrfScore safely
+    // if columns are absent (e.g. SQLite backend, or pre-migration schema).
+    const scoringStart = Date.now();
+    const scoredHits = applySearchScoring(
+      finalHits.map((h) => ({
+        ...h,
+        rrfScore: (h as { rrfScore?: number }).rrfScore ?? 0,
+        rerankScore: (h as { rerankScore?: number }).rerankScore ?? null,
+        relevanceTier: (h as { relevanceTier?: 1|2|3|4|null }).relevanceTier ?? 1,
+        confidence: (h as { confidence?: number }).confidence ?? 1.0,
+        confidenceDecayRate: (h as { confidenceDecayRate?: number }).confidenceDecayRate ?? 0.0,
+        isTimeless: (h as { isTimeless?: boolean }).isTimeless ?? false,
+      })) as ScoredRankedHit[],
+    );
+    const scoringMs = Date.now() - scoringStart;
+    this.logger.info(`memory-shadowdb: phase0 scoring applied in ${scoringMs}ms`);
+
     const totalMs = Date.now() - searchStart;
-    this.logger.info(`memory-shadowdb: search complete in ${totalMs}ms — ${finalHits.length} results (embed=${embedMs}ms, legs=${legMs}ms)`);
+    this.logger.info(`memory-shadowdb: search complete in ${totalMs}ms — ${scoredHits.length} results (embed=${embedMs}ms, legs=${legMs}ms, scoring=${scoringMs}ms)`);
 
     const level = detailLevel || "snippet";
 
     // Format as SearchResult[]
-    return finalHits.map((hit) => {
+    return scoredHits.map((hit) => {
       let snippet: string;
       if (level === "summary") {
         // Summary: title + category + tags + metadata only, NO content
@@ -255,7 +287,9 @@ export abstract class MemoryStore {
         path: virtualPath,
         startLine: 1,
         endLine: 1,
-        score: hit.rrfScore,
+        // Phase 0: score is now finalScore (confidence * tier * rerank * vector)
+        // Falls back to rrfScore if finalScore not computed (non-Postgres backends)
+        score: hit.finalScore ?? (hit as { rrfScore?: number }).rrfScore ?? 0,
         snippet,
         source: "memory",
         citation: `shadowdb:${this.config.table}#${hit.id}`,

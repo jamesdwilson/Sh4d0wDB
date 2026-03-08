@@ -34,6 +34,10 @@ export declare const RRF_K = 60;
 /**
  * A single ranked hit from one search signal (vector, FTS, fuzzy).
  * Each backend returns these; the base class merges them via RRF.
+ *
+ * Phase 0: extended with confidence/tier fields from the memories table.
+ * Backends that SELECT these columns populate them; backends that don't
+ * leave them at safe defaults (confidence=1.0, isTimeless=false, tier=1).
  */
 export interface RankedHit {
     id: number;
@@ -46,6 +50,14 @@ export interface RankedHit {
     rank: number;
     /** Raw score from the signal (for diagnostics, not used in RRF) */
     rawScore?: number;
+    /** Phase 0: Current confidence [0,1]. Default 1.0 if column not yet populated. */
+    confidence?: number;
+    /** Phase 0: Exponential decay rate per day. Default 0 (no decay). */
+    confidenceDecayRate?: number;
+    /** Phase 0: Timeless records always receive full confidence and tier weight. */
+    isTimeless?: boolean;
+    /** Phase 0: Relevance tier 1-4, or null (archived). Default 1 (fresh). */
+    relevanceTier?: 1 | 2 | 3 | 4 | null;
 }
 /** A row from the primer table. */
 export interface PrimerRow {
