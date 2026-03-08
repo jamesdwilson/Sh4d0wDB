@@ -469,7 +469,7 @@ test('E1: fetchMessage navigates to thread URL and returns ExtractedContent', as
   const { browser } = mockBrowser({
     [`/messaging/thread/${threadId}`]: THREAD_HTML,
   });
-  const fetcher = new LinkedInFetcher(browser);
+  const fetcher = new LinkedInFetcher(browser, { delayMs: 0 }); // no delay in tests
   const content = await fetcher.fetchMessage(threadId);
   assert.ok(content !== null, 'should return ExtractedContent for valid thread');
   assert.ok(content.text.length > 0, 'should have message text');

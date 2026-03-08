@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@sinclair/typebox": "0.34.48",
+    "node-html-parser": "^7.1.0",
     "openai": "^4.77.0",
     "pg": "^8.18.0"
   },
