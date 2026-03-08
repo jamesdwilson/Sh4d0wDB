@@ -99,7 +99,8 @@ export class PostgresStore extends MemoryStore {
              COALESCE(confidence, 1.0)              AS confidence,
              COALESCE(confidence_decay_rate, 0.0)   AS confidence_decay_rate,
              COALESCE(is_timeless, FALSE)            AS is_timeless,
-             COALESCE(relevance_tier, 1)             AS relevance_tier
+             COALESCE(relevance_tier, 1)             AS relevance_tier,
+             last_verified_at
       FROM ${this.config.table}
       WHERE ${allConds}
       ORDER BY embedding <=> $1::vector
@@ -119,6 +120,7 @@ export class PostgresStore extends MemoryStore {
             confidence: parseFloat(r.confidence),
             confidenceDecayRate: parseFloat(r.confidence_decay_rate),
             isTimeless: r.is_timeless === true || r.is_timeless === 'true',
+            lastVerifiedAt: r.last_verified_at ?? null,
             relevanceTier: parseInt(r.relevance_tier, 10),
         }));
         // Filter out vector hits below minVectorScore (cosine similarity threshold)
@@ -142,7 +144,8 @@ export class PostgresStore extends MemoryStore {
              COALESCE(confidence, 1.0)              AS confidence,
              COALESCE(confidence_decay_rate, 0.0)   AS confidence_decay_rate,
              COALESCE(is_timeless, FALSE)            AS is_timeless,
-             COALESCE(relevance_tier, 1)             AS relevance_tier
+             COALESCE(relevance_tier, 1)             AS relevance_tier,
+             last_verified_at
       FROM ${this.config.table}
       WHERE ${allConds}
       ORDER BY score DESC
@@ -161,6 +164,7 @@ export class PostgresStore extends MemoryStore {
             confidence: parseFloat(r.confidence),
             confidenceDecayRate: parseFloat(r.confidence_decay_rate),
             isTimeless: r.is_timeless === true || r.is_timeless === 'true',
+            lastVerifiedAt: r.last_verified_at ?? null,
             relevanceTier: parseInt(r.relevance_tier, 10),
         }));
     }
@@ -176,7 +180,8 @@ export class PostgresStore extends MemoryStore {
              COALESCE(confidence, 1.0)              AS confidence,
              COALESCE(confidence_decay_rate, 0.0)   AS confidence_decay_rate,
              COALESCE(is_timeless, FALSE)            AS is_timeless,
-             COALESCE(relevance_tier, 1)             AS relevance_tier
+             COALESCE(relevance_tier, 1)             AS relevance_tier,
+             last_verified_at
       FROM ${this.config.table}
       WHERE ${allConds}
       ORDER BY content <-> $1
@@ -195,6 +200,7 @@ export class PostgresStore extends MemoryStore {
             confidence: parseFloat(r.confidence),
             confidenceDecayRate: parseFloat(r.confidence_decay_rate),
             isTimeless: r.is_timeless === true || r.is_timeless === 'true',
+            lastVerifiedAt: r.last_verified_at ?? null,
             relevanceTier: parseInt(r.relevance_tier, 10),
         }));
     }

@@ -34,6 +34,7 @@ import { type RelevanceTier } from "./phase0-scoring.js";
  *   - confidence: from memories.confidence
  *   - confidenceDecayRate: from memories.confidence_decay_rate
  *   - isTimeless: from memories.is_timeless
+ *   - lastVerifiedAt: from memories.last_verified_at (resets decay clock)
  */
 export interface ScoredRankedHit {
     readonly id: number;
@@ -56,6 +57,13 @@ export interface ScoredRankedHit {
     readonly confidenceDecayRate: number;
     /** Timeless records always receive full confidence and tier weight */
     readonly isTimeless: boolean;
+    /**
+     * When the record was last verified as still accurate.
+     * Resets the decay clock — decay runs from this date instead of created_at.
+     * Null means decay runs from created_at.
+     * May be a Date object or ISO string (DB may return either).
+     */
+    readonly lastVerifiedAt: Date | string | null;
     /** Final combined score — set by applySearchScoring() */
     finalScore?: number;
 }

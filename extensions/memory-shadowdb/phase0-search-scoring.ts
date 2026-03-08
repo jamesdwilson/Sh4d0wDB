@@ -46,6 +46,7 @@ import {
  *   - confidence: from memories.confidence
  *   - confidenceDecayRate: from memories.confidence_decay_rate
  *   - isTimeless: from memories.is_timeless
+ *   - lastVerifiedAt: from memories.last_verified_at (resets decay clock)
  */
 export interface ScoredRankedHit {
   readonly id: number;
@@ -68,6 +69,13 @@ export interface ScoredRankedHit {
   readonly confidenceDecayRate: number;
   /** Timeless records always receive full confidence and tier weight */
   readonly isTimeless: boolean;
+  /**
+   * When the record was last verified as still accurate.
+   * Resets the decay clock — decay runs from this date instead of created_at.
+   * Null means decay runs from created_at.
+   * May be a Date object or ISO string (DB may return either).
+   */
+  readonly lastVerifiedAt: Date | string | null;
   /** Final combined score — set by applySearchScoring() */
   finalScore?: number;
 }
@@ -100,10 +108,20 @@ export function applySearchScoring(
 
   const scored = hits.map((hit) => {
     try {
+      // Safely parse lastVerifiedAt — DB may return Date, ISO string, or null
+      const lastVerifiedAt: Date | null =
+        hit.lastVerifiedAt instanceof Date
+          ? hit.lastVerifiedAt
+          : typeof hit.lastVerifiedAt === "string" && hit.lastVerifiedAt
+            ? new Date(hit.lastVerifiedAt)
+            : null;
+
       const recordForConfidence: RecordForConfidence = {
         confidence: hit.confidence,
         confidenceDecayRate: hit.confidenceDecayRate,
-        lastVerifiedAt: null,   // TODO: wire last_verified_at when added to RankedHit
+        // lastVerifiedAt resets the decay clock — records recently verified
+        // retain high confidence even if created_at is old
+        lastVerifiedAt,
         isTimeless: hit.isTimeless,
         createdAt: hit.created_at instanceof Date
           ? hit.created_at

@@ -47,10 +47,18 @@ export function applySearchScoring(hits, asOf = new Date()) {
         return [];
     const scored = hits.map((hit) => {
         try {
+            // Safely parse lastVerifiedAt — DB may return Date, ISO string, or null
+            const lastVerifiedAt = hit.lastVerifiedAt instanceof Date
+                ? hit.lastVerifiedAt
+                : typeof hit.lastVerifiedAt === "string" && hit.lastVerifiedAt
+                    ? new Date(hit.lastVerifiedAt)
+                    : null;
             const recordForConfidence = {
                 confidence: hit.confidence,
                 confidenceDecayRate: hit.confidenceDecayRate,
-                lastVerifiedAt: null, // TODO: wire last_verified_at when added to RankedHit
+                // lastVerifiedAt resets the decay clock — records recently verified
+                // retain high confidence even if created_at is old
+                lastVerifiedAt,
                 isTimeless: hit.isTimeless,
                 createdAt: hit.created_at instanceof Date
                     ? hit.created_at

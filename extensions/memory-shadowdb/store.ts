@@ -84,6 +84,12 @@ export interface RankedHit {
   isTimeless?: boolean;
   /** Phase 0: Relevance tier 1-4, or null (archived). Default 1 (fresh). */
   relevanceTier?: 1 | 2 | 3 | 4 | null;
+  /**
+   * Phase 0: When this record was last verified as still accurate.
+   * Resets the confidence decay clock — decay runs from this date, not created_at.
+   * Null means decay runs from created_at (default behavior).
+   */
+  lastVerifiedAt?: Date | string | null;
 }
 
 /** A row from the primer table. */
@@ -250,6 +256,8 @@ export abstract class MemoryStore {
         confidence: (h as { confidence?: number }).confidence ?? 1.0,
         confidenceDecayRate: (h as { confidenceDecayRate?: number }).confidenceDecayRate ?? 0.0,
         isTimeless: (h as { isTimeless?: boolean }).isTimeless ?? false,
+        // lastVerifiedAt resets decay clock — pass through from DB (may be Date, string, or null)
+        lastVerifiedAt: (h as { lastVerifiedAt?: Date | string | null }).lastVerifiedAt ?? null,
       })) as ScoredRankedHit[],
     );
     const scoringMs = Date.now() - scoringStart;

@@ -58,6 +58,12 @@ export interface RankedHit {
     isTimeless?: boolean;
     /** Phase 0: Relevance tier 1-4, or null (archived). Default 1 (fresh). */
     relevanceTier?: 1 | 2 | 3 | 4 | null;
+    /**
+     * Phase 0: When this record was last verified as still accurate.
+     * Resets the confidence decay clock — decay runs from this date, not created_at.
+     * Null means decay runs from created_at (default behavior).
+     */
+    lastVerifiedAt?: Date | string | null;
 }
 /** A row from the primer table. */
 export interface PrimerRow {

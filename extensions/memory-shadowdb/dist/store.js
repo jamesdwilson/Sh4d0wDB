@@ -150,6 +150,8 @@ export class MemoryStore {
             confidence: h.confidence ?? 1.0,
             confidenceDecayRate: h.confidenceDecayRate ?? 0.0,
             isTimeless: h.isTimeless ?? false,
+            // lastVerifiedAt resets decay clock — pass through from DB (may be Date, string, or null)
+            lastVerifiedAt: h.lastVerifiedAt ?? null,
         })));
         const scoringMs = Date.now() - scoringStart;
         this.logger.info(`memory-shadowdb: phase0 scoring applied in ${scoringMs}ms`);
