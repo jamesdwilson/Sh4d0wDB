@@ -128,6 +128,27 @@ as OC agent jobs directly since `exec` isn't enough — OC owns all browser exec
 
 ---
 
+## Phase 3b: Entity Resolution Layer
+
+Must be complete before Phase 5. Bad entity resolution = wrong graph = wrong network analysis.
+
+### Goals
+- Cross-source identity: `amy@acme.com` (Gmail) + `Amy Chen, VP at Acme` (LinkedIn) + `+1-404-555-0192` (iMessage) = one node
+- Node types: person, company, group, fund, school, event
+- Edge types: knows, referred, co_invested, mentioned, works_at, founded, member_of, attended, etc.
+- Confidence-weighted resolution — fuzzy name alone = 50%, linkedinUrl = 100%
+- Idempotent edge registration — re-seen edge updates `lastVerifiedAt` + confidence, no duplicate
+- `resolveParties()` in `phase1-parties.ts` becomes a thin wrapper around `EntityResolver`
+
+### Definition of Done
+- [ ] `EntityResolver` interface + `resolve()` + `merge()` + `addEdge()` — tests with all confidence tiers
+- [ ] `EntityCandidate`, `ResolvedEntity`, `EntityEdge`, `EdgeSignal` types
+- [ ] Cross-source resolution: Gmail email + LinkedIn name+company → same node (integration test)
+- [ ] `resolveParties()` updated to delegate to `EntityResolver`
+- [ ] Edge signals from LinkedIn profile scrape wired through resolver
+
+---
+
 ## Phase 2: PDF / Contract Ingestion
 
 ### Goals
@@ -355,7 +376,16 @@ export class LinkedInFetcher implements MessageFetcher {
 - [x] Real LinkedIn DOM selectors verified against live page 2026-03-08
 - [x] Evasion interface specced — jitter (implemented), mouse sim / human scroll / randomize order / session batch limit (stubs, not yet needed)
 - [x] Execution model settled — LinkedIn is OC agent job, NOT wired into `ingest.mjs` (commit 3cd8c87)
-- [ ] Wire `BrowserClient` production impl using OC `browser` tool calls ← NEXT
+**Submodules** (three distinct scrape targets):
+1. **Global message list** (`/messaging/`) — thread discovery, low signal, already built
+2. **Contact message history** (`/messaging/thread/<id>/`) — behavioral signals, already built
+3. **Contact profile** (`/in/<username>/`) — dossier enrichment + edge signals ← to build
+
+- [ ] `parseContactProfile(html)` — pure function, fixture HTML from live DOM ← NEXT
+- [ ] `profileToExtractedContent(profile)` — maps to ExtractedContent for pipeline
+- [ ] `extractEdgeSignals(profile, selfName)` — emits EdgeSignal[] (feeds Phase 3b resolver)
+- [ ] `LinkedInProfileFetcher` — navigates `/in/<username>/`, calls above
+- [ ] Wire `BrowserClient` production impl using OC `browser` tool calls
 - [ ] Register OC cron job for LinkedIn ingestion (agent job, uses browser tool directly)
 - [ ] Smoke test: run OC agent job against live LinkedIn inbox
 
@@ -449,8 +479,10 @@ P[number]: [Specific outcome statement]
 ### Definition of Done
 - [ ] `computeBetweennessCentrality` — unit tests with fixture graphs
 - [ ] `detectClusters` — unit tests with known cluster structures
+- [ ] `computeGroupPsychProfile` — aggregate DISC, dominant language, blind spots, collective anxieties, entry point, decision pattern — unit tests with fixture member profiles
 - [ ] `detectNetworkOpportunities` — integration test: seed graph, verify all 8 plays detected
 - [ ] `generateOpportunityBriefing` — unit test: fixture opportunities → formatted output
+- [ ] Group outreach generation — given a GroupPsychProfile, generate copy that reads as written by an in-group member
 - [ ] Predictions follow the specific/testable/actionable format
 - [ ] Daily cron: runs analysis, announces if new high-impact opportunities detected
 - [ ] Staleness check: dossiers >7 days old are flagged for revalidation before use in analysis
@@ -807,10 +839,11 @@ Every contact dossier carries a version: `v[methodology]:[source_bitmask]`
 | Arch — Tier wiring (scoring + signals) | ✅ Complete | 11 | `ee0c221` |
 | Arch — DataSource\<T\> + runner | ✅ Complete | 23 | `5cc3312` |
 | 3 — Contact Re-Scoring (foundation) | ✅ Complete | 19 | `6d3516d` |
-| 4 — LinkedIn (parsing + evasion spec) | 🟡 In progress | 28 | `3cd8c87` |
+| 4 — LinkedIn (threads + profile + edge signals) | 🟡 In progress | 28 | `3cd8c87` |
+| 3b — Entity Resolution (cross-source node graph) | 🔲 Planned | — | — |
 | 2 — PDF/Contract | 🔲 Planned | — | — |
 | 3 — Contact Re-Scoring (full) | 🔲 Planned | — | — |
-| 5 — Network Intelligence | 🔲 Planned | — | — |
+| 5 — Network Intelligence + Group Psychometrics | 🔲 Planned | — | — |
 
 **Total test count:** 567/567 passing, zero RED, zero TS errors
 **Repo:** `git@github.com:jamesdwilson/Sh4d0wDB.git`

@@ -1,6 +1,6 @@
 # ShadowDB Intelligence Layer — Architecture Contracts
 
-**Last updated:** 2026-03-07
+**Last updated:** 2026-03-08
 **Status:** Living document — update before implementing any new module
 
 ---
@@ -444,7 +444,323 @@ All test files written before implementation files.
 
 ---
 
-## 7. What This Unlocks
+## 7. Entity Graph — Cross-Source Node Resolution
+
+### 7.1 The Problem
+
+Every source speaks in its own identifiers:
+- Gmail: `amy@acme.com`
+- LinkedIn: `Amy Chen, VP at Acme Corp`
+- iMessage: `+1-404-555-0192`
+- LinkedIn message body: `"...as Amy mentioned..."`
+
+Without resolution, Amy is four nodes. Betweenness centrality is wrong.
+Group psychometrics are wrong. Every graph analysis is wrong.
+
+### 7.2 Node Types
+
+A node is any entity that can be a party to a relationship.
+
+```typescript
+export type EntityNodeType =
+  | "person"    // Individual human
+  | "company"   // Corporation, LLC, fund vehicle
+  | "group"     // Informal cluster, cohort, circle ("Chicago PE crowd")
+  | "fund"      // Investment fund ("Andreessen Bio Fund III")
+  | "school"    // Educational institution
+  | "event";    // Conference, meetup, dinner ("SaaStr 2026")
+```
+
+### 7.3 Edge Types
+
+```typescript
+export type EdgeType =
+  // Person → Person
+  | "knows"           // general relationship
+  | "referred"        // A referred B (directional, high value)
+  | "co_invested"     // appeared on same cap table
+  | "mentioned"       // A mentioned B in a message (soft, directional)
+  | "tension"         // detected conflict signal
+  | "reports_to"      // org hierarchy
+  // Person → Company/Fund
+  | "works_at"        // current employment
+  | "worked_at"       // former employment
+  | "invested_in"     // person invested in company
+  | "advises"         // advisory role
+  | "founded"         // founder relationship
+  // Person → Group/Event
+  | "member_of"
+  | "attended"
+  // Company → Company
+  | "acquired"
+  | "competes_with"
+  | "partners_with"
+  | "raised_from"     // company raised from fund
+  // Company → Fund
+  | "portfolio_of";
+```
+
+### 7.4 `EntityCandidate` and `EntityResolver`
+
+```typescript
+/**
+ * A candidate entity extracted from any source.
+ * The resolver attempts to match this to an existing node or creates a new one.
+ */
+export interface EntityCandidate {
+  type: EntityNodeType;
+  // Person fields
+  name?: string;
+  email?: string;
+  phone?: string;
+  title?: string;
+  // Company/Group fields
+  companyName?: string;
+  domain?: string;
+  // Cross-source anchors (highest confidence)
+  linkedinUrl?: string;
+  crunchbaseUrl?: string;
+  // Provenance
+  sourceId: string;       // which source emitted this candidate
+  sourceRecordId: string; // which record within that source
+  confidence: number;     // 0–1, how confident we are this is a real entity
+}
+
+/**
+ * A resolved entity node in the graph.
+ * Stored in ShadowDB memories table (category = entity type).
+ */
+export interface ResolvedEntity {
+  id: number;             // ShadowDB memory record id
+  type: EntityNodeType;
+  canonicalName: string;
+  aliases: string[];      // all known names/handles for this entity
+  emails: string[];
+  phones: string[];
+  linkedinUrl?: string;
+  sourceBitmask: number;  // which sources have contributed data (same as dossier bitmask)
+}
+
+/**
+ * A directed edge between two resolved entities.
+ * Stored in ShadowDB as relationship records (metadata graph fields).
+ */
+export interface EntityEdge {
+  fromId: number;         // ResolvedEntity.id
+  toId: number;           // ResolvedEntity.id
+  type: EdgeType;
+  confidence: number;     // 0–1
+  sourceId: string;       // which source produced this edge
+  evidenceText?: string;  // snippet that supports this edge
+  firstSeenAt: Date;
+  lastVerifiedAt: Date;
+}
+
+/**
+ * Entity resolver — finds or creates canonical entity nodes.
+ *
+ * Resolution priority (highest confidence first):
+ *   1. linkedinUrl match        → 100% same entity
+ *   2. email match              → 99% same person
+ *   3. name + company + title   → 85% same person
+ *   4. name + company           → 70% same person
+ *   5. name fuzzy only          → 50%, needs corroboration
+ *   6. company + domain         → 90% same company
+ *   7. company name fuzzy       → 60% same company
+ */
+export interface EntityResolver {
+  /**
+   * Find or create a canonical entity node for a candidate.
+   * Returns null if confidence is below threshold.
+   */
+  resolve(candidate: EntityCandidate): Promise<ResolvedEntity | null>;
+
+  /**
+   * Merge two independently resolved entities into one canonical node.
+   * All edges pointing to either node are repointed to the survivor.
+   */
+  merge(entityIdA: number, entityIdB: number, confidence: number): Promise<void>;
+
+  /**
+   * Register a directed edge between two resolved entities.
+   * Idempotent — re-registering same edge updates lastVerifiedAt + confidence.
+   */
+  addEdge(edge: Omit<EntityEdge, "firstSeenAt" | "lastVerifiedAt">): Promise<void>;
+}
+```
+
+### 7.5 `EdgeSignal` — Phase 4 Output
+
+LinkedIn profile scraping emits `EdgeSignal[]` alongside `ExtractedContent`.
+These are candidate edges that the resolver processes after ingestion.
+
+```typescript
+export interface EdgeSignal {
+  fromCandidate: EntityCandidate;   // the profile being scraped
+  toCandidate: EntityCandidate;     // the entity referenced
+  type: EdgeType;
+  confidence: number;
+  evidenceText?: string;            // "Amy Chen, VP at Acme" → evidence = that sentence
+  sourceId: string;
+}
+```
+
+Cross-source linking example:
+```
+LinkedIn profile for Joe:
+  → EdgeSignal { from: joe, to: "Amy Chen @ Acme", type: "knows", confidence: 0.6 }
+
+EntityResolver.resolve("Amy Chen @ Acme"):
+  → checks existing entities
+  → finds amy@acme.com in Gmail (name + company match, confidence 0.85)
+  → merges → single node: Amy Chen, emails: [amy@acme.com], linkedin: inferred
+
+Result: joe → amy@acme.com edge, cross-source, no manual linking
+```
+
+### 7.6 Group Psychometric Profiles
+
+Once individual psychographic profiles exist (Phase 3), groups become
+first-class analytical targets.
+
+```typescript
+/**
+ * Aggregate psychographic profile for a cluster of entities.
+ * Computed from individual member profiles + inter-member message analysis.
+ */
+export interface GroupPsychProfile {
+  groupId: number;                    // ResolvedEntity.id (type = "group")
+  memberIds: number[];                // constituent entity ids
+  computedAt: Date;
+
+  // Aggregate DISC distribution across members
+  disc: { D: number; I: number; S: number; C: number };
+
+  // Dominant communication patterns across the group
+  dominantLanguage: string[];         // exact phrases the group uses in-group
+
+  // Collective blind spots (topics never raised = group avoidance)
+  blindSpots: string[];
+
+  // Collective anxieties (topics raised obliquely, never directly)
+  collectiveAnxieties: string[];
+
+  // Status hierarchy — who the group mirrors language from
+  dominantVoiceId?: number;           // entity whose language others mirror
+
+  // Decision pattern
+  decisionPattern: "consensus" | "single_node" | "fragmented";
+
+  // Effective entry point — person whose language most closely matches group norms
+  // i.e. who you should sound like when writing to this group
+  entryPointId?: number;
+}
+```
+
+Marketing/outreach implications:
+- `dominantLanguage` → word-for-word vocabulary to use in outreach
+- `collectiveAnxieties` → the tension to introduce or resolve
+- `entryPointId` → who to contact first (their language = group's language)
+- `blindSpots` → what competitors aren't addressing = positioning opportunity
+- `decisionPattern` → whether to work the room or find the one decision node
+
+### 7.7 Where This Fits in the Pipeline
+
+```
+Phase 4 (LinkedIn profile scrape)
+  → parseContactProfile()
+  → extractEdgeSignals()          ← new Phase 4 output
+  → EntityResolver.resolve()      ← Phase 3b
+  → EntityResolver.addEdge()      ← Phase 3b
+
+Phase 3b (Entity Resolution layer)
+  → EntityResolver (person + company + group nodes)
+  → Cross-source merging (email + LinkedIn + iMessage = same node)
+  → Edge registry (all detected relationships with confidence)
+
+Phase 5 (Network Intelligence)
+  → computeBetweennessCentrality() — reads resolved edge graph
+  → detectClusters()               — reads resolved node pool
+  → computeGroupPsychProfile()     — reads individual profiles + message history
+  → detectNetworkOpportunities()   — runs 8 plays against resolved graph
+  → generateOpportunityBriefing()  — produces actionable output
+```
+
+Phase 3b must be complete before Phase 5 — bad entity resolution = wrong graph = wrong analysis.
+
+---
+
+## 8. LinkedIn Submodule Architecture
+
+Three distinct scrape targets, each with different DOM structure and signal value.
+
+### 8.1 Submodules
+
+| Submodule | URL pattern | `operationId` prefix | Signal value |
+|-----------|-------------|----------------------|--------------|
+| Global message list | `/messaging/` | `linkedin:msglist:<account>` | Low — discovery only |
+| Contact message history | `/messaging/thread/<id>/` | `linkedin:thread:<threadId>` | High — behavioral signals |
+| Contact profile | `/in/<username>/` | `linkedin:profile:<username>` | High — dossier + edge signals |
+
+### 8.2 Profile Parsing Surface
+
+```typescript
+/** Parsed LinkedIn profile page */
+export interface LinkedInProfile {
+  username: string;         // from URL slug
+  url: string;
+  fullName: string;
+  headline?: string;        // "VP of X at Acme"
+  location?: string;
+  about?: string;           // bio text
+  experience: LinkedInExperience[];
+  education: LinkedInEducation[];
+  skills: string[];
+  mutualConnectionCount?: number;
+  sharedConnections: string[];    // names of mutual connections (visible on page)
+  recommendations: LinkedInRecommendation[];
+  fetchedAt: Date;
+}
+
+export interface LinkedInExperience {
+  title: string;
+  company: string;
+  startDate?: string;       // raw text from page ("Jan 2020")
+  endDate?: string;         // "Present" or date
+  description?: string;
+}
+
+export interface LinkedInEducation {
+  school: string;
+  degree?: string;
+  field?: string;
+  startYear?: number;
+  endYear?: number;
+}
+
+export interface LinkedInRecommendation {
+  authorName: string;
+  authorTitle?: string;
+  text: string;
+  direction: "received" | "given";
+}
+
+// Pure function — no browser needed in tests
+export function parseContactProfile(html: string): LinkedInProfile | null;
+export function profileToExtractedContent(profile: LinkedInProfile): ExtractedContent | null;
+export function extractEdgeSignals(profile: LinkedInProfile, selfName: string): EdgeSignal[];
+```
+
+### 8.3 Execution Model
+
+- **Message threads** — `LinkedInFetcher` (already built), OC agent job
+- **Contact profiles** — `LinkedInProfileFetcher` (new), same OC agent job, batch per run
+- **Both** run as OC agent jobs — browser tool, not `ingest.mjs`
+- **Edge signals** emitted during profile ingestion, processed by `EntityResolver`
+
+---
+
+## 9. What This Unlocks
 
 With `TieredLlmClient` + `DataSource<T>`:
 
