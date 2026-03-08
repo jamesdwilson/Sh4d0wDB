@@ -53,6 +53,101 @@ Gives your agent a persistent memory it can search, write, update, and delete �
 
 ---
 
+## Intelligence Layer (in development)
+
+ShadowDB is growing a multi-source intelligence pipeline on top of the memory layer. Still being built — documented here so the direction is clear.
+
+### What it does
+
+Ingests signals from Gmail, iMessage, LinkedIn, calendar, contacts, and documents. Extracts behavioral and psychographic signals. Builds a cross-source entity graph. Answers high-value questions about your network.
+
+### Ingestion pipeline
+
+Every source feeds the same pipeline:
+
+```
+Source (Gmail / iMessage / LinkedIn / Contacts / PDF)
+  → extractContent()          hard veto (receipts, shipping, auth codes)
+  → passesEntityFilter()      requires names, dates, deal terms, money
+  → scoreInterestingness()    LLM gate (0–10, threshold configurable)  [FLASH tier]
+  → chunkDocument()           split into embeddable segments
+  → resolveParties()          fuzzy-match to known entities
+  → store.write()             idempotent (dedup by operationId)
+  → onNewContactSignal()      behavioral delta analysis hook           [STANDARD tier]
+```
+
+Sources run as OpenClaw agent jobs (browser-dependent: LinkedIn) or CLI-wrapped cron scripts (Gmail, iMessage). Nothing requires external API keys beyond what you already have.
+
+### Entity graph
+
+Every ingested record feeds a cross-source entity graph. A node is a person, company, group, fund, school, or event. Edges carry type, confidence, and evidence.
+
+Cross-source resolution: `amy@acme.com` (Gmail) + `Amy Chen, VP at Acme` (LinkedIn) + a mention in Joe's profile → one canonical node, not three.
+
+```
+Resolution priority:
+  linkedinUrl match     → 1.00  (globally unique)
+  email match           → 0.99
+  name + company        → 0.70–0.85
+  name fuzzy only       → 0.50  (below threshold by default)
+  domain match          → 0.90  (companies)
+```
+
+### Network intelligence queries
+
+Once the graph is populated, the system answers questions like:
+
+| Question | Query | Tier |
+|----------|-------|------|
+| "Does GroupA know GroupB?" | `queryGroupRelationship` | STANDARD |
+| "Would GroupA like GroupB?" | `queryGroupAffinity` | STANDARD |
+| "Does GroupA have leverage over GroupB?" | `queryLeverage` | DEEP |
+| "How do I get intros from GroupA to GroupB?" | `queryIntroPath` | DEEP |
+
+`queryIntroPath` returns an ordered action plan — who to ask, in what order, what to say at each step, tension warnings on the path.
+
+### Group psychometrics
+
+Contacts cluster into groups (PE associates in Chicago, SaaS founders at seed stage, etc.). Each group gets an aggregate profile:
+
+- **Dominant language** — exact vocabulary used in-group
+- **Collective anxieties** — what they're worried about but not saying directly
+- **Blind spots** — topics the cluster consistently ignores
+- **Entry point** — which member's language the others mirror (who to sound like)
+- **Decision pattern** — consensus vs. single node vs. fragmented
+
+Output: outreach copy that reads like it was written by someone already inside the group.
+
+### LLM tier routing
+
+Every LLM call declares a tier. The router picks the right model automatically:
+
+| Tier | Context | Example tasks |
+|------|---------|---------------|
+| FLASH | ≤4K | Interestingness scoring, classification |
+| STANDARD | ≤32K | Behavioral signals, opportunity briefing |
+| DEEP | ≤128K | Cross-reference, leverage analysis, intro path |
+
+Tier is a minimum — upward promotion allowed, downward demotion forbidden (would silently truncate). All existing callers that use `complete()` get FLASH tier automatically (backward compatible).
+
+### Implementation status
+
+| Phase | What | Status |
+|-------|------|--------|
+| 0 — Foundation | Schema, scoring, search pipeline | ✅ Done |
+| 1 — Ingestion | Gmail + iMessage pipeline | ✅ Done |
+| Arch — LlmRouter | Tiered model routing | ✅ Done |
+| Arch — DataSource\<T\> | Generic source interface | ✅ Done |
+| 3 — Contact signals | Behavioral delta hook | ✅ Done |
+| 4 — LinkedIn | Thread + profile parsing, edge signals | 🟡 In progress |
+| 3b — Entity resolver | Cross-source identity resolution | 🟡 In progress |
+| 2 — PDF/Contract | Document ingestion | 🔲 Planned |
+| 5 — Network intelligence | 8-play analysis + group psychometrics | 🔲 Planned |
+
+614 tests, zero failures. Full TDD — tests written before implementation files.
+
+---
+
 ## Graph Intelligence (v0.7.0)
 
 ShadowDB includes built-in relationship intelligence for contact networks:
