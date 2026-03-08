@@ -104,8 +104,9 @@ const llm = {
       body: JSON.stringify({
         model: LLM_MODEL,
         messages: [{ role: "user", content: prompt }],
-        max_tokens: 10,
+        max_tokens: 1024,
         temperature: 0,
+        chat_template_kwargs: { enable_thinking: false },
       }),
       signal: AbortSignal.timeout(15_000),
     });

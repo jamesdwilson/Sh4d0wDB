@@ -175,14 +175,24 @@ Respond with ONLY a single number from 0 to 10. No explanation.`;
 function parseScore(response: string): number {
   if (!response) return DEFAULT_SCORE;
 
-  // Try to extract a number (integer, decimal, or negative) from the response
-  // Match patterns like: "8", "8.5", "-3", "Score: 7", "7 out of 10"
-  const match = response.match(/(-?\d+(?:\.\d+)?)/);
-  if (!match) return DEFAULT_SCORE;
+  // Strip thinking blocks — Qwen3 models emit <think>...</think> or
+  // "Thinking Process:\n..." before the actual answer. Remove it.
+  let cleaned = response
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/Thinking Process[\s\S]*?(?=\n\n\d|\n\n[A-Z]|$)/i, "")
+    .trim();
 
-  const parsed = parseFloat(match[1]);
+  // If cleaning consumed everything, fall back to full response
+  if (!cleaned) cleaned = response;
+
+  // Extract ALL numbers (including negative). The LAST one is most likely
+  // the final answer when the model reasons before concluding.
+  const matches = [...cleaned.matchAll(/(-?\d+(?:\.\d+)?)/g)];
+  if (!matches.length) return DEFAULT_SCORE;
+
+  // Use last match — model concludes with the score after reasoning
+  const parsed = parseFloat(matches[matches.length - 1][1]);
   if (isNaN(parsed)) return DEFAULT_SCORE;
 
-  // Clamp to valid range
   return Math.max(SCORE_MIN, Math.min(SCORE_MAX, parsed));
 }
