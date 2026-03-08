@@ -346,9 +346,11 @@ export class LinkedInFetcher implements MessageFetcher {
 
 ### Definition of Done
 - [x] Phase 4 TDD spec written in INTELLIGENCE_ROADMAP.md
-- [ ] `phase4-fetcher-linkedin.test.mjs` written — 22 tests, all RED
-- [ ] `phase4-fetcher-linkedin.ts` implemented — all GREEN
-- [ ] `LinkedInFetcher` registered in `scripts/ingest.mjs` as `--source linkedin`
+- [x] `phase4-fetcher-linkedin.test.mjs` written — 28 tests, all GREEN (commit 502006a)
+- [x] `phase4-fetcher-linkedin.ts` implemented — `parseThreadList`, `parseThreadMessages`, `threadToExtractedContent`, `LinkedInFetcher`, `parseLinkedInTimestamp`
+- [x] Real LinkedIn DOM selectors verified against live page 2026-03-08
+- [ ] `LinkedInFetcher` registered in `scripts/ingest.mjs` as `--source linkedin` ← NEXT
+- [ ] Wire real `BrowserClient` implementation using OC browser tool
 - [ ] Smoke test: run against live LinkedIn inbox, verify thread extraction
 
 ---
@@ -801,9 +803,9 @@ Every contact dossier carries a version: `v[methodology]:[source_bitmask]`
 | 3 — Contact Re-Scoring (foundation) | ✅ Complete | 19 | `6d3516d` |
 | 2 — PDF/Contract | 🔲 Planned | — | — |
 | 3 — Contact Re-Scoring (full) | 🔲 In progress | — | — |
-| 4 — LinkedIn | 🔲 Planned | — | — |
+| 4 — LinkedIn | 🟡 In progress | 28 | `502006a` |
 | 5 — Network Intelligence | 🔲 Planned | — | — |
 
-**Total test count:** 539/539 passing, zero RED, zero TS errors
+**Total test count:** 567/567 passing, zero RED, zero TS errors
 **Repo:** `git@github.com:jamesdwilson/Sh4d0wDB.git`
-**HEAD:** `5cc3312`
+**HEAD:** `502006a`
