@@ -13,3 +13,4 @@ GRAPH_SPEC.md
 __pycache__/
 db-backups/
 node_modules/
+backups/
