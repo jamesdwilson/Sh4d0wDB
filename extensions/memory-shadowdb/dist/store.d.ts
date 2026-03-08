@@ -390,6 +390,15 @@ export declare abstract class MemoryStore {
         limit?: number;
         offset?: number;
     }): Promise<import("./types.js").ListResult[]>;
+    /**
+     * Find an existing record by operationId stored in metadata.
+     * Used for write() deduplication — if a record with this operationId exists,
+     * write() returns its id instead of inserting a duplicate.
+     *
+     * @param operationId - The caller-supplied operationId from params.metadata
+     * @returns           - Existing record id, or null if not found
+     */
+    protected abstract findByOperationId(operationId: string): Promise<number | null>;
     protected abstract insertRecord(params: {
         content: string;
         category: string;

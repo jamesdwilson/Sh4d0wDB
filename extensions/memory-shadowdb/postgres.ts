@@ -331,6 +331,22 @@ export class PostgresStore extends MemoryStore {
   // Write operations
   // ==========================================================================
 
+  /**
+   * Find an existing non-deleted record by caller-supplied operationId in metadata.
+   * Returns the record id, or null if not found.
+   */
+  protected async findByOperationId(operationId: string): Promise<number | null> {
+    const result = await this.pool.query<{ id: number }>(
+      `SELECT id FROM memories
+       WHERE metadata->>'operationId' = $1
+         AND deleted_at IS NULL
+       ORDER BY id ASC
+       LIMIT 1`,
+      [operationId],
+    );
+    return result.rows[0]?.id ?? null;
+  }
+
   protected async insertRecord(params: {
     content: string;
     category: string;

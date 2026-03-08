@@ -675,7 +675,27 @@ export abstract class MemoryStore {
     
     const writeStart = Date.now();
     let newId: number;
-    
+
+    // Deduplication: if caller supplied operationId in metadata, check for existing record.
+    // Returns existing id immediately — idempotent writes are safe to re-run.
+    const callerOperationId = typeof metadata.operationId === "string" ? metadata.operationId : null;
+    if (callerOperationId) {
+      const existingId = await this.findByOperationId(callerOperationId);
+      if (existingId !== null) {
+        this.logger.info(`memory-shadowdb: write dedup — operationId=${callerOperationId} already exists as id=${existingId}, skipping insert`);
+        await opsLog.appendComplete('write', existingId, category);
+        const path = `shadowdb/${category}/${existingId}`;
+        return {
+          ok: true,
+          operation: "write",
+          id: existingId,
+          path,
+          embedded: false,
+          message: `Duplicate operationId — returning existing record ${existingId}`,
+        };
+      }
+    }
+
     try {
       newId = await this.insertRecord({ content, category, title, tags, metadata, record_type, parent_id, priority });
     } catch (err) {
@@ -1170,6 +1190,16 @@ export abstract class MemoryStore {
     limit?: number;
     offset?: number;
   }): Promise<import("./types.js").ListResult[]>;
+
+  /**
+   * Find an existing record by operationId stored in metadata.
+   * Used for write() deduplication — if a record with this operationId exists,
+   * write() returns its id instead of inserting a duplicate.
+   *
+   * @param operationId - The caller-supplied operationId from params.metadata
+   * @returns           - Existing record id, or null if not found
+   */
+  protected abstract findByOperationId(operationId: string): Promise<number | null>;
 
   protected abstract insertRecord(params: {
     content: string;

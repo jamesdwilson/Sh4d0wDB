@@ -67,6 +67,11 @@ export declare class PostgresStore extends MemoryStore {
         path: string;
     }>;
     protected getPrimerRows(): Promise<PrimerRow[]>;
+    /**
+     * Find an existing non-deleted record by caller-supplied operationId in metadata.
+     * Returns the record id, or null if not found.
+     */
+    protected findByOperationId(operationId: string): Promise<number | null>;
     protected insertRecord(params: {
         content: string;
         category: string;

@@ -301,6 +301,18 @@ export class PostgresStore extends MemoryStore {
     // ==========================================================================
     // Write operations
     // ==========================================================================
+    /**
+     * Find an existing non-deleted record by caller-supplied operationId in metadata.
+     * Returns the record id, or null if not found.
+     */
+    async findByOperationId(operationId) {
+        const result = await this.pool.query(`SELECT id FROM memories
+       WHERE metadata->>'operationId' = $1
+         AND deleted_at IS NULL
+       ORDER BY id ASC
+       LIMIT 1`, [operationId]);
+        return result.rows[0]?.id ?? null;
+    }
     async insertRecord(params) {
         const sql = `
       INSERT INTO ${this.config.table} (content, category, title, tags, record_type, metadata, parent_id, priority)

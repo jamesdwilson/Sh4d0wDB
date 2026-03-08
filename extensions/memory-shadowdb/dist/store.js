@@ -496,6 +496,25 @@ export class MemoryStore {
         await opsLog.appendPending('write', category);
         const writeStart = Date.now();
         let newId;
+        // Deduplication: if caller supplied operationId in metadata, check for existing record.
+        // Returns existing id immediately — idempotent writes are safe to re-run.
+        const callerOperationId = typeof metadata.operationId === "string" ? metadata.operationId : null;
+        if (callerOperationId) {
+            const existingId = await this.findByOperationId(callerOperationId);
+            if (existingId !== null) {
+                this.logger.info(`memory-shadowdb: write dedup — operationId=${callerOperationId} already exists as id=${existingId}, skipping insert`);
+                await opsLog.appendComplete('write', existingId, category);
+                const path = `shadowdb/${category}/${existingId}`;
+                return {
+                    ok: true,
+                    operation: "write",
+                    id: existingId,
+                    path,
+                    embedded: false,
+                    message: `Duplicate operationId — returning existing record ${existingId}`,
+                };
+            }
+        }
         try {
             newId = await this.insertRecord({ content, category, title, tags, metadata, record_type, parent_id, priority });
         }
