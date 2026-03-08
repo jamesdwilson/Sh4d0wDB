@@ -420,6 +420,161 @@ Nothing else in the pipeline changes.
 
 ---
 
+## `llm-router` — Full TDD Spec
+
+### Design Philosophy
+
+The router is a **policy layer**, not a model wrapper. It knows nothing about
+what the model says — only which model to call based on declared task requirements.
+
+**Core principles:**
+- Tasks declare what they need (tier, output format, token budget). Router decides which model satisfies those requirements. No caller should hardcode a model name.
+- Tier is a minimum, not a target. A FLASH task can run on a STANDARD model if FLASH is unavailable. A DEEP task must not run on a FLASH model (would silently truncate).
+- Fallback chain is exhaustive. If all models for a tier fail, the router throws `LlmRoutingError` — a typed error with the tier and the list of models attempted. Callers can catch this.
+- `complete(prompt)` is always FLASH tier. This preserves backward compatibility with all existing callers — they get correct behavior (fast, cheap model) without changes.
+- JSON mode and thinking suppression are request-level options, not model-level. The router wires them into the API call if the selected model supports them.
+- No global state. `LlmRouter` is a class — instantiate it with config. Tests inject mock HTTP servers or mock model pools.
+- All network I/O goes through an injectable `HttpClient` interface so tests never hit real endpoints.
+
+### What `LlmRouter` Does (and Does Not Do)
+
+**Does:**
+- Select the highest-priority eligible model for the requested tier
+- Walk the fallback chain on failure (HTTP error, timeout, model overloaded)
+- Apply `disableThinking` as `chat_template_kwargs: { enable_thinking: false }` for Qwen3 models
+- Apply `response_format: { type: "json_object" }` when `outputFormat === "json"` and model supports it
+- Clamp `maxTokens` to the model's output limit if exceeded
+- Log which model was selected and which fell back (for debugging)
+- Return raw completion text — no parsing, no interpretation
+
+**Does not:**
+- Parse, validate, or interpret the completion
+- Retry on bad completions (garbage output = caller's problem)
+- Cache completions
+- Rate-limit or throttle
+- Know anything about prompts, scores, or business logic
+
+### Exported Surface
+
+```typescript
+// Tier enum — order matters (FLASH < STANDARD < DEEP < MASSIVE)
+export enum LlmTier { FLASH = "flash", STANDARD = "standard", DEEP = "deep", MASSIVE = "massive" }
+
+// A task submitted to the router
+export interface LlmTask {
+  prompt: string;
+  tier: LlmTier;
+  outputFormat?: "text" | "json" | "number";
+  maxTokens?: number;
+  disableThinking?: boolean;
+}
+
+// Configuration for one model in the pool
+export interface ModelConfig {
+  id: string;               // OpenAI-compatible model name ("qwen3.5-35b-a3b-4bit")
+  label: string;            // Human-readable ("Qwen3.5-35B @ oMLX")
+  baseUrl: string;          // API root ("http://localhost:8000/v1")
+  apiKey: string;
+  contextWindow: number;    // Max tokens (input + output) this model supports
+  outputLimit: number;      // Max completion tokens (clamped if maxTokens exceeds this)
+  tier: LlmTier;            // Which tier this model is optimized for
+  supportsJsonMode: boolean; // Whether response_format: json_object works
+  isQwen3: boolean;         // Whether to use chat_template_kwargs for thinking control
+  priority: number;         // Lower = preferred within tier (0 = most preferred)
+}
+
+// The full pool config
+export interface LlmRouterConfig {
+  models: ModelConfig[];
+  timeoutMs?: number;       // Per-request timeout (default 30000)
+}
+
+// Thrown when all fallbacks fail
+export class LlmRoutingError extends Error {
+  constructor(
+    public readonly tier: LlmTier,
+    public readonly attempted: string[],  // model ids tried
+    public readonly lastError: Error,
+  ) { ... }
+}
+
+// Injectable HTTP client (real = fetch; test = mock)
+export interface HttpClient {
+  post(url: string, body: unknown, headers: Record<string, string>): Promise<{ text: string }>;
+}
+
+// The router class
+export class LlmRouter implements TieredLlmClient {
+  constructor(config: LlmRouterConfig, http?: HttpClient);
+  run(task: LlmTask): Promise<string>;
+  complete(prompt: string): Promise<string>;  // FLASH tier, backward compat
+}
+```
+
+### Test Plan (all tests in `llm-router.test.mjs`)
+
+**Group A — `LlmTier` enum**
+- A1: Enum has exactly FLASH, STANDARD, DEEP, MASSIVE values
+- A2: Tier values are stable strings (not numbers) — guards against accidental refactor
+
+**Group B — Model selection (pure, no HTTP)**
+- B1: Single FLASH model in pool → selected for FLASH task
+- B2: Single STANDARD model in pool → selected for STANDARD task
+- B3: STANDARD model satisfies DEEP task when no DEEP model configured (upward promotion allowed)
+- B4: FLASH model must NOT satisfy DEEP task (downward demotion forbidden)
+- B5: Two FLASH models → lower priority number wins
+- B6: Two FLASH models same priority → first in config array wins (stable)
+- B7: No model covers the requested tier → throws `LlmRoutingError` before HTTP call
+- B8: `LlmRoutingError` carries tier, empty attempted list (no calls made)
+
+**Group C — HTTP call construction (mock HTTP)**
+- C1: Prompt is sent as user message in messages array
+- C2: Model id is sent as `model` field
+- C3: `maxTokens` maps to `max_tokens` in request body
+- C4: `maxTokens` omitted → request uses model's `outputLimit`
+- C5: `maxTokens` exceeds `outputLimit` → clamped to `outputLimit`
+- C6: `outputFormat: "json"` + `supportsJsonMode: true` → `response_format: { type: "json_object" }` in body
+- C7: `outputFormat: "json"` + `supportsJsonMode: false` → NO `response_format` field (model doesn't support it)
+- C8: `disableThinking: true` + `isQwen3: true` → `chat_template_kwargs: { enable_thinking: false }` in body
+- C9: `disableThinking: true` + `isQwen3: false` → NO `chat_template_kwargs` field
+- C10: `disableThinking` omitted → NO `chat_template_kwargs` field regardless of isQwen3
+- C11: Auth header sent as `Authorization: Bearer <apiKey>`
+- C12: Content-Type header is `application/json`
+
+**Group D — Response parsing**
+- D1: Well-formed completion returns `choices[0].message.content` string
+- D2: Empty `choices` array → throws (caller gets `LlmRoutingError` via fallback)
+- D3: Missing `choices` key → throws
+- D4: `content` is null → throws
+- D5: Extra fields in response are ignored (resilient to API version drift)
+
+**Group E — Fallback chain (mock HTTP)**
+- E1: First model returns HTTP 500 → second model is tried → second succeeds → returns result
+- E2: First model throws network error → second model tried → success
+- E3: All models fail → throws `LlmRoutingError` with all model ids in `attempted`
+- E4: `LlmRoutingError.lastError` is the error from the LAST attempted model
+- E5: Fallback does not cross tier boundary downward (STANDARD model not used as fallback for DEEP if it doesn't cover DEEP's context needs)
+- E6: Fallback respects priority ordering (priority=0 tried before priority=1)
+
+**Group F — `complete()` backward compat**
+- F1: `complete(prompt)` routes to FLASH tier
+- F2: `complete(prompt)` returns raw completion string
+- F3: `complete(prompt)` with only STANDARD model in pool → uses STANDARD (upward promotion)
+- F4: `complete(prompt)` with no models → throws `LlmRoutingError`
+
+**Group G — Timeout**
+- G1: Request exceeding `timeoutMs` → throws (treated as model failure, triggers fallback)
+- G2: Default timeout is 30000ms (verifiable via mock that delays)
+
+**Group H — Logging**
+- H1: Successful call logs selected model label (to injected logger)
+- H2: Fallback logs which model failed and which was next (to injected logger)
+- H3: Logger is optional — no logger = no crash
+
+**Total: ~28 tests before implementation**
+
+---
+
 ## Cross-Cutting Requirements
 
 ### Staleness Enforcement
