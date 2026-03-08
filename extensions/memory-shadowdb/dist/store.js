@@ -26,6 +26,7 @@ import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { mergeRRF } from "./rrf.js";
+import { rerankCandidates } from "./reranker.js";
 import { validateTags } from "./tag-validator.js";
 // ============================================================================
 // Constants — shared validation limits
@@ -107,11 +108,39 @@ export class MemoryStore {
         this.logger.info(`memory-shadowdb: search legs completed in ${legMs}ms — vector=${vectorHits.length}, fts=${ftsHits.length}, fuzzy=${fuzzyHits.length}`);
         // Merge via RRF
         const merged = mergeRRF(vectorHits, ftsHits, fuzzyHits, maxResults, minScore, this.config);
+        // Rerank: send top rerankTopK RRF candidates through cross-encoder
+        // Degrades gracefully — if reranker is down/slow, returns RRF order unchanged
+        const rerankStart = Date.now();
+        let finalHits = merged;
+        if (this.config.reranker?.enabled) {
+            const topK = this.config.reranker.rerankTopK ?? 30;
+            const candidates = merged.slice(0, topK).map((h) => ({
+                id: h.id,
+                content: h.content,
+                rrfScore: h.rrfScore,
+            }));
+            const reranked = await rerankCandidates(query, candidates, this.config.reranker, this.logger);
+            // Merge reranked top-K back with any remaining hits (beyond topK, unchanged)
+            const rerankedIds = new Set(reranked.map((r) => r.id));
+            const tail = merged.slice(topK).filter((h) => !rerankedIds.has(h.id));
+            // Map reranked scores back onto the original merged hit objects
+            const rerankScoreById = new Map(reranked.map((r) => [r.id, r.rerankScore]));
+            finalHits = [
+                ...reranked.map((r) => {
+                    const original = merged.find((h) => h.id === r.id);
+                    return { ...original, rerankScore: r.rerankScore };
+                }),
+                ...tail,
+            ].slice(0, maxResults);
+            const rerankMs = Date.now() - rerankStart;
+            const didRerank = reranked.some((r) => r.rerankScore !== undefined);
+            this.logger.info(`memory-shadowdb: rerank ${didRerank ? "applied" : "skipped (degraded)"} in ${rerankMs}ms — ${reranked.length} candidates → ${finalHits.length} final`);
+        }
         const totalMs = Date.now() - searchStart;
-        this.logger.info(`memory-shadowdb: search complete in ${totalMs}ms — ${merged.length} results (embed=${embedMs}ms, legs=${legMs}ms)`);
+        this.logger.info(`memory-shadowdb: search complete in ${totalMs}ms — ${finalHits.length} results (embed=${embedMs}ms, legs=${legMs}ms)`);
         const level = detailLevel || "snippet";
         // Format as SearchResult[]
-        return merged.map((hit) => {
+        return finalHits.map((hit) => {
             let snippet;
             if (level === "summary") {
                 // Summary: title + category + tags + metadata only, NO content

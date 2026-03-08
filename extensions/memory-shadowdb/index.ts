@@ -41,6 +41,7 @@ import {
 } from "./config.js";
 import { EmbeddingClient } from "./embedder.js";
 import type { MemoryStore, StoreConfig } from "./store.js";
+import { parseRerankerConfig, checkRerankerHealth } from "./reranker.js";
 
 // ============================================================================
 // Backend factory — picks the right store based on config
@@ -135,6 +136,9 @@ const memoryShadowdbPlugin = {
         : 30,
     };
 
+    // Reranker config — optional, degrades gracefully if absent/unreachable
+    const rerankerCfg = parseRerankerConfig(pluginCfg);
+
     const storeConfig: StoreConfig = {
       table: tableName,
       vectorWeight,
@@ -143,6 +147,7 @@ const memoryShadowdbPlugin = {
       minVectorScore,
       autoEmbed: writesCfg.autoEmbed,
       purgeAfterDays: writesCfg.purgeAfterDays,
+      reranker: rerankerCfg,
     };
 
     // Primer injection cache (bounded at 5000 entries)
@@ -194,8 +199,23 @@ const memoryShadowdbPlugin = {
       return store;
     }
 
+    // Reranker health check at startup (non-blocking — warn only)
+    if (rerankerCfg.enabled) {
+      checkRerankerHealth(rerankerCfg).then((healthy) => {
+        if (healthy) {
+          api.logger.info(
+            `memory-shadowdb: reranker healthy at ${rerankerCfg.baseUrl} — cross-encoder reranking enabled`,
+          );
+        } else {
+          api.logger.warn(
+            `memory-shadowdb: reranker unreachable at ${rerankerCfg.baseUrl} — search will use RRF-only (degraded mode)`,
+          );
+        }
+      }).catch(() => {/* health check errors are non-fatal */});
+    }
+
     api.logger.info(
-      `memory-shadowdb: registered (backend: ${backend}, table: ${tableName}, provider: ${embeddingCfg.provider}, model: ${embeddingCfg.model}, dims: ${embeddingCfg.dimensions}, primer: ${primerCfg.enabled ? primerCfg.mode : "disabled"}, writes: ${writesCfg.enabled ? "enabled" : "disabled"})`,
+      `memory-shadowdb: registered (backend: ${backend}, table: ${tableName}, provider: ${embeddingCfg.provider}, model: ${embeddingCfg.model}, dims: ${embeddingCfg.dimensions}, primer: ${primerCfg.enabled ? primerCfg.mode : "disabled"}, writes: ${writesCfg.enabled ? "enabled" : "disabled"}, reranker: ${rerankerCfg.enabled ? rerankerCfg.baseUrl : "disabled"})`,
     );
 
     // ========================================================================

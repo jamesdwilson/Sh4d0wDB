@@ -76,6 +76,12 @@ export interface StoreConfig {
     purgeAfterDays: number;
     /** Whether to validate tag namespaces on write (default: false) */
     validateTags?: boolean;
+    /**
+     * Reranker client config.
+     * When present and enabled, RRF candidates are reranked via cross-encoder
+     * before formatting. Undefined = reranking disabled.
+     */
+    reranker?: import("./reranker.js").RerankerConfig;
 }
 /**
  * Abstract memory store — the contract all backends implement.
