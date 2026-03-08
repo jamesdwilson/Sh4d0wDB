@@ -130,7 +130,23 @@ Message to analyze:
 ${text.slice(0, 1500)}
 
 Respond with ONLY a valid JSON object. No explanation.`;
-        const response = await llm.complete(prompt);
+        // Use tier-aware run() if the client supports it (TieredLlmClient).
+        // STANDARD tier: prompt includes message text + up to 3 prior context messages
+        // — can reach 4K-8K tokens. FLASH is too small; DEEP is overkill.
+        // outputFormat "json" enables JSON mode on supporting models, reducing parse failures.
+        // Falls back to complete() for plain LlmClient callers (backward compat).
+        let response;
+        if ("run" in llm && typeof llm.run === "function") {
+            const tiered = llm;
+            response = await tiered.run({
+                prompt,
+                tier: "standard",
+                outputFormat: "json",
+            });
+        }
+        else {
+            response = await llm.complete(prompt);
+        }
         // Strip thinking blocks if present
         const cleaned = response
             .replace(/<think>[\s\S]*?<\/think>/gi, "")

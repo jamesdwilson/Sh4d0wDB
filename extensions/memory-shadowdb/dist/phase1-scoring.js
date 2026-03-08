@@ -63,7 +63,24 @@ const SCORE_MAX = 10;
 export async function scoreInterestingness(text, metadata, llm) {
     try {
         const prompt = buildPrompt(text, metadata);
-        const response = await llm.complete(prompt);
+        // Use tier-aware run() if the client supports it (TieredLlmClient).
+        // FLASH tier: prompt is ≤500 tokens, output is a single number — fast + cheap.
+        // disableThinking: Qwen3 thinking blocks corrupt parseScore (step numbers read as scores).
+        // Falls back to complete() for plain LlmClient callers (backward compat).
+        let response;
+        if ("run" in llm && typeof llm.run === "function") {
+            const tiered = llm;
+            response = await tiered.run({
+                prompt,
+                tier: "flash",
+                outputFormat: "number",
+                disableThinking: true,
+                maxTokens: 1024,
+            });
+        }
+        else {
+            response = await llm.complete(prompt);
+        }
         return parseScore(response);
     }
     catch {
