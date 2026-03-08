@@ -24,6 +24,7 @@ import { execSync } from "node:child_process";
 import { extractGmailContent, passesEntityFilter, chunkDocument } from "./phase1-gmail.js";
 import { scoreInterestingness } from "./phase1-scoring.js";
 import { resolveParties } from "./phase1-parties.js";
+import { onNewContactSignal } from "./phase3-contact-signal.js";
 // ============================================================================
 // Types
 // ============================================================================
@@ -210,7 +211,7 @@ export class GmailFetcher {
  * @param fetcher - Source-specific message fetcher (GmailFetcher, etc.)
  * @returns       - Run statistics row (ready to INSERT into ingestion_runs)
  */
-export async function runIngestion(config, db, store, llm, fetcher) {
+export async function runIngestion(config, db, store, llm, fetcher, hooks = {}) {
     const startedAt = new Date();
     let messagesProcessed = 0;
     let messagesIngested = 0;
@@ -286,6 +287,25 @@ export async function runIngestion(config, db, store, llm, fetcher) {
             messagesIngested++;
             if (!newWatermark || content.date > newWatermark)
                 newWatermark = content.date;
+            // Phase 3 hook: fire onNewContactSignal for each resolved known contact.
+            // Uses hooks.onNewContactSignal if provided (testable); otherwise falls
+            // back to the built-in module function for production use.
+            const signalFn = hooks.onNewContactSignal ?? onNewContactSignal;
+            for (const party of resolved) {
+                if (party.memoryId !== null) {
+                    // Fetch dossier (best-effort — hook failure never aborts run)
+                    const dossier = await fetchDossierById(db, party.memoryId).catch(() => null);
+                    signalFn(party.memoryId, content, dossier, llm)
+                        .then((delta) => {
+                        if (delta && typeof delta === "object" && "summary" in delta) {
+                            console.log(`[ingestion:phase3] ${delta.summary} (confidence: ${delta.confidence.toFixed(2)})`);
+                        }
+                    })
+                        .catch((err) => {
+                        console.error(`[ingestion:phase3] hook error for contact ${party.memoryId}:`, err);
+                    });
+                }
+            }
         }
         catch (err) {
             console.error(`[ingestion:${fetcher.source}] failed on ${msgId}:`, err);
@@ -319,6 +339,21 @@ async function getWatermark(db, source, account) {
         return row.completed_at instanceof Date
             ? row.completed_at
             : new Date(row.completed_at);
+    }
+    catch {
+        return null;
+    }
+}
+/**
+ * Fetch a dossier record by its ShadowDB memory id.
+ * Returns null if not found or on DB error.
+ * Used by the Phase 3 onNewContactSignal hook.
+ */
+async function fetchDossierById(db, id) {
+    try {
+        const result = await db.query(`SELECT id, title, content, category, record_type, created_at, metadata
+       FROM memories WHERE id = $1 LIMIT 1`, [id]);
+        return result.rows[0] ?? null;
     }
     catch {
         return null;

@@ -25,9 +25,11 @@ import { execSync } from "node:child_process";
 import { extractGmailContent, passesEntityFilter, chunkDocument } from "./phase1-gmail.js";
 import { scoreInterestingness } from "./phase1-scoring.js";
 import { resolveParties } from "./phase1-parties.js";
+import { onNewContactSignal } from "./phase3-contact-signal.js";
 import type { ExtractedContent, GogGmailMessage } from "./phase1-gmail.js";
 import type { LlmClient } from "./phase1-scoring.js";
 import type { DbClient } from "./phase1-parties.js";
+import type { DossierRecord } from "./phase3-contact-signal.js";
 
 // ============================================================================
 // MessageFetcher interface — source-agnostic fetch contract
@@ -140,6 +142,28 @@ export interface IngestionConfig {
   maxMessagesPerRun: number;
   searchQuery: string;
   logPath: string;
+}
+
+/**
+ * Optional runtime hooks for the ingestion runner.
+ * All hooks are fire-and-forget — failures are logged but never abort the run.
+ */
+export interface IngestionHooks {
+  /**
+   * Called after each message is successfully written to the store,
+   * for each resolved party that maps to an existing ShadowDB contact.
+   *
+   * @param contactId  - ShadowDB memory id of the matched contact
+   * @param content    - The ingested message content
+   * @param dossier    - Fetched dossier record, or null if not found
+   * @param llm        - LLM client (same instance as the runner)
+   */
+  onNewContactSignal?: (
+    contactId: number,
+    content: ExtractedContent,
+    dossier: DossierRecord | null,
+    llm: LlmClient,
+  ) => Promise<unknown>;
 }
 
 // ============================================================================
@@ -344,6 +368,7 @@ export async function runIngestion(
   store: { write: (params: Record<string, unknown>) => Promise<{ id: number }> },
   llm: LlmClient,
   fetcher: MessageFetcher,
+  hooks: IngestionHooks = {},
 ): Promise<IngestionRunRow> {
   const startedAt = new Date();
   let messagesProcessed = 0;
@@ -423,6 +448,26 @@ export async function runIngestion(
       messagesIngested++;
       if (!newWatermark || content.date > newWatermark) newWatermark = content.date;
 
+      // Phase 3 hook: fire onNewContactSignal for each resolved known contact.
+      // Uses hooks.onNewContactSignal if provided (testable); otherwise falls
+      // back to the built-in module function for production use.
+      const signalFn = hooks.onNewContactSignal ?? onNewContactSignal;
+      for (const party of resolved) {
+        if (party.memoryId !== null) {
+          // Fetch dossier (best-effort — hook failure never aborts run)
+          const dossier = await fetchDossierById(db, party.memoryId).catch(() => null);
+          signalFn(party.memoryId, content, dossier, llm)
+            .then((delta) => {
+              if (delta && typeof delta === "object" && "summary" in delta) {
+                console.log(`[ingestion:phase3] ${(delta as { summary: string; confidence: number }).summary} (confidence: ${(delta as { confidence: number }).confidence.toFixed(2)})`);
+              }
+            })
+            .catch((err) => {
+              console.error(`[ingestion:phase3] hook error for contact ${party.memoryId}:`, err);
+            });
+        }
+      }
+
     } catch (err) {
       console.error(`[ingestion:${fetcher.source}] failed on ${msgId}:`, err);
       status = RunStatus.PARTIAL;
@@ -460,6 +505,24 @@ async function getWatermark(db: DbClient, source: string, account: string): Prom
     return row.completed_at instanceof Date
       ? row.completed_at
       : new Date(row.completed_at);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch a dossier record by its ShadowDB memory id.
+ * Returns null if not found or on DB error.
+ * Used by the Phase 3 onNewContactSignal hook.
+ */
+async function fetchDossierById(db: DbClient, id: number): Promise<DossierRecord | null> {
+  try {
+    const result = await db.query(
+      `SELECT id, title, content, category, record_type, created_at, metadata
+       FROM memories WHERE id = $1 LIMIT 1`,
+      [id],
+    ) as unknown as { rows: Array<DossierRecord> };
+    return result.rows[0] ?? null;
   } catch {
     return null;
   }

@@ -23,6 +23,7 @@
 import type { ExtractedContent } from "./phase1-gmail.js";
 import type { LlmClient } from "./phase1-scoring.js";
 import type { DbClient } from "./phase1-parties.js";
+import type { DossierRecord } from "./phase3-contact-signal.js";
 /**
  * Source-agnostic interface for fetching messages into the ingestion pipeline.
  *
@@ -120,6 +121,22 @@ export interface IngestionConfig {
     logPath: string;
 }
 /**
+ * Optional runtime hooks for the ingestion runner.
+ * All hooks are fire-and-forget — failures are logged but never abort the run.
+ */
+export interface IngestionHooks {
+    /**
+     * Called after each message is successfully written to the store,
+     * for each resolved party that maps to an existing ShadowDB contact.
+     *
+     * @param contactId  - ShadowDB memory id of the matched contact
+     * @param content    - The ingested message content
+     * @param dossier    - Fetched dossier record, or null if not found
+     * @param llm        - LLM client (same instance as the runner)
+     */
+    onNewContactSignal?: (contactId: number, content: ExtractedContent, dossier: DossierRecord | null, llm: LlmClient) => Promise<unknown>;
+}
+/**
  * Build a gog gmail search query string.
  *
  * When watermark is set, adds `after:YYYY/MM/DD` to only fetch new messages.
@@ -206,4 +223,4 @@ export declare function runIngestion(config: IngestionConfig, db: DbClient, stor
     write: (params: Record<string, unknown>) => Promise<{
         id: number;
     }>;
-}, llm: LlmClient, fetcher: MessageFetcher): Promise<IngestionRunRow>;
+}, llm: LlmClient, fetcher: MessageFetcher, hooks?: IngestionHooks): Promise<IngestionRunRow>;

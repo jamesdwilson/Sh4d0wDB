@@ -279,3 +279,138 @@ test('RunStatus has COMPLETE, PARTIAL, FAILED values', () => {
   assert.ok(RunStatus.PARTIAL);
   assert.ok(RunStatus.FAILED);
 });
+
+// ============================================================================
+// runIngestion — Phase 3 hook wiring tests
+// ============================================================================
+
+import { runIngestion } from './dist/phase1-runner.js';
+
+function makeConfig(overrides = {}) {
+  return {
+    account: 'alice@example.com',
+    scoringModel: 'local-qwen35',
+    scoreThreshold: 5,
+    maxMessagesPerRun: 10,
+    searchQuery: '',
+    logPath: '',
+    ...overrides,
+  };
+}
+
+function makeLlm(score = '8') {
+  return { complete: async () => score };
+}
+
+function makeStore() {
+  const written = [];
+  return {
+    written,
+    write: async (params) => { written.push(params); return { id: written.length }; },
+  };
+}
+
+function makeDb(watermarkRows = [], partyRows = [], dossierRow = null) {
+  return {
+    query: async (sql, _params) => {
+      if (sql.includes('ingestion_runs')) return { rows: watermarkRows };
+      // resolveParties queries: SELECT id, title, category FROM memories WHERE category IN (...)
+      if (sql.includes('category IN')) return { rows: partyRows };
+      if (sql.includes('tsvector') || sql.includes('title ILIKE')) return { rows: partyRows };
+      // fetchDossierById: SELECT ... FROM memories WHERE id = $1
+      if (sql.includes('FROM memories WHERE id')) return { rows: dossierRow ? [dossierRow] : [] };
+      return { rows: [] };
+    },
+  };
+}
+
+function makeMessage(sourceId = 'msg-001') {
+  return {
+    sourceId,
+    threadId: 'thread-001',
+    subject: 'Investment update for Q1',
+    from: 'bob@investor.example.com',
+    date: new Date(),
+    text: 'We would like to discuss the term sheet and finalize next steps for the Series A round. Please confirm your availability.',
+    parties: ['Bob Investor'],
+  };
+}
+
+function makeFetcher(messages = [makeMessage()]) {
+  const ids = messages.map(m => m.sourceId);
+  const map = Object.fromEntries(messages.map(m => [m.sourceId, m]));
+  return {
+    source: 'gmail',
+    getNewMessageIds: async () => ids,
+    fetchMessage: async (id) => map[id] ?? null,
+  };
+}
+
+test('runIngestion fires onNewContactSignal hook for resolved known contacts', async () => {
+  const hookCalls = [];
+  const hooks = {
+    onNewContactSignal: async (contactId, content, dossier, llm) => {
+      hookCalls.push({ contactId, sourceId: content.sourceId });
+      return null;
+    },
+  };
+
+  // resolveParties expects: { id, title, category } rows
+  // Title must fuzzy-match party name "Bob Investor" extracted from the message
+  const contactRow = { id: 42, title: 'Bob Investor', category: 'contacts' };
+  const dossierRow = { id: 42, title: 'Bob Investor', content: 'Bob is an Analyst type.', category: 'contacts', record_type: 'document', created_at: new Date(), metadata: {} };
+  const db = makeDb([], [contactRow], dossierRow);
+  const store = makeStore();
+
+  await runIngestion(makeConfig(), db, store, makeLlm('8'), makeFetcher(), hooks);
+
+  // Hook is fire-and-forget (not awaited in runner) — wait for it
+  await new Promise(r => setTimeout(r, 100));
+
+  assert.ok(hookCalls.length > 0, 'hook should have been called for known contact');
+  assert.equal(hookCalls[0].contactId, 42);
+  assert.equal(hookCalls[0].sourceId, 'msg-001');
+});
+
+test('runIngestion does not fire hook when no parties resolve to a memoryId', async () => {
+  const hookCalls = [];
+  const hooks = {
+    onNewContactSignal: async (contactId) => { hookCalls.push(contactId); return null; },
+  };
+
+  const db = makeDb([], [], null);  // party rows empty = no match
+  const store = makeStore();
+
+  await runIngestion(makeConfig(), db, store, makeLlm('8'), makeFetcher(), hooks);
+  await new Promise(r => setTimeout(r, 50));
+
+  assert.equal(hookCalls.length, 0, 'no hook when parties have no memoryId');
+});
+
+test('runIngestion completes successfully even if hook throws', async () => {
+  const hooks = {
+    onNewContactSignal: async () => { throw new Error('hook exploded'); },
+  };
+
+  const contactRow = { id: 99, title: 'Bob Investor', category: 'contacts' };
+  const dossierRow = { id: 99, title: 'Bob Investor', content: 'Analyst.', category: 'contacts', record_type: 'document', created_at: new Date(), metadata: {} };
+  const db = makeDb([], [contactRow], dossierRow);
+  const store = makeStore();
+
+  let result;
+  await assert.doesNotReject(async () => {
+    result = await runIngestion(makeConfig(), db, store, makeLlm('8'), makeFetcher(), hooks);
+  });
+  assert.equal(result.status, RunStatus.COMPLETE, 'hook failure should not change run status');
+});
+
+test('runIngestion works normally with no hooks provided', async () => {
+  const db = makeDb([], [], null);
+  const store = makeStore();
+
+  let result;
+  await assert.doesNotReject(async () => {
+    result = await runIngestion(makeConfig(), db, store, makeLlm('8'), makeFetcher());
+  });
+  assert.ok(result);
+});
