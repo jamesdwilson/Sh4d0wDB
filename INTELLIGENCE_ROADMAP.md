@@ -239,20 +239,117 @@ export function crossReferenceDocument(
 
 ## Phase 4: LinkedIn Ingestion
 
-### Goals
-- Implement `LinkedInFetcher` conforming to `MessageFetcher` interface
-- Browser-based scrape (LinkedIn lazy-loads, no API)
-- Message threads preserved as single units (not chunked mid-thread)
-- Cross-source linking: Gmail LinkedIn notification → triggers LinkedIn message fetch
-- Idempotent: keyed on thread URL + timestamp
+### Assumptions
+- **Browser:** OpenClaw host browser (Chrome profile) with active LinkedIn session — cookies already present, no auth flow needed
+- **Interface:** `LinkedInFetcher` implements `MessageFetcher` — fits the existing runner without changes
+- **Scrape target:** LinkedIn messaging inbox (`/messaging/`) — thread list + individual thread pages
+- **No LinkedIn API** — scraping only; rate-limit-friendly (small batches, delay between requests)
+
+### Design Philosophy
+- The browser is injected as a `BrowserClient` interface — tests use a mock, production uses the OC browser tool
+- All HTML parsing is pure functions (`parseThreadList`, `parseThreadMessages`) — fully unit testable with fixture HTML
+- Thread URL is the stable ID: `linkedin.com/messaging/thread/<threadId>/` → operationId = `linkedin:<threadId>`
+- Watermark = most recent message timestamp across all threads on last run
+- Messages within a thread are concatenated into one `ExtractedContent` (thread as unit, not per-message chunks)
+- Idempotent: same thread re-fetched = same operationId = zero duplicate writes
+
+### Exported Surface (`phase4-fetcher-linkedin.ts`)
+
+```typescript
+// Injectable browser client — real = OC browser tool, test = mock HTML
+export interface BrowserClient {
+  navigate(url: string): Promise<void>;
+  getPageSource(): Promise<string>;   // raw HTML of current page
+  waitForSelector(selector: string, timeoutMs?: number): Promise<void>;
+  scrollToBottom(): Promise<void>;    // trigger lazy-load
+}
+
+// A parsed thread entry from the inbox list
+export interface LinkedInThread {
+  threadId: string;     // extracted from URL
+  url: string;          // full thread URL
+  participants: string[]; // names from thread list
+  lastMessageAt: Date;
+  snippet: string;      // preview text from inbox
+}
+
+// A fully fetched thread with all message content
+export interface LinkedInThreadContent {
+  threadId: string;
+  url: string;
+  participants: string[];
+  messages: LinkedInMessage[];
+  fetchedAt: Date;
+}
+
+export interface LinkedInMessage {
+  sender: string;
+  sentAt: Date;
+  text: string;
+}
+
+// Pure parsing functions — testable with fixture HTML
+export function parseThreadList(html: string): LinkedInThread[];
+export function parseThreadMessages(html: string, threadId: string): LinkedInThreadContent | null;
+export function threadToExtractedContent(thread: LinkedInThreadContent): ExtractedContent | null;
+
+// MessageFetcher implementation
+export class LinkedInFetcher implements MessageFetcher {
+  readonly source = "linkedin";
+  constructor(browser: BrowserClient, options?: { maxThreads?: number; delayMs?: number });
+  getNewMessageIds(watermark: Date | null): Promise<string[]>;   // threadIds newer than watermark
+  fetchMessage(threadId: string): Promise<ExtractedContent | null>;
+}
+```
+
+### Test Plan (`phase4-fetcher-linkedin.test.mjs`)
+
+**Group A — `parseThreadList` (pure, fixture HTML)**
+- A1: Extracts threadId from thread URL in inbox HTML
+- A2: Extracts participant names from thread list
+- A3: Extracts lastMessageAt timestamp
+- A4: Extracts snippet text
+- A5: Returns empty array for empty inbox HTML
+- A6: Skips threads with unparseable timestamps (never throws)
+- A7: Handles multiple threads in one inbox page
+
+**Group B — `parseThreadMessages` (pure, fixture HTML)**
+- B1: Extracts all messages from a thread page
+- B2: Each message has sender, sentAt, text
+- B3: Returns null for empty/unparseable thread HTML
+- B4: Filters out empty message bodies
+- B5: Handles single-message thread
+
+**Group C — `threadToExtractedContent` (pure)**
+- C1: Concatenates all messages into a single text block with sender attribution
+- C2: `subject` is `"LinkedIn: {participant names}"`
+- C3: `from` is the first non-self participant
+- C4: `date` is the most recent message sentAt
+- C5: `parties` is the deduplicated list of all participants
+- C6: Returns null for thread with no messages
+- C7: `sourceId` is `"linkedin:{threadId}"`
+
+**Group D — `LinkedInFetcher.getNewMessageIds` (mock browser)**
+- D1: Navigates to `/messaging/` and returns threadIds
+- D2: Filters out threads older than watermark
+- D3: Returns all threads when watermark is null
+- D4: Returns empty array when inbox is empty
+- D5: Respects `maxThreads` option
+
+**Group E — `LinkedInFetcher.fetchMessage` (mock browser)**
+- E1: Navigates to thread URL and returns ExtractedContent
+- E2: Returns null when thread page returns no messages
+- E3: Returns null on browser navigation error (never throws)
+- E4: Respects `delayMs` between requests (rate limiting)
+
+**Total: ~22 tests before implementation**
 
 ### Definition of Done
-- [ ] `LinkedInFetcher` implements `MessageFetcher`
-- [ ] `extractLinkedInHints()` detects LinkedIn notification emails and extracts fetch hints
-- [ ] `FetchHint` type added to `MessageFetcher` interface (optional `extractHints?()` method)
-- [ ] Browser automation extracts messages from last 90 days
-- [ ] Entity filter + interestingness score applied (threshold ≥6)
-- [ ] Integration test: fixture HTML → DB state verification
+- [x] Phase 4 TDD spec written in INTELLIGENCE_ROADMAP.md
+- [ ] `phase4-fetcher-linkedin.test.mjs` written — 22 tests, all RED
+- [ ] `phase4-fetcher-linkedin.ts` implemented — all GREEN
+- [ ] `LinkedInFetcher` registered in `scripts/ingest.mjs` as `--source linkedin`
+- [ ] Smoke test: run against live LinkedIn inbox, verify thread extraction
 
 ---
 
