@@ -91,14 +91,34 @@ export type PluginConfig = {
     table?: string;
     /** Search behavior configuration */
     search?: {
-        /** Maximum number of results to return */
+        /**
+         * Maximum number of results to return after RRF scoring.
+         * With large corpora (5k+ records), low values cause good records to be
+         * dropped before ranking. Default: 15. Increase for very large DBs.
+         */
         maxResults?: number;
-        /** Minimum score threshold for results */
+        /** Minimum score threshold for results. Default: 0.005. */
         minScore?: number;
-        /** Weight for vector similarity in RRF scoring */
+        /**
+         * Weight for vector similarity in RRF scoring. Default: 0.5.
+         * Increase for concept/semantic-heavy queries; decrease for name-heavy
+         * corpora where FTS outperforms embeddings (proper names embed poorly
+         * with models like nomic-embed-text).
+         */
         vectorWeight?: number;
-        /** Weight for full-text search in RRF scoring */
+        /**
+         * Weight for full-text search in RRF scoring. Default: 0.5.
+         * Increase for contact/name-heavy corpora where exact-match FTS is
+         * more reliable than vector similarity for proper nouns.
+         */
         textWeight?: number;
+        /**
+         * Minimum cosine similarity threshold for vector search results.
+         * Vector hits below this score are excluded before RRF merge.
+         * Prevents low-relevance records from polluting results via the vector leg.
+         * Value range: 0.0–1.0 (cosine similarity). Default: 0 (no filtering).
+         */
+        minVectorScore?: number;
         /**
          * Weight for recency in RRF scoring.
          * Newer records get a slight boost when competing with older records
@@ -107,6 +127,43 @@ export type PluginConfig = {
          * Default: 0.15
          */
         recencyWeight?: number;
+    };
+    /**
+     * Reranker configuration — Qwen3-Reranker cross-encoder via embed-rerank service.
+     * Optional: degrades gracefully to RRF-only search if absent or service unreachable.
+     */
+    reranker?: {
+        /**
+         * Base URL of the embed-rerank service.
+         * Default: "http://127.0.0.1:9000"
+         */
+        baseUrl?: string;
+        /**
+         * Whether reranking is enabled.
+         * Default: true
+         */
+        enabled?: boolean;
+        /**
+         * Timeout for reranker HTTP requests in milliseconds.
+         * If exceeded, search returns RRF results without reranking.
+         * Default: 3000
+         */
+        timeoutMs?: number;
+        /**
+         * Minimum candidate count before reranking is attempted.
+         * Default: 3
+         */
+        minCandidates?: number;
+        /**
+         * Number of RRF candidates to pass to reranker.
+         * Clamped to [1, 100]. Default: 30.
+         */
+        rerankTopK?: number;
+        /**
+         * Model identifier sent to reranker service.
+         * Default: "reranker"
+         */
+        model?: string;
     };
     /** Write operations configuration (disabled by default) */
     writes?: {

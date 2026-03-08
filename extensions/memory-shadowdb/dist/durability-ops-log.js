@@ -156,3 +156,4 @@ export function getGlobalLog() {
 export function resetGlobalLog() {
     globalLog = null;
 }
+//# sourceMappingURL=durability-ops-log.js.map

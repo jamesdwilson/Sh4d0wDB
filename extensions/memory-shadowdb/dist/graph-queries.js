@@ -74,3 +74,4 @@ export function extractConnectedEntity(edge, fromSlug) {
 export function normalizeEntitySlug(raw) {
     return raw.trim().toLowerCase().replace(/\s+/g, "-");
 }
+//# sourceMappingURL=graph-queries.js.map

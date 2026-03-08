@@ -159,6 +159,44 @@ export type PluginConfig = {
     recencyWeight?: number;
   };
   
+  /**
+   * Reranker configuration — Qwen3-Reranker cross-encoder via embed-rerank service.
+   * Optional: degrades gracefully to RRF-only search if absent or service unreachable.
+   */
+  reranker?: {
+    /**
+     * Base URL of the embed-rerank service.
+     * Default: "http://127.0.0.1:9000"
+     */
+    baseUrl?: string;
+    /**
+     * Whether reranking is enabled.
+     * Default: true
+     */
+    enabled?: boolean;
+    /**
+     * Timeout for reranker HTTP requests in milliseconds.
+     * If exceeded, search returns RRF results without reranking.
+     * Default: 3000
+     */
+    timeoutMs?: number;
+    /**
+     * Minimum candidate count before reranking is attempted.
+     * Default: 3
+     */
+    minCandidates?: number;
+    /**
+     * Number of RRF candidates to pass to reranker.
+     * Clamped to [1, 100]. Default: 30.
+     */
+    rerankTopK?: number;
+    /**
+     * Model identifier sent to reranker service.
+     * Default: "reranker"
+     */
+    model?: string;
+  };
+
   /** Write operations configuration (disabled by default) */
   writes?: {
     /**

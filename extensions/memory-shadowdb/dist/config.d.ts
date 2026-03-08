@@ -40,7 +40,7 @@ export declare function loadShadowDbConfig(configPath?: string): ShadowDbConfig 
  * 3. DATABASE_URL environment variable
  * 4. ~/.shadowdb.json postgres.connection_string
  * 5. ~/.shadowdb.json postgres.{host,port,user,password,database}
- * 6. Fallback: local socket connection
+ * 6. Error — no silent fallback
  *
  * SECURITY NOTES:
  * - The returned string may contain credentials (postgresql://user:pass@host/db)

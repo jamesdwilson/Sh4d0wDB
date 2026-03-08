@@ -68,6 +68,8 @@ export interface StoreConfig {
     textWeight: number;
     /** RRF weight for recency signal (intentionally low — tiebreaker, not dominant) */
     recencyWeight: number;
+    /** Minimum cosine similarity for vector hits before RRF (0 = no filter) */
+    minVectorScore: number;
     /** Whether to auto-embed on write/update */
     autoEmbed: boolean;
     /** Days before soft-deleted records are permanently purged (0 = never) */

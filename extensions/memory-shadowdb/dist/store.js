@@ -899,3 +899,4 @@ export function formatRelativeAge(timestamp) {
     const years = Math.floor(days / 365);
     return `${years}y`;
 }
+//# sourceMappingURL=store.js.map

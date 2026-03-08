@@ -74,49 +74,25 @@ const memoryShadowdbPlugin = {
         const connectionString = resolveConnectionString(pluginCfg);
         const embeddingCfg = resolveEmbeddingConfig(pluginCfg);
         const tableName = pluginCfg.table || "memories";
-        const maxResultsDefault = pluginCfg.search?.maxResults ?? 6;
+        // maxResults: how many candidates survive RRF scoring.
+        // With large DBs (5k+ records), 6 is too few — good records get cut before
+        // ranking. 15 is a safe default; increase further for very large corpora.
+        const maxResultsDefault = pluginCfg.search?.maxResults ?? 15;
         // RRF scores are much smaller than raw similarity scores.
         // With k=60 and weights summing to ~1.35, the theoretical max RRF score
         // for a rank-1 result across all signals is ~0.022. A threshold of 0.15
         // would filter out everything. Default 0.005 = "appeared in at least one
         // signal with reasonable rank."
         const minScoreDefault = pluginCfg.search?.minScore ?? 0.005;
-        // Per-model char budget for tool results (pattern-matched, first match wins)
-        // Configured via plugins.entries.memory-shadowdb.config.search.maxCharsByModel
-        const searchMaxCharsByModel = {};
-        if (pluginCfg.search?.maxCharsByModel && typeof pluginCfg.search.maxCharsByModel === "object") {
-            for (const [pattern, chars] of Object.entries(pluginCfg.search.maxCharsByModel)) {
-                if (typeof chars === "number" && chars > 0)
-                    searchMaxCharsByModel[pattern.toLowerCase()] = Math.floor(chars);
-            }
-        }
-        const searchMaxCharsDefault = typeof pluginCfg.search?.maxChars === "number" ? pluginCfg.search.maxChars : null;
-        /** Resolve max chars for tool results based on active model */
-        function resolveSearchMaxChars() {
-            const model = (api.config?.agents?.defaults?.model?.primary || "").toLowerCase();
-            if (model && Object.keys(searchMaxCharsByModel).length > 0) {
-                for (const [pattern, chars] of Object.entries(searchMaxCharsByModel)) {
-                    if (model.includes(pattern)) return chars;
-                }
-            }
-            return searchMaxCharsDefault;
-        }
-        /** Truncate serialized tool result to char budget, trimming trailing results */
-        function applyCharBudget(results, maxChars) {
-            if (!maxChars || !results.length) return results;
-            let total = 0;
-            const out = [];
-            for (const r of results) {
-                const len = (r.snippet || r.text || "").length;
-                if (total + len > maxChars) break;
-                out.push(r);
-                total += len;
-            }
-            return out.length > 0 ? out : [results[0]]; // always return at least 1
-        }
-        const vectorWeight = pluginCfg.search?.vectorWeight ?? 0.7;
-        const textWeight = pluginCfg.search?.textWeight ?? 0.3;
+        // Weight balance: vector embeddings excel at semantic/conceptual queries
+        // but are weak for proper names (nomic-embed-text treats names as opaque
+        // tokens). FTS/text search is more reliable for exact name matches.
+        // 0.5/0.5 is a balanced default; bias toward vectorWeight for
+        // concept-heavy corpora, toward textWeight for contact/name-heavy corpora.
+        const vectorWeight = pluginCfg.search?.vectorWeight ?? 0.5;
+        const textWeight = pluginCfg.search?.textWeight ?? 0.5;
         const recencyWeight = pluginCfg.search?.recencyWeight ?? 0.15;
+        const minVectorScore = pluginCfg.search?.minVectorScore ?? 0;
         const primerCfg = resolvePrimerConfig(pluginCfg);
         const writesCfg = {
             enabled: pluginCfg.writes?.enabled === true,
@@ -130,6 +106,7 @@ const memoryShadowdbPlugin = {
             vectorWeight,
             textWeight,
             recencyWeight,
+            minVectorScore,
             autoEmbed: writesCfg.autoEmbed,
             purgeAfterDays: writesCfg.purgeAfterDays,
         };
@@ -321,13 +298,11 @@ const memoryShadowdbPlugin = {
                     try {
                         const s = await getStore();
                         const results = await s.search(query, max, min, hasFilters ? filters : undefined, detailLevel);
-                        let decorated = results.map((r) => ({
+                        const decorated = results.map((r) => ({
                             ...r,
                             snippet: `${r.snippet.trim()}\n\nSource: ${r.citation}`,
                         }));
-                        const maxChars = resolveSearchMaxChars();
-                        if (maxChars) decorated = applyCharBudget(decorated, maxChars);
-                        api.logger.info(`memory-shadowdb: tool memory_search returned ${decorated.length} results (charBudget=${maxChars ?? "unlimited"})`);
+                        api.logger.info(`memory-shadowdb: tool memory_search returned ${decorated.length} results`);
                         return jsonResult({
                             results: decorated,
                             provider: "shadowdb",
@@ -567,14 +542,8 @@ const memoryShadowdbPlugin = {
                     if (!query)
                         return jsonResult({ error: "query is required" });
                     const taskType = params.task_type;
-                    // Auto-cap token_budget based on active model if not explicitly set
-                    const modelMaxChars = resolveSearchMaxChars();
-                    // ~4 chars per token as rough estimate
-                    const modelMaxTokens = modelMaxChars ? Math.floor(modelMaxChars / 4) : null;
-                    const tokenBudget = params.token_budget
-                        ? (modelMaxTokens ? Math.min(params.token_budget, modelMaxTokens) : params.token_budget)
-                        : (modelMaxTokens ?? undefined);
-                    api.logger.info(`memory-shadowdb: tool memory_assemble called — query="${query.slice(0, 80)}", task_type=${taskType || "none"}, budget=${tokenBudget ?? "default"} (modelMaxChars=${modelMaxChars ?? "unlimited"})`);
+                    const tokenBudget = params.token_budget;
+                    api.logger.info(`memory-shadowdb: tool memory_assemble called — query="${query.slice(0, 80)}", task_type=${taskType || "none"}, budget=${tokenBudget ?? "default"}`);
                     try {
                         const s = await getStore();
                         const result = await s.assemble({
@@ -846,3 +815,4 @@ export const __test__ = {
     resolveMaxCharsForModel,
 };
 export default memoryShadowdbPlugin;
+//# sourceMappingURL=index.js.map
